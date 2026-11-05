@@ -48,9 +48,18 @@ steps:
         from_secret: ssh_private_key
       fingerprint:
         from_secret: server_fingerprint
+      ghcr_username:
+        from_secret: ghcr_username
+      ghcr_token:
+        from_secret: ghcr_token
+      envs: [PLUGIN_GHCR_USERNAME, PLUGIN_GHCR_TOKEN]
       command_timeout: 10m
       script: |
         set -eu
+        DOCKER_CONFIG=$(mktemp -d)
+        export DOCKER_CONFIG
+        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+        printf '%s' "$${PLUGIN_GHCR_TOKEN}" | docker login ghcr.io -u "$${PLUGIN_GHCR_USERNAME}" --password-stdin >/dev/null
         cd /root/lab/welding-table-generator
         IMAGE_TAG=${CI_COMMIT_SHA} docker compose config -q
         IMAGE_TAG=${CI_COMMIT_SHA} docker compose pull welding-table-generator
