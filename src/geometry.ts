@@ -1,9 +1,14 @@
-import type { Config, PartName } from './model'
+import type { Config, PartName, RemovedHole } from './model'
+import { strokeGlyphs } from './strokeGlyphs.js'
 
 export type Point = { x: number; y: number }
 export type Hole = Point & { id: string; d: number; kind: 'grid' | 'custom' | 'mount' | 'lift' }
 export type Slot = Point & { width: number; height: number }
 export type EngravingLine = { from: Point; to: Point }
+export type LineSegment = { type: 'line'; from: Point; to: Point }
+export type ArcSegment = { type: 'arc'; center: Point; radius: number; start: number; end: number; clockwise?: boolean }
+export type ContourSegment = LineSegment | ArcSegment
+export type Contour = ContourSegment[]
 export type Part = {
   name: PartName
   width: number
@@ -11,225 +16,443 @@ export type Part = {
   count: number
   holes: Hole[]
   slots: Slot[]
+  contours: Contour[]
   label: string
 }
 export type PlacedPart = { part: Part; instance: number; position: Point }
 export type Layout = { instances: PlacedPart[]; width: number; height: number }
 
-const layoutGap = 72
-// Calibrated against the reference generator's observable D16 and D28 steel estimates.
-const grossAreaFactor = 0.9734705703267278
-const holeAreaFactor = 1.0348212824535867
-const key = (part: PartName, x: number, y: number) => `${part}:${x.toFixed(2)}:${y.toFixed(2)}`
+const layoutGap = 80
+const densityKgPerMm3 = 7.85e-6
+const epsilon = 1e-6
+const point = (x: number, y: number): Point => ({ x, y })
+const key = (part: PartName, x: number, y: number) => `${part}:${x.toFixed(3)}:${y.toFixed(3)}`
+const radians = (degrees: number) => degrees * Math.PI / 180
+const arcPoint = (center: Point, radius: number, angle: number) => point(
+  center.x + radius * Math.cos(radians(angle)),
+  center.y + radius * Math.sin(radians(angle)),
+)
+
+const line = (from: Point, to: Point): LineSegment => ({ type: 'line', from, to })
+const distance = (a: Point, b: Point) => Math.hypot(b.x - a.x, b.y - a.y)
+
+const pointsAlong = (start: number, end: number, count: number) => count < 2
+  ? [(start + end) / 2]
+  : Array.from({ length: count }, (_, index) => start + (end - start) * index / (count - 1))
+
+/** The reference uses the common 1.5 mm oversize for clearance holes. */
+const boltHoleDiameter = (bolt: number) => bolt + 1.5
 
 const grid = (part: PartName, width: number, height: number, c: Config, enabled: boolean): Hole[] => {
   if (!enabled) return []
   const holes: Hole[] = []
-  const halfW = width / 2
-  const halfH = height / 2
-  for (let row = 0, y = -halfH + c.margin; y <= halfH - c.margin + 0.001; row += 1, y += c.pitch) {
-    if (part !== 'top' && Math.abs(y) < 0.001 && height > 2 * c.margin) continue
+  const xs = centeredGridCoordinates(width, c)
+  const rowPitch = c.grid === 'staggered' ? c.pitch / 2 : c.pitch
+  const rowCount = Math.max(part === 'top' ? 0 : 1, Math.floor((height - (part === 'top' ? 0 : c.thickness) - 2 * c.margin) / rowPitch + epsilon) + 1)
+  const ys = Array.from({ length: rowCount }, (_, index) => (index - (rowCount - 1) / 2) * rowPitch)
+  for (let row = 0; row < ys.length; row += 1) {
+    const y = ys[row]
     const offset = c.grid === 'staggered' && row % 2 ? c.pitch / 2 : 0
-    for (let x = -halfW + c.margin + offset; x <= halfW - c.margin + 0.001; x += c.pitch) {
-      holes.push({ x, y, id: key(part, x, y), d: c.holeDiameter, kind: 'grid' })
+    for (const x of xs) {
+      if (x + offset > width / 2 - c.margin + epsilon) continue
+      holes.push({ x: x + offset, y, id: key(part, x + offset, y), d: c.holeDiameter, kind: 'grid' })
     }
   }
   return holes
 }
 
-const add = (holes: Hole[], part: PartName, x: number, y: number, d: number, kind: Hole['kind'], id?: string) => {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(d) || d <= 0) return
-  holes.push({ x, y, d, kind, id: id ?? key(part, x, y) })
+const pushHole = (holes: Hole[], part: PartName, x: number, y: number, d: number, kind: Hole['kind'], id?: string) => {
+  if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(d) && d > 0) {
+    holes.push({ x, y, d, kind, id: id ?? key(part, x, y) })
+  }
 }
 
-const decorate = (part: PartName, width: number, height: number, c: Config, holes: Hole[]) => {
-  c.customHoles
-    .filter(h => h.part === part && Math.abs(h.x) + h.d / 2 <= width / 2 && Math.abs(h.y) + h.d / 2 <= height / 2)
-    .forEach(h => add(holes, part, h.x, h.y, h.d, 'custom', `custom:${h.id}`))
+const sameRemovedHole = (removed: RemovedHole, part: PartName, hole: Hole) => removed.part === part
+  && Math.abs(removed.x - hole.x) < 0.001
+  && Math.abs(removed.y - hole.y) < 0.001
+  && Math.abs(removed.r - hole.d / 2) < 0.001
 
-  if (part === 'top' && c.legMounts) {
-    const startX = -((c.legCols - 1) * c.legPatternX) / 2
-    const startY = -((c.legRows - 1) * c.legPatternY) / 2
+const removeConfiguredHoles = (part: PartName, holes: Hole[], c: Config) => holes.filter(hole => !c.removedHoles.some(removed =>
+  typeof removed === 'string' ? removed === hole.id : sameRemovedHole(removed, part, hole),
+))
+
+const legMountHoles = (part: PartName, width: number, height: number, c: Config, holes: Hole[]) => {
+  if (!c.legMounts || (part !== 'longSkirt' && part !== 'shortSkirt')) return
+  const inset = c.legEdgeOffset + (part === 'shortSkirt' ? c.thickness : 0)
+  const diameter = boltHoleDiameter(c.legBoltDiameter)
+  const baseY = -height / 2 + c.thickness / 2 + c.legBottomOffset
+  for (const side of [-1, 1]) {
     for (let col = 0; col < c.legCols; col += 1) {
       for (let row = 0; row < c.legRows; row += 1) {
-        for (const sideX of [-1, 1]) {
-          for (const sideY of [-1, 1]) {
-            add(
-              holes,
-              part,
-              sideX * (width / 2 - c.legEdgeOffset) + startX + col * c.legPatternX,
-              sideY * (height / 2 - c.legEdgeOffset) + startY + row * c.legPatternY,
-              c.legBoltDiameter,
-              'mount',
-            )
-          }
-        }
+        pushHole(holes, part, side * (width / 2 - inset - col * c.legPatternX), baseY + row * c.legPatternY, diameter, 'mount')
       }
     }
   }
-
-  if (part === 'top' && c.liftingHoles) {
-    for (const side of [-1, 1]) add(holes, part, side * (width / 2 - 100), 0, 28, 'lift')
-  }
-
-  return holes.filter(h => !c.removedHoles.includes(h.id))
 }
 
-const tabCenters = (span: number, c: Config) => {
-  const usable = Math.max(0, span - 2 * Math.max(c.margin, c.tabWidth))
-  const count = Math.max(2, Math.floor(usable / Math.max(c.tabWidth * 3, 180)) + 1)
-  if (count === 1) return [0]
-  const step = usable / (count - 1)
-  return Array.from({ length: count }, (_, index) => -usable / 2 + index * step)
+const decorate = (part: PartName, width: number, height: number, c: Config, base: Hole[]) => {
+  const holes = [...base]
+  c.customHoles
+    .filter(hole => hole.part === part && Math.abs(hole.x) + hole.d / 2 <= width / 2 && Math.abs(hole.y) + hole.d / 2 <= height / 2)
+    .forEach(hole => pushHole(holes, part, hole.x, hole.y, hole.d, 'custom', `custom:${String(hole.id)}`))
+  legMountHoles(part, width, height, c, holes)
+  return removeConfiguredHoles(part, holes, c)
 }
 
-const slotsFor = (part: PartName, width: number, height: number, c: Config): Slot[] => {
-  if (part !== 'top') return []
-  const slotW = c.tabWidth + c.clearance
-  const slotT = c.thickness + c.clearance
-  const slots: Slot[] = []
-
-  for (const x of tabCenters(width, c)) {
-    slots.push({ x, y: -height / 2 + c.thickness / 2, width: slotW, height: slotT })
-    slots.push({ x, y: height / 2 - c.thickness / 2, width: slotW, height: slotT })
-  }
-  for (const y of tabCenters(height, c)) {
-    slots.push({ x: -width / 2 + c.thickness / 2, y, width: slotT, height: slotW })
-    slots.push({ x: width / 2 - c.thickness / 2, y, width: slotT, height: slotW })
-  }
-
-  if (c.ribs) {
-    const shortRibCount = Math.max(1, Math.floor((c.length - 2 * c.margin) / c.ribSpacing))
-    const xStart = -((shortRibCount - 1) * c.ribSpacing) / 2
-    for (let index = 0; index < shortRibCount; index += 1) {
-      const x = xStart + index * c.ribSpacing
-      for (const y of tabCenters(height, c)) slots.push({ x, y, width: slotT, height: slotW })
+// A relief is the long way round a concave material corner, not a circle laid over an untrimmed edge.
+const relievedPolygon = (vertices: Point[], c: Config): Contour => {
+  const corners = vertices.map((vertex, index) => {
+    const previous = vertices[(index + vertices.length - 1) % vertices.length]
+    const next = vertices[(index + 1) % vertices.length]
+    const beforeLength = distance(previous, vertex)
+    const afterLength = distance(vertex, next)
+    const incoming = point((vertex.x - previous.x) / beforeLength, (vertex.y - previous.y) / beforeLength)
+    const outgoing = point((next.x - vertex.x) / afterLength, (next.y - vertex.y) / afterLength)
+    const concave = incoming.x * outgoing.y - incoming.y * outgoing.x < -epsilon
+    const radius = c.dogBones && concave ? Math.min(c.dogBoneDiameter / 2, beforeLength / 2, afterLength / 2) : 0
+    return {
+      center: vertex,
+      before: point(vertex.x - incoming.x * radius, vertex.y - incoming.y * radius),
+      after: point(vertex.x + outgoing.x * radius, vertex.y + outgoing.y * radius),
+      radius,
     }
-    for (const y of [-height / 3, height / 3]) {
-      for (const x of tabCenters(width, c)) slots.push({ x, y, width: slotW, height: slotT })
+  })
+  const result: Contour = []
+  for (let index = 0; index < corners.length; index += 1) {
+    const corner = corners[index]
+    const previous = corners[(index + corners.length - 1) % corners.length]
+    if (distance(previous.after, corner.before) > epsilon) result.push(line(previous.after, corner.before))
+    if (corner.radius) result.push({
+      type: 'arc', center: corner.center, radius: corner.radius,
+      start: Math.atan2(corner.before.y - corner.center.y, corner.before.x - corner.center.x) * 180 / Math.PI,
+      end: Math.atan2(corner.after.y - corner.center.y, corner.after.x - corner.center.x) * 180 / Math.PI,
+      clockwise: true,
+    })
+  }
+  return result
+}
+
+const topEdgeCenters = (span: number, c: Config, shortSide = false) => {
+  const inset = 80 + (shortSide ? c.thickness : 0)
+  const count = Math.max(2, Math.round((span - 2 * inset) / 250) + 1)
+  return pointsAlong(-span / 2 + inset, span / 2 - inset, count)
+}
+
+const skirtEndTabCenters = (low: number, high: number) => {
+  const inset = 80
+  const count = Math.max(1, Math.round((high - low - 2 * inset) / 250) + 1)
+  return pointsAlong(low + inset, high - inset, count)
+}
+
+const topOutline = (c: Config): Contour => {
+  const edge = (span: number, halfDepth: number, centers: number[]) => {
+    const halfTab = (c.tabWidth + c.clearance) / 2
+    const depth = c.thickness + c.clearance
+    return [point(-span / 2, -halfDepth), ...centers.flatMap(center => [
+      point(center - halfTab, -halfDepth), point(center - halfTab, -halfDepth + depth),
+      point(center + halfTab, -halfDepth + depth), point(center + halfTab, -halfDepth),
+    ])]
+  }
+  const vertices: Point[] = []
+  for (let side = 0; side < 4; side += 1) {
+    const span = side % 2 ? c.width : c.length
+    const depth = (side % 2 ? c.length : c.width) / 2
+    for (const p of edge(span, depth, topEdgeCenters(span, c, Boolean(side % 2)))) {
+      vertices.push(side === 0 ? p : side === 1 ? point(-p.y, p.x) : side === 2 ? point(-p.x, -p.y) : point(p.y, -p.x))
     }
   }
-  return slots
+  return relievedPolygon(vertices, c)
+}
+
+const slot = (x: number, y: number, width: number, height: number, c: Config) => ({
+  x, y, width, height,
+  contour: relievedPolygon([
+    point(x - width / 2, y - height / 2), point(x - width / 2, y + height / 2),
+    point(x + width / 2, y + height / 2), point(x + width / 2, y - height / 2),
+  ], c),
+})
+
+const centeredGridCoordinates = (span: number, c: Config) => {
+  const count = Math.max(0, Math.floor((span - 2 * c.margin) / c.pitch + epsilon) + 1)
+  return Array.from({ length: count }, (_, index) => (index - (count - 1) / 2) * c.pitch)
+}
+
+const ribPositions = (span: number, c: Config, fixedCount?: number) => {
+  if (!c.ribs) return []
+  const count = fixedCount ?? Math.max(1, Math.ceil(span / c.ribSpacing) - 1)
+  const gridCoordinates = centeredGridCoordinates(span, c)
+  const gaps = gridCoordinates.slice(1).map((value, index) => (value + gridCoordinates[index]) / 2)
+  return Array.from({ length: count }, (_, index) => {
+    const desired = (index + 1) * span / (count + 1) - span / 2
+    if (Math.abs(desired) < epsilon || !gaps.length) return desired
+    return gaps.reduce((closest, value) => {
+      const difference = Math.abs(value - desired) - Math.abs(closest - desired)
+      return difference < -epsilon || Math.abs(difference) < epsilon && Math.abs(value) < Math.abs(closest) ? value : closest
+    })
+  })
+}
+
+const ribTabs = (span: number, intersections: number[], c: Config) => {
+  const boundaries = [-span / 2 + c.thickness, ...intersections, span / 2 - c.thickness]
+  return boundaries.slice(1).flatMap((value, index) => {
+    const previous = boundaries[index]
+    const count = Math.max(1, Math.floor((value - previous) / 250))
+    return Array.from({ length: count }, (_, tab) => previous + (tab + 1) * (value - previous) / (count + 1))
+  })
+}
+
+export const framePositions = (c: Config) => ({
+  short: ribPositions(c.length, c), long: ribPositions(c.width, c, 2),
+})
+
+const internalSlots = (c: Config) => {
+  if (!c.ribs) return []
+  const positions = framePositions(c)
+  const result: ReturnType<typeof slot>[] = []
+  for (const y of positions.long) {
+    for (const x of ribTabs(c.length, positions.short, c)) result.push(slot(x, y, c.tabWidth + c.clearance, c.thickness + c.clearance, c))
+  }
+  for (const x of positions.short) {
+    for (const y of ribTabs(c.width, positions.long, c)) result.push(slot(x, y, c.thickness + c.clearance, c.tabWidth + c.clearance, c))
+  }
+  return result
+}
+
+const skirtSlots = (name: PartName, c: Config) => {
+  if (!c.ribs || name === 'longRib' || name === 'shortRib') return []
+  const positions = framePositions(c)
+  const centers = name === 'longSkirt' ? positions.short : positions.long
+  return centers.map(x => slot(x, c.thickness / 2, c.thickness + c.clearance, c.tabWidth + c.clearance, c))
+}
+
+const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
+  const low = -c.height / 2 + c.thickness / 2
+  const high = c.height / 2 - c.thickness / 2
+  const tabHigh = high + c.thickness
+  const outer = width / 2
+  const body = outer - (short ? c.thickness : 0)
+  const halfEar = (c.tabWidth + (short ? 0 : c.clearance)) / 2
+  const inner = outer - c.thickness - c.clearance
+  const right = skirtEndTabCenters(low, high).flatMap(center => short
+    ? [point(body, center - halfEar), point(outer, center - halfEar), point(outer, center + halfEar), point(body, center + halfEar)]
+    : [point(outer, center - halfEar), point(inner, center - halfEar), point(inner, center + halfEar), point(outer, center + halfEar)])
+  const vertices = [point(-body, low), point(body, low), ...right, point(body, high)]
+  for (const center of topEdgeCenters(width, c, short).reverse()) {
+    vertices.push(point(center + c.tabWidth / 2, high), point(center + c.tabWidth / 2, tabHigh), point(center - c.tabWidth / 2, tabHigh), point(center - c.tabWidth / 2, high))
+  }
+  vertices.push(point(-body, high), ...right.slice().reverse().map(p => point(-p.x, p.y)))
+  return relievedPolygon(vertices, c)
+}
+
+const ribOutline = (width: number, c: Config, long: boolean): Contour => {
+  const low = -c.height / 2 + c.thickness
+  const high = c.height / 2 - c.thickness
+  const tabHigh = c.height / 2
+  const body = width / 2 - c.thickness
+  const outer = width / 2
+  const positions = framePositions(c)
+  const crossings = long ? positions.short : positions.long
+  const halfLap = (c.thickness + c.clearance) / 2
+  const vertices = [point(-body, low)]
+  if (long) for (const center of crossings) vertices.push(
+    point(center - halfLap, low), point(center - halfLap, c.clearance),
+    point(center + halfLap, c.clearance), point(center + halfLap, low),
+  )
+  vertices.push(point(body, low), point(body, -c.tabWidth / 2), point(outer, -c.tabWidth / 2), point(outer, c.tabWidth / 2), point(body, c.tabWidth / 2), point(body, high))
+  const topFeatures = [
+    ...ribTabs(width, crossings, c).map(center => ({ center, half: c.tabWidth / 2, end: tabHigh })),
+    ...(long ? [] : crossings.map(center => ({ center, half: halfLap, end: -c.clearance }))),
+  ].sort((a, b) => b.center - a.center)
+  for (const feature of topFeatures) vertices.push(
+    point(feature.center + feature.half, high), point(feature.center + feature.half, feature.end),
+    point(feature.center - feature.half, feature.end), point(feature.center - feature.half, high),
+  )
+  vertices.push(point(-body, high), point(-body, c.tabWidth / 2), point(-outer, c.tabWidth / 2), point(-outer, -c.tabWidth / 2), point(-body, -c.tabWidth / 2))
+  return relievedPolygon(vertices, c)
+}
+
+const liftingCutout = (c: Config): Contour => {
+  const radius = Math.min(25, (c.height - c.thickness) / 5)
+  const halfStraight = 80 - radius
+  return [
+    line(point(-halfStraight, radius), point(halfStraight, radius)),
+    { type: 'arc', center: point(halfStraight, 0), radius, start: 90, end: -90, clockwise: true },
+    line(point(halfStraight, -radius), point(-halfStraight, -radius)),
+    { type: 'arc', center: point(-halfStraight, 0), radius, start: -90, end: 90, clockwise: true },
+  ]
+}
+
+const definition = (c: Config): Array<{ name: PartName; width: number; height: number; count: number; label: string; outline: Contour; grid: boolean }> => {
+  const positions = framePositions(c)
+  return [
+    { name: 'top', width: c.length, height: c.width, count: 1, label: 'TOP PLATE', outline: topOutline(c), grid: true },
+    { name: 'longSkirt', width: c.length, height: c.height, count: 2, label: 'LONG SKIRT', outline: skirtOutline(c.length, c, false), grid: c.skirtHoles },
+    { name: 'shortSkirt', width: c.width, height: c.height, count: 2, label: 'SHORT SKIRT', outline: skirtOutline(c.width, c, true), grid: c.skirtHoles },
+    { name: 'longRib', width: c.length, height: c.height - c.thickness, count: positions.long.length, label: 'LONG RIB', outline: ribOutline(c.length, c, true), grid: false },
+    { name: 'shortRib', width: c.width, height: c.height - c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
+  ]
 }
 
 export const makeParts = (c: Config): Part[] => {
-  const shortRibCount = c.ribs ? Math.max(1, Math.floor((c.length - 2 * c.margin) / c.ribSpacing)) : 0
-  const definitions: Array<{ name: PartName; width: number; height: number; count: number; gridEnabled: boolean; label: string }> = [
-    { name: 'top', width: c.length, height: c.width, count: 1, gridEnabled: true, label: 'TOP PLATE' },
-    { name: 'longSkirt', width: c.length, height: c.height, count: 2, gridEnabled: c.skirtHoles, label: 'LONG SKIRT' },
-    { name: 'shortSkirt', width: c.width, height: c.height, count: 2, gridEnabled: c.skirtHoles, label: 'SHORT SKIRT' },
-    { name: 'longRib', width: c.length - 2 * c.thickness, height: c.height - c.thickness, count: c.ribs ? 2 : 0, gridEnabled: false, label: 'LONG RIB' },
-    { name: 'shortRib', width: c.width - 2 * c.thickness, height: c.height - c.thickness, count: shortRibCount, gridEnabled: false, label: 'SHORT RIB' },
-  ]
-
-  return definitions
-    .filter(definition => definition.count > 0)
-    .map(definition => ({
-      name: definition.name,
-      width: definition.width,
-      height: definition.height,
-      count: definition.count,
-      holes: decorate(
-        definition.name,
-        definition.width,
-        definition.height,
-        c,
-        grid(definition.name, definition.width, definition.height, c, definition.gridEnabled),
-      ),
-      slots: slotsFor(definition.name, definition.width, definition.height, c),
-      label: definition.label,
-    }))
+  const internal = internalSlots(c)
+  return definition(c).filter(item => item.count > 0).map(item => {
+    const slots = item.name === 'top' ? internal : skirtSlots(item.name, c)
+    const mounts: Hole[] = []
+    legMountHoles(item.name, item.width, item.height, c, mounts)
+    return {
+      name: item.name,
+      width: item.width,
+      height: item.height,
+      count: item.count,
+      label: item.label,
+      holes: decorate(item.name, item.width, item.height, c, grid(item.name, item.width, item.height, c, item.grid)).filter(hole => {
+        if (hole.kind !== 'grid') return true
+        if (slots.some(slot => Math.hypot(Math.max(Math.abs(hole.x - slot.x) - slot.width / 2, 0), Math.max(Math.abs(hole.y - slot.y) - slot.height / 2, 0)) < hole.d / 2 + 2)) return false
+        if (mounts.some(mount => distance(hole, mount) < (hole.d + mount.d) / 2 + 12)) return false
+        return !(c.liftingHoles && item.name === 'longSkirt' && Math.abs(hole.x) <= 100 && Math.abs(hole.y) < Math.min(25, (c.height - c.thickness) / 5) + hole.d / 2)
+      }),
+      slots: slots.map(({ x, y, width, height }) => ({ x, y, width, height })),
+      contours: [item.outline, ...slots.map(itemSlot => itemSlot.contour), ...(c.liftingHoles && item.name === 'longSkirt' ? [liftingCutout(c)] : [])],
+    }
+  })
 }
 
 export const layoutParts = (c: Config): Layout => {
-  const order: PartName[] = ['longRib', 'shortRib', 'longSkirt', 'shortSkirt', 'top']
+  // Fabrication layout is packed from the top plate at Y=0 upward, exactly as
+  // the exported full DXF: top, skirts, longitudinal ribs, transverse ribs.
+  const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib']
   const parts = makeParts(c).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
+  const packed = parts.map(part => ({
+    part,
+    width: part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * c.thickness : 0),
+    height: part.height - (part.name === 'top' ? 0 : c.thickness),
+  }))
   const count = parts.reduce((sum, part) => sum + part.count, 0)
-  const height = parts.reduce((sum, part) => sum + part.height * part.count, 0) + Math.max(0, count - 1) * layoutGap
-  const width = Math.max(...parts.map(part => part.width))
+  const height = packed.reduce((sum, item) => sum + item.height * item.part.count, 0) + Math.max(0, count - 1) * layoutGap
+  const width = Math.max(...packed.map(item => item.width))
   const instances: PlacedPart[] = []
   let cursor = 0
-  for (const part of parts) {
+  for (const { part, width: bodyWidth, height: bodyHeight } of packed) {
     for (let instance = 0; instance < part.count; instance += 1) {
-      const y = height / 2 - cursor - part.height / 2
-      instances.push({ part, instance, position: { x: 0, y } })
-      cursor += part.height + layoutGap
+      instances.push({ part, instance, position: point(bodyWidth / 2, cursor + bodyHeight / 2) })
+      cursor += bodyHeight + layoutGap
     }
   }
   return { instances, width, height }
 }
 
 export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
-  if (!c.engraving || part.name !== 'top') return []
-  const offset = c.engravingMode === 'between' ? c.pitch / 2 : 0
   const lines: EngravingLine[] = []
-  for (let x = -part.width / 2 + c.margin + offset; x <= part.width / 2 - c.margin + 0.001; x += c.pitch) {
-    lines.push({ from: { x, y: -part.height / 2 + c.margin }, to: { x, y: part.height / 2 - c.margin } })
+  if (c.engraving && part.name === 'top') {
+    const xs = centeredGridCoordinates(part.width, c)
+    const ys = centeredGridCoordinates(part.height, c)
+    const step = c.grid === 'staggered' ? c.pitch / 2 : c.pitch
+    const offset = c.engravingMode === 'between' ? step / 2 : 0
+    const halfW = ((xs.length - 1) * c.pitch) / 2 + offset
+    const halfH = ((ys.length - 1) * c.pitch) / 2 + offset
+    for (let x = -halfW; x <= halfW + epsilon; x += step) lines.push({ from: point(x, -halfH), to: point(x, halfH) })
+    for (let y = -halfH; y <= halfH + epsilon; y += step) lines.push({ from: point(-halfW, y), to: point(halfW, y) })
   }
-  for (let y = -part.height / 2 + c.margin + offset; y <= part.height / 2 - c.margin + 0.001; y += c.pitch) {
-    lines.push({ from: { x: -part.width / 2 + c.margin, y }, to: { x: part.width / 2 - c.margin, y } })
+  if (c.nameMarking) {
+    const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib']
+    const value = `${order.indexOf(part.name) + 1} ${part.label}`
+    const skirt = part.name.endsWith('Skirt')
+    const bodyHalfWidth = part.width / 2 - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? c.thickness : 0)
+    const bodyHeight = skirt ? c.height - c.thickness : c.height - 2 * c.thickness
+    const height = part.name === 'top' ? (c.ribs ? 18 : 45) : Math.min(45, Math.max(14, bodyHeight * 0.13))
+    const unit = height / 6
+    const halfH = part.name === 'top' ? part.height / 2 : bodyHeight / 2
+    const skirtInset = Math.min(16, bodyHeight * 0.12)
+    const glyphBounds = value.split('').flatMap((character, index) => (strokeGlyphs[character] ?? [])
+      .flatMap(([x1, , x2]) => [index + x1 / 6, index + x2 / 6]))
+    const minGlyphX = Math.min(...glyphBounds)
+    const maxGlyphX = Math.max(...glyphBounds)
+    const centeredLongSkirt = skirt && part.name === 'longSkirt' && !c.legMounts && bodyHeight <= 3 * height
+    const rightLongSkirt = skirt && part.name === 'longSkirt' && !c.legMounts && !centeredLongSkirt && bodyHeight * 0.13 < 14
+    const origin = point(
+      centeredLongSkirt ? -(minGlyphX + maxGlyphX) * height / 2
+        : rightLongSkirt ? bodyHalfWidth - skirtInset - maxGlyphX * height
+          : skirt ? -bodyHalfWidth + skirtInset : -bodyHalfWidth + 16,
+      centeredLongSkirt ? -height / 2
+        : skirt ? (c.legMounts ? halfH - skirtInset - height : -halfH + skirtInset) : -halfH + 16,
+    )
+    for (let index = 0; index < value.length; index += 1) {
+      for (const [x1, y1, x2, y2] of strokeGlyphs[value[index]] ?? []) lines.push({
+        from: point(origin.x + index * height + x1 * unit, origin.y + y1 * unit),
+        to: point(origin.x + index * height + x2 * unit, origin.y + y2 * unit),
+      })
+    }
   }
   return lines
 }
 
+const signedArea = (contour: Contour) => contour.reduce((sum, segment) => {
+  if (segment.type === 'line') return sum + (segment.from.x * segment.to.y - segment.to.x * segment.from.y) / 2
+  const end = segment.start + arcSweep(segment)
+  const startRad = radians(segment.start)
+  const endRad = radians(end)
+  return sum + (
+    segment.center.x * segment.radius * (Math.sin(endRad) - Math.sin(startRad))
+    - segment.center.y * segment.radius * (Math.cos(endRad) - Math.cos(startRad))
+    + segment.radius ** 2 * (endRad - startRad)
+  ) / 2
+}, 0)
+
+export const contourLength = (contour: Contour) => contour.reduce((sum, segment) => {
+  if (segment.type === 'line') return sum + distance(segment.from, segment.to)
+  return sum + segment.radius * Math.abs(radians(arcSweep(segment)))
+}, 0)
+
 export const totals = (c: Config) => {
   const parts = makeParts(c)
   const holes = parts.reduce((sum, part) => sum + part.holes.length * part.count, 0)
-  const holeCut = parts.reduce(
-    (sum, part) => sum + part.holes.reduce((partSum, hole) => partSum + Math.PI * hole.d, 0) * part.count,
-    0,
-  )
-  const outlineCut = parts.reduce((sum, part) => sum + 2 * (part.width + part.height) * part.count, 0)
-  const cut = (outlineCut * 1.242 + holeCut) / 1000
-  const grossArea = c.length * c.width
-    + 2 * c.length * c.height
-    + 2 * c.width * c.height
-    + (c.ribs
-      ? 2 * (c.length - 2 * c.thickness) * (c.height - c.thickness)
-        + Math.max(1, Math.floor((c.length - 2 * c.margin) / c.ribSpacing)) * (c.width - 2 * c.thickness) * (c.height - c.thickness)
-      : 0)
-  const removedArea = parts.reduce(
-    (sum, part) => sum + part.holes.reduce((partSum, hole) => partSum + Math.PI * (hole.d / 2) ** 2, 0) * part.count,
-    0,
-  )
-  const kg = (grossArea * grossAreaFactor - removedArea * holeAreaFactor) * c.thickness * 7.85e-6
-  const engraving = c.engraving
-    ? ((c.length - 2 * c.margin) * Math.max(0, Math.floor((c.width - 2 * c.margin) / c.pitch) + 1)
-      + (c.width - 2 * c.margin) * Math.max(0, Math.floor((c.length - 2 * c.margin) / c.pitch) + 1)) / 1000
-    : 0
+  const cut = parts.reduce((sum, part) => {
+    const contourCut = part.contours.reduce((partSum, contour) => partSum + contourLength(contour), 0)
+    const holeCut = part.holes.reduce((partSum, hole) => partSum + Math.PI * hole.d, 0)
+    return sum + (contourCut + holeCut) * part.count
+  }, 0) / 1000
+  const netArea = parts.reduce((sum, part) => {
+    const contourArea = Math.abs(signedArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedArea(contour)), 0)
+    const holeArea = part.holes.reduce((area, hole) => area + Math.PI * (hole.d / 2) ** 2, 0)
+    return sum + (contourArea - holeArea) * part.count
+  }, 0)
+  const engraving = parts.reduce((total, part) => total + engravingLines(part, c).reduce((sum, mark) => sum + distance(mark.from, mark.to), 0) * part.count, 0) / 1000
   const fit = parts.every(part =>
     (part.width <= c.sheetLength && part.height <= c.sheetWidth)
     || (part.height <= c.sheetLength && part.width <= c.sheetWidth),
   )
-  return { parts, holes, cut, kg, engraving, fit }
+  return { parts, holes, cut, kg: netArea * c.thickness * densityKgPerMm3, engraving, fit }
 }
 
-export const outline = (part: Part, c: Config): Point[] => {
-  const halfW = part.width / 2
-  const halfH = part.height / 2
-  if (part.name === 'top') {
-    return [
-      { x: -halfW, y: -halfH },
-      { x: halfW, y: -halfH },
-      { x: halfW, y: halfH },
-      { x: -halfW, y: halfH },
-    ]
-  }
+export const contourPoints = (contour: Contour, arcSteps = 8): Point[] => contour.flatMap(segment => {
+  if (segment.type === 'line') return [segment.from]
+  const end = segment.start + arcSweep(segment)
+  const steps = Math.max(2, Math.ceil(Math.abs(end - segment.start) / 360 * arcSteps))
+  return Array.from({ length: steps }, (_, index) => arcPoint(segment.center, segment.radius, segment.start + (end - segment.start) * index / steps))
+})
 
-  const points: Point[] = [
-    { x: -halfW, y: -halfH },
-    { x: halfW, y: -halfH },
-    { x: halfW, y: halfH },
-  ]
-  const centers = tabCenters(part.width, c).reverse()
-  for (const center of centers) {
-    points.push(
-      { x: center + c.tabWidth / 2, y: halfH },
-      { x: center + c.tabWidth / 2, y: halfH + c.thickness },
-      { x: center - c.tabWidth / 2, y: halfH + c.thickness },
-      { x: center - c.tabWidth / 2, y: halfH },
-    )
+const arcSweep = (segment: ArcSegment) => segment.clockwise
+  ? -((segment.start - segment.end + 360) % 360 || 360)
+  : ((segment.end - segment.start + 360) % 360 || 360)
+
+const svgNumber = (value: number) => Number(value.toFixed(3)).toString()
+export const svgContourPath = (contour: Contour) => contour.map((segment, index) => {
+  if (segment.type === 'line') {
+    const start = `${svgNumber(segment.from.x)} ${svgNumber(segment.from.y)}`
+    const end = `${svgNumber(segment.to.x)} ${svgNumber(segment.to.y)}`
+    return `${index ? '' : `M ${start} `}L ${end}`
   }
-  points.push({ x: -halfW, y: halfH })
-  return points
-}
+  const start = arcPoint(segment.center, segment.radius, segment.start)
+  const end = arcPoint(segment.center, segment.radius, segment.end)
+  const sweep = Math.abs(arcSweep(segment)) > 180 ? 1 : 0
+  return `${index ? '' : `M ${svgNumber(start.x)} ${svgNumber(start.y)} `}A ${svgNumber(segment.radius)} ${svgNumber(segment.radius)} 0 ${sweep} ${segment.clockwise ? 0 : 1} ${svgNumber(end.x)} ${svgNumber(end.y)}`
+}).join(' ') + ' Z'
+
+/**
+ * Shared even-odd SVG path in fabrication coordinates.  Consumers should use
+ * `fill-rule="evenodd"` and flip Y once (`scale(1 -1)`) for screen SVG.
+ */
+export const partSvgPath = (part: Part, _c: Config) => [
+  ...part.contours.map(svgContourPath),
+  ...part.holes.map(hole => `M ${svgNumber(hole.x - hole.d / 2)} ${svgNumber(hole.y)} a ${svgNumber(hole.d / 2)} ${svgNumber(hole.d / 2)} 0 1 0 ${svgNumber(hole.d)} 0 a ${svgNumber(hole.d / 2)} ${svgNumber(hole.d / 2)} 0 1 0 -${svgNumber(hole.d)} 0 Z`),
+].join(' ')
