@@ -140,6 +140,14 @@ h3 small { margin-left: 2px; color: var(--faint); font-size: 10px; font-weight: 
 .canvas-tools button.active.holes-tool { color: #b91c1c; background: #fef2f2; border-color: #fca5a5; }
 .canvas-tools button.active.ruler-tool { color: #c2410c; background: #fff7ed; border-color: #fdba74; }
 .three-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+.part-tooltip { position: absolute; z-index: 5; pointer-events: none; padding: 12px; border: 1px solid #3b82f566; border-radius: 12px; background: #fffffff7; color: #1e293b; backdrop-filter: blur(12px); box-shadow: 0 25px 50px -12px #0004; max-width: calc(100% - 16px); }
+.part-tooltip strong { display: block; color: #2563eb; font-size: 13px; line-height: 19.5px; border-bottom: 1px solid #3b82f54d; padding-bottom: 4px; margin-bottom: 6px; }
+.part-tooltip dl { display: grid; grid-template-columns: auto auto; gap: 4px 16px; margin: 0; font-size: 12px; line-height: 16px; }
+.part-tooltip dt { color: #64748b; }
+.part-tooltip dd { margin: 0; text-align: right; font-weight: 500; }
+[data-theme="dark"] .part-tooltip { background: #0f172af2; color: #e2e8f0; }
+[data-theme="dark"] .part-tooltip strong { color: #60a5fa; }
+[data-theme="dark"] .part-tooltip dt { color: #94a3b8; }
 .three-tools { position: absolute; z-index: 3; top: 80px; left: 16px; background: #ffffffE0; border: 1px solid var(--input-border); border-radius: 12px; padding: 12px; box-shadow: 0 1px 3px #0001; }
 .three-tools > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .three-tools h3 { font-size: 14px; line-height: 20px; margin: 0; color: #4338ca; }

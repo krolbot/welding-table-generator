@@ -12,6 +12,7 @@ import {
   defaults,
   display,
   mmPerInch,
+  maxTabWidth,
   partLabels,
   projectFields,
   projectConfig,
@@ -49,12 +50,12 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   holeDiameter: { min: 1, max: 50 },
   pitch: { min: 5, max: 500 },
   margin: { min: 0, max: 500 },
-  length: { min: 500, max: 5000 },
-  width: { min: 400, max: 5000 },
-  height: { min: 50, max: 500 },
-  ribSpacing: { min: 200, max: 600 },
+  length: { min: 500, max: 200 * mmPerInch },
+  width: { min: 400, max: 200 * mmPerInch },
+  height: { min: 50, max: 20 * mmPerInch },
+  ribSpacing: { min: 200, max: 24 * mmPerInch },
   thickness: { min: 1, max: 30 },
-  tabWidth: { min: 5, max: 150 },
+  tabWidth: { min: 5, max: Math.floor((20 * mmPerInch - 1) / 2) - 5 },
   clearance: { min: 0, max: 2.5 },
   dogBoneDiameter: { min: 0.5, max: 5 },
   legBoltDiameter: { min: 1, max: 100 },
@@ -72,6 +73,10 @@ const booleanKeys: BooleanKey[] = [
   'skirtHoles', 'engraving', 'nameMarking', 'ribs', 'dogBones', 'legMounts', 'liftingHoles',
   'showDimensions', 'renderHoles', 'highlighting',
 ]
+const inchRanges: Partial<Record<NumericKey, { min: number; max: number; step: number }>> = {
+  length: { min: 20, max: 200, step: 1 }, width: { min: 16, max: 200, step: 1 },
+  height: { min: 2, max: 20, step: 0.5 }, ribSpacing: { min: 8, max: 24, step: 1 },
+}
 const partNames = Object.keys(partLabels) as PartName[]
 const clampNumeric = (key: NumericKey, value: number) => {
   const bounds = numericBounds[key]
@@ -131,6 +136,7 @@ function normalizeConfig(input: unknown): Config {
   result.legCols = Math.max(1, Math.round(result.legCols))
   result.legRows = Math.max(1, Math.round(result.legRows))
   result.exploded = Math.max(0, Math.min(100, result.exploded))
+  result.tabWidth = Math.min(result.tabWidth, maxTabWidth(result))
   return result
 }
 
@@ -252,7 +258,7 @@ export default function App() {
     if (!Number.isFinite(value)) return
     setConfig(current => {
       const next = { ...current, [key]: clampNumeric(key, value) }
-      if (key === 'height' || key === 'thickness') next.tabWidth = Math.min(next.tabWidth, Math.max(5, Math.floor((next.height - next.thickness) / 2) - 5))
+      if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key)) next.tabWidth = Math.min(next.tabWidth, maxTabWidth(next))
       if (key === 'legBoltDiameter' || key === 'legPatternX' || key === 'legPatternY') {
         next.legPatternX = Math.max(next.legPatternX, next.legBoltDiameter * 1.5)
         next.legPatternY = Math.max(next.legPatternY, next.legBoltDiameter * 1.5)
@@ -266,9 +272,14 @@ export default function App() {
   const productionLabel = (value: number, conversion: number) => (config.units === 'mm' ? value : Number(value.toFixed(1)) * conversion).toFixed(1)
   const numericInput = (key: NumericKey, label: string, min: number, max: number, step: number, precision = 0) => {
     const factor = config.units === 'mm' ? 1 : mmPerInch
-    return <label className="field"><span>{label}</span><NumberInput value={numberLabel(config[key], precision ? precision + 2 : 3)} min={min / factor} max={max / factor} step={step / factor} onValue={value => setNumeric(key, readDisplay(value, config.units))} /></label>
+    const inputStep = config.units === 'mm' ? step : key === 'holeDiameter' ? 0.05 : key === 'thickness' ? 0.01 : key === 'clearance' ? 0.002 : 0.25
+    return <label className="field"><span>{label}</span><NumberInput value={numberLabel(config[key], precision ? precision + 2 : 3)} min={min / factor} max={max / factor} step={inputStep} onValue={value => setNumeric(key, readDisplay(value, config.units))} /></label>
   }
-  const slider = (key: NumericKey, label: string, min: number, max: number, step: number, percentage = false) => <label className="slider-field"><span>{label}<output>{percentage ? `${config[key]}%` : numberLabel(config[key], 2)}</output></span><input aria-label={label} type="range" min={min} max={max} step={step} value={config[key]} onChange={event => setNumeric(key, Number(event.target.value))} /></label>
+  const slider = (key: NumericKey, label: string, min: number, max: number, step: number, percentage = false) => {
+    const imperial = config.units === 'inch' ? inchRanges[key] : undefined
+    const range = imperial ?? { min, max, step }
+    return <label className="slider-field"><span>{label}<output>{percentage ? `${config[key]}%` : numberLabel(config[key], 2)}</output></span><input aria-label={label} type="range" min={range.min} max={range.max} step={range.step} value={imperial ? config[key] / mmPerInch : config[key]} onChange={event => setNumeric(key, Number(event.target.value) * (imperial ? mmPerInch : 1))} /></label>
+  }
   const toggle = (key: BooleanKey, label: string) => <label className="checkbox"><input type="checkbox" checked={config[key]} onChange={event => patch(key, event.target.checked)} /><span>{label}</span></label>
   const socialLinks: Array<{ name: string; icon: IconName; url: string }> = [
     { name: 'Ballwool Store', icon: 'cart', url: 'https://ballwool.com/shops/DIYWeldingProjects' },
@@ -460,7 +471,7 @@ export default function App() {
           <section><h3><Icon name="frame" size={14} />Tabs & Slots (Joints)</h3>
             <div className="joint-fields">
               {numericInput('thickness', `Metal Thickness (${unitLabel})`, 1, 30, 1)}
-              {numericInput('tabWidth', `Tab Width (${unitLabel})`, 5, Math.max(5, Math.floor((config.height - config.thickness) / 2) - 5), 5)}
+              {numericInput('tabWidth', `Tab Width (${unitLabel})`, 5, maxTabWidth(config), 5)}
               <div className="joint-clearance">{numericInput('clearance', `Joint Clearance (${unitLabel})`, 0, 2.5, 0.05, 2)}<p className="clearance-note">Max {numberLabel(2.5, 4)} {unitLabel}</p></div>
               <div className="relief-options">{toggle('dogBones', 'Dog-bone Reliefs')}
                 {config.dogBones && <div className="indented relief-control">{slider('dogBoneDiameter', `Diameter (${unitLabel})`, 0.5, 5, 0.5)}</div>}
@@ -470,7 +481,7 @@ export default function App() {
           <section className="ergonomics"><h3><Icon name="settings" size={14} />Ergonomics (Construction)</h3>
             {toggle('legMounts', 'Leg Mount Holes')}
             {config.legMounts && <div className="leg-options">
-              <div className="fields"><label className="field"><span>Bolt size (M)</span><NumberInput value={config.legBoltDiameter} min={1} max={100} step={1} onValue={value => setNumeric('legBoltDiameter', value)} /></label><label className="field"><span>Hole Ø (auto)</span><output>{numberLabel(config.legBoltDiameter + 1.5, 3)} {unitLabel}</output></label></div>
+              <div className="fields"><label className="field"><span>Bolt size (M)</span><NumberInput value={numberLabel(config.legBoltDiameter, 2)} min={1 / (config.units === 'mm' ? 1 : mmPerInch)} max={100 / (config.units === 'mm' ? 1 : mmPerInch)} step={config.units === 'mm' ? 1 : 0.0625} onValue={value => setNumeric('legBoltDiameter', readDisplay(value, config.units))} /></label><label className="field"><span>Hole Ø (auto)</span><output>{numberLabel(config.legBoltDiameter + 1.5, 3)} {unitLabel}</output></label></div>
               <div className="fields">{numericInput('legPatternX', 'Pattern X', config.legBoltDiameter * 1.5, 1000, 5)}{numericInput('legPatternY', 'Pattern Y', config.legBoltDiameter * 1.5, 1000, 5)}</div>
               <div className="fields">{(['legCols', 'legRows'] as const).map((key, index) => <label className="field" key={key}><span>{index ? 'Rows' : 'Holes per row'}</span><select value={config[key]} onChange={event => setNumeric(key, Number(event.target.value))}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>)}</div>
               <div className="fields">{numericInput('legEdgeOffset', 'From edge', 0, 1000, 5)}{numericInput('legBottomOffset', 'From bottom', 0, 1000, 5)}</div>
@@ -495,7 +506,7 @@ export default function App() {
         </div>
         <section className="production-card"><h3><Icon name="frame" size={16} />Production Estimate</h3>
           <div className="estimate"><div><span>Estimated Weight</span><strong>{productionLabel(summary.kg, 2.20462)}<small>{config.units === 'mm' ? 'kg' : 'lb'}</small></strong></div><div><span>Cut Length</span><strong>{productionLabel(summary.cut, 3.28084)}<small>{config.units === 'mm' ? 'm' : 'ft'}</small></strong></div></div>
-          <div className="estimate-extra"><span>Holes: {summary.holes}</span><span>Engraving: {productionLabel(summary.engraving, 3.28084)}{config.units === 'mm' ? 'm' : 'ft'}</span></div>
+          <div className="estimate-extra"><span>Holes: {summary.holes}</span>{summary.engraving > 0 && <span>Engraving: {productionLabel(summary.engraving, 3.28084)}{config.units === 'mm' ? 'm' : 'ft'}</span>}</div>
           <div className="sheet-size"><span>Sheet size ({unitLabel})</span><div><NumberInput aria-label="Sheet length" value={numberLabel(config.sheetLength, 3)} min={1} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetLength', readDisplay(value, config.units))} /><span>×</span><NumberInput aria-label="Sheet width" value={numberLabel(config.sheetWidth, 3)} min={1} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetWidth', readDisplay(value, config.units))} /></div><p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? '✓ All parts fit the sheet' : '⚠ Some parts do not fit the sheet'}</p></div>
         </section>
         <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" title="Open Project (.json)" onClick={() => fileInput.current?.click()}>Open</button><button className="secondary" title="Save Project (.json)" onClick={save}>Save</button></div><button className="secondary full" onClick={() => void share()}>Share Link</button><button className="zip" onClick={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))}>Download ZIP (Parts)</button><button className="dxf" onClick={() => downloadFull(config)}>Full Layout DXF</button></section>

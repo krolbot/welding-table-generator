@@ -24,6 +24,8 @@ export type Layout = { instances: PlacedPart[]; width: number; height: number }
 
 const layoutGap = 80
 const densityKgPerMm3 = 7.85e-6
+const minimumHoleWeb = 3
+const mountHoleWeb = 7
 const epsilon = 1e-6
 const point = (x: number, y: number): Point => ({ x, y })
 const key = (part: PartName, x: number, y: number) => `${part}:${x.toFixed(3)}:${y.toFixed(3)}`
@@ -81,13 +83,19 @@ const legMountHoles = (part: PartName, width: number, height: number, c: Config,
   const inset = c.legEdgeOffset + (part === 'shortSkirt' ? c.thickness : 0)
   const diameter = boltHoleDiameter(c.legBoltDiameter)
   const baseY = -height / 2 + c.thickness / 2 + c.legBottomOffset
+  const pattern: Point[] = []
   for (const side of [-1, 1]) {
     for (let col = 0; col < c.legCols; col += 1) {
       for (let row = 0; row < c.legRows; row += 1) {
-        pushHole(holes, part, side * (width / 2 - inset - col * c.legPatternX), baseY + row * c.legPatternY, diameter, 'mount')
+        const x = side * (width / 2 - inset - col * c.legPatternX)
+        const y = baseY + row * c.legPatternY
+        pattern.push(point(x, y))
       }
     }
   }
+  const bodyWidth = width - (part === 'shortSkirt' ? 2 * c.thickness : 0)
+  if (pattern.some(p => Math.abs(p.x) + diameter / 2 > bodyWidth / 2 || Math.abs(p.y) + diameter / 2 > (height - c.thickness) / 2)) return
+  pattern.forEach(p => pushHole(holes, part, p.x, p.y, diameter, 'mount'))
 }
 
 const decorate = (part: PartName, width: number, height: number, c: Config, base: Hole[]) => {
@@ -134,7 +142,9 @@ const relievedPolygon = (vertices: Point[], c: Config): Contour => {
 
 const topEdgeCenters = (span: number, c: Config, shortSide = false) => {
   const inset = 80 + (shortSide ? c.thickness : 0)
-  const count = Math.max(2, Math.round((span - 2 * inset) / 250) + 1)
+  const regularCount = Math.round((span - 2 * inset) / 250) + 1
+  const fittingCount = Math.floor((span - (shortSide ? 2 * c.thickness : 0)) / c.tabWidth)
+  const count = Math.max(shortSide ? 1 : 2, Math.min(regularCount, fittingCount))
   return pointsAlong(-span / 2 + inset, span / 2 - inset, count)
 }
 
@@ -179,9 +189,10 @@ const centeredGridCoordinates = (span: number, c: Config) => {
 
 const ribPositions = (span: number, c: Config, fixedCount?: number) => {
   if (!c.ribs) return []
-  const count = fixedCount ?? Math.max(1, Math.ceil(span / c.ribSpacing) - 1)
+  let count = fixedCount ?? Math.max(1, Math.ceil(span / c.ribSpacing) - 1)
   const gridCoordinates = centeredGridCoordinates(span, c)
   const gaps = gridCoordinates.slice(1).map((value, index) => (value + gridCoordinates[index]) / 2)
+  if (fixedCount === undefined && count % 2 && gaps.length && !gaps.some(value => Math.abs(value) < epsilon)) count += 1
   return Array.from({ length: count }, (_, index) => {
     const desired = (index + 1) * span / (count + 1) - span / 2
     if (Math.abs(desired) < epsilon || !gaps.length) return desired
@@ -194,11 +205,13 @@ const ribPositions = (span: number, c: Config, fixedCount?: number) => {
 
 const ribTabs = (span: number, intersections: number[], c: Config) => {
   const boundaries = [-span / 2 + c.thickness, ...intersections, span / 2 - c.thickness]
-  return boundaries.slice(1).flatMap((value, index) => {
+  const centers = boundaries.slice(1).flatMap((value, index) => {
     const previous = boundaries[index]
+    if (value - previous < c.tabWidth) return []
     const count = Math.max(1, Math.floor((value - previous) / 250))
     return Array.from({ length: count }, (_, tab) => previous + (tab + 1) * (value - previous) / (count + 1))
   })
+  return centers.length ? centers : [0]
 }
 
 export const framePositions = (c: Config) => ({
@@ -295,6 +308,7 @@ const definition = (c: Config): Array<{ name: PartName; width: number; height: n
 
 export const makeParts = (c: Config): Part[] => {
   const internal = internalSlots(c)
+  const lifting = c.liftingHoles && c.height - c.thickness >= 50 ? liftingCutout(c) : null
   return definition(c).filter(item => item.count > 0).map(item => {
     const slots = item.name === 'top' ? internal : skirtSlots(item.name, c)
     const mounts: Hole[] = []
@@ -307,12 +321,15 @@ export const makeParts = (c: Config): Part[] => {
       label: item.label,
       holes: decorate(item.name, item.width, item.height, c, grid(item.name, item.width, item.height, c, item.grid)).filter(hole => {
         if (hole.kind !== 'grid') return true
-        if (slots.some(slot => Math.hypot(Math.max(Math.abs(hole.x - slot.x) - slot.width / 2, 0), Math.max(Math.abs(hole.y - slot.y) - slot.height / 2, 0)) < hole.d / 2 + 2)) return false
-        if (mounts.some(mount => distance(hole, mount) < (hole.d + mount.d) / 2 + 12)) return false
-        return !(c.liftingHoles && item.name === 'longSkirt' && Math.abs(hole.x) <= 100 && Math.abs(hole.y) < Math.min(25, (c.height - c.thickness) / 5) + hole.d / 2)
+        if (slots.some(slot => Math.hypot(Math.max(Math.abs(hole.x - slot.x) - slot.width / 2, 0), Math.max(Math.abs(hole.y - slot.y) - slot.height / 2, 0)) < hole.d / 2 + minimumHoleWeb)) return false
+        if (mounts.some(mount => {
+          const inset = (hole.d + mount.d) / 2 + mountHoleWeb
+          return Math.abs(hole.x - mount.x) < inset && Math.abs(hole.y - mount.y) < inset
+        })) return false
+        return !(lifting && item.name === 'longSkirt' && Math.abs(hole.x) <= 100 && Math.abs(hole.y) < Math.min(25, (c.height - c.thickness) / 5) + hole.d / 2)
       }),
       slots: slots.map(({ x, y, width, height }) => ({ x, y, width, height })),
-      contours: [item.outline, ...slots.map(itemSlot => itemSlot.contour), ...(c.liftingHoles && item.name === 'longSkirt' ? [liftingCutout(c)] : [])],
+      contours: [item.outline, ...slots.map(itemSlot => itemSlot.contour), ...(lifting && item.name === 'longSkirt' ? [lifting] : [])],
     }
   })
 }
@@ -358,23 +375,25 @@ export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
     const value = `${order.indexOf(part.name) + 1} ${part.label}`
     const skirt = part.name.endsWith('Skirt')
     const bodyHalfWidth = part.width / 2 - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? c.thickness : 0)
-    const bodyHeight = skirt ? c.height - c.thickness : c.height - 2 * c.thickness
-    const height = part.name === 'top' ? (c.ribs ? 18 : 45) : Math.min(45, Math.max(14, bodyHeight * 0.13))
-    const unit = height / 6
-    const halfH = part.name === 'top' ? part.height / 2 : bodyHeight / 2
-    const skirtInset = Math.min(16, bodyHeight * 0.12)
+    const bodyHeight = part.name === 'top' ? part.height : skirt ? c.height - c.thickness : c.height - 2 * c.thickness
+    const inset = Math.min(2 * c.thickness, bodyHeight * 0.12)
     const glyphBounds = value.split('').flatMap((character, index) => (strokeGlyphs[character] ?? [])
       .flatMap(([x1, , x2]) => [index + x1 / 6, index + x2 / 6]))
     const minGlyphX = Math.min(...glyphBounds)
     const maxGlyphX = Math.max(...glyphBounds)
+    const nominalHeight = part.name === 'top' ? 45 : Math.min(45, Math.max(14, bodyHeight * 0.13))
+    const height = Math.min(nominalHeight, (2 * (bodyHalfWidth - inset)) / maxGlyphX)
+    const unit = height / 6
+    const halfH = bodyHeight / 2
     const centeredLongSkirt = skirt && part.name === 'longSkirt' && !c.legMounts && bodyHeight <= 3 * height
     const rightLongSkirt = skirt && part.name === 'longSkirt' && !c.legMounts && !centeredLongSkirt && bodyHeight * 0.13 < 14
+    const topAlignedLongRib = part.name === 'longRib' && bodyHeight >= 2 * bodyHalfWidth
     const origin = point(
       centeredLongSkirt ? -(minGlyphX + maxGlyphX) * height / 2
-        : rightLongSkirt ? bodyHalfWidth - skirtInset - maxGlyphX * height
-          : skirt ? -bodyHalfWidth + skirtInset : -bodyHalfWidth + 16,
+        : rightLongSkirt ? bodyHalfWidth - inset - maxGlyphX * height
+          : -bodyHalfWidth + inset,
       centeredLongSkirt ? -height / 2
-        : skirt ? (c.legMounts ? halfH - skirtInset - height : -halfH + skirtInset) : -halfH + 16,
+        : topAlignedLongRib || skirt && c.legMounts ? halfH - inset - height : -halfH + inset,
     )
     for (let index = 0; index < value.length; index += 1) {
       for (const [x1, y1, x2, y2] of strokeGlyphs[value[index]] ?? []) lines.push({
@@ -403,6 +422,12 @@ export const contourLength = (contour: Contour) => contour.reduce((sum, segment)
   return sum + segment.radius * Math.abs(radians(arcSweep(segment)))
 }, 0)
 
+export const partWeight = (part: Part, c: Config) => {
+  const contourArea = Math.abs(signedArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedArea(contour)), 0)
+  const holeArea = part.holes.reduce((area, hole) => area + Math.PI * (hole.d / 2) ** 2, 0)
+  return (contourArea - holeArea) * c.thickness * densityKgPerMm3
+}
+
 export const totals = (c: Config) => {
   const parts = makeParts(c)
   const holes = parts.reduce((sum, part) => sum + part.holes.length * part.count, 0)
@@ -411,17 +436,13 @@ export const totals = (c: Config) => {
     const holeCut = part.holes.reduce((partSum, hole) => partSum + Math.PI * hole.d, 0)
     return sum + (contourCut + holeCut) * part.count
   }, 0) / 1000
-  const netArea = parts.reduce((sum, part) => {
-    const contourArea = Math.abs(signedArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedArea(contour)), 0)
-    const holeArea = part.holes.reduce((area, hole) => area + Math.PI * (hole.d / 2) ** 2, 0)
-    return sum + (contourArea - holeArea) * part.count
-  }, 0)
+  const kg = parts.reduce((sum, part) => sum + partWeight(part, c) * part.count, 0)
   const engraving = parts.reduce((total, part) => total + engravingLines(part, c).reduce((sum, mark) => sum + distance(mark.from, mark.to), 0) * part.count, 0) / 1000
   const fit = parts.every(part =>
     (part.width <= c.sheetLength && part.height <= c.sheetWidth)
     || (part.height <= c.sheetLength && part.width <= c.sheetWidth),
   )
-  return { parts, holes, cut, kg: netArea * c.thickness * densityKgPerMm3, engraving, fit }
+  return { parts, holes, cut, kg, engraving, fit }
 }
 
 export const contourPoints = (contour: Contour, arcSteps = 8): Point[] => contour.flatMap(segment => {

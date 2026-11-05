@@ -2,9 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { display, type Config } from './model'
-import { framePositions, makeParts, type Contour, type Part } from './geometry'
+import { framePositions, makeParts, partWeight, type Contour, type Part } from './geometry'
 
 type Props = { config: Config; resetToken: number; dark: boolean }
+type PartInfo = { part: Part['name']; isPart: true; name: string; dims: string; weight: string | number; weightUnit: string; holesCount: number; basePos: THREE.Vector3; explodeDir: THREE.Vector3; currentFactor: number }
+type PartMesh = THREE.Mesh<THREE.ExtrudeGeometry, THREE.MeshStandardMaterial> & { userData: PartInfo }
+const colorsFor = (dark: boolean) => ({ part: dark ? 0x64748b : 0x9aa7b8, edge: dark ? 0x020617 : 0x1e293b, dim: dark ? 0x60a5fa : 0x1d4ed8 })
+const partTitles: Record<Part['name'], string> = {
+  top: 'Main Top Plate', longSkirt: 'Longitudinal Skirt', shortSkirt: 'Transverse Skirt',
+  longRib: 'Longitudinal Support Rib', shortRib: 'Transverse Support Rib',
+}
 type Runtime = {
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
@@ -12,49 +19,43 @@ type Runtime = {
   controls: OrbitControls
   assembly: THREE.Group
   dimensions: THREE.Group
+  colors: ReturnType<typeof colorsFor>
 
-  metal: [THREE.MeshLambertMaterial, THREE.MeshBasicMaterial]
-  highlighted: THREE.MeshLambertMaterial
-  meshes: THREE.Mesh[]
+  metal: THREE.MeshStandardMaterial
+  highlighted: THREE.MeshStandardMaterial
+  meshes: PartMesh[]
   renderHoles: boolean
   highlighting: boolean
+  factor: number
+  targetFactor: number
 }
 
-const contourPath = (contour: Contour, reflect: boolean) => {
-  const path = new THREE.Path()
-  const y = (value: number) => reflect ? -value : value
+const contourPath = (contour: Contour, path: THREE.Path = new THREE.Path()) => {
   for (let index = 0; index < contour.length; index += 1) {
     const segment = contour[index]
     if (segment.type === 'line') {
-      if (!index) path.moveTo(segment.from.x, y(segment.from.y))
-      path.lineTo(segment.to.x, y(segment.to.y))
+      if (!index) path.moveTo(segment.from.x, segment.from.y)
+      path.lineTo(segment.to.x, segment.to.y)
     } else {
-      const factor = reflect ? -1 : 1
-      const start = segment.start * Math.PI / 180 * factor
-      const end = segment.end * Math.PI / 180 * factor
-      if (!index) path.moveTo(segment.center.x + segment.radius * Math.cos(start), y(segment.center.y) + segment.radius * Math.sin(start))
-      path.absarc(segment.center.x, y(segment.center.y), segment.radius, start, end, reflect ? !segment.clockwise : Boolean(segment.clockwise))
+      const start = segment.start * Math.PI / 180
+      const end = segment.end * Math.PI / 180
+      if (!index) path.moveTo(segment.center.x + segment.radius * Math.cos(start), segment.center.y + segment.radius * Math.sin(start))
+      path.absarc(segment.center.x, segment.center.y, segment.radius, start, end, Boolean(segment.clockwise))
     }
   }
   path.closePath()
   return path
 }
 
-const shapeFor = (part: Part, config: Config, holes: boolean, reflect = false) => {
-  // The reference assembly uses smooth plate bodies; joint contours belong to the fabrication layout.
-  const width = part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * config.thickness : 0)
-  const height = part.height - (part.name === 'top' ? 0 : config.thickness)
-  const shape = new THREE.Shape([
-    new THREE.Vector2(-width / 2, -height / 2), new THREE.Vector2(width / 2, -height / 2),
-    new THREE.Vector2(width / 2, height / 2), new THREE.Vector2(-width / 2, height / 2),
-  ])
-  if (config.liftingHoles && part.name === 'longSkirt') shape.holes.push(contourPath(part.contours.at(-1)!, reflect))
+const shapeFor = (part: Part, holes: boolean) => {
+  const shape = new THREE.Shape()
+  contourPath(part.contours[0], shape)
   if (holes) for (const hole of part.holes) {
-    if (Math.abs(hole.x) + hole.d / 2 > width / 2 || Math.abs(hole.y) + hole.d / 2 > height / 2) continue
     const path = new THREE.Path()
-    path.absarc(hole.x, reflect ? -hole.y : hole.y, hole.d / 2, 0, Math.PI * 2, true)
+    path.absarc(hole.x, hole.y, hole.d / 2, 0, Math.PI * 2, true)
     shape.holes.push(path)
   }
+  part.contours.slice(1).forEach(contour => shape.holes.push(contourPath(contour)))
   return shape
 }
 
@@ -69,66 +70,85 @@ const dispose = (object: THREE.Object3D) => {
   })
 }
 
+const edgesFor = (shape: THREE.Shape, depth: number) => {
+  const vertices: number[] = []
+  for (const path of [shape, ...shape.holes]) {
+    const circle = path.curves.length === 1 && path.curves[0] instanceof THREE.EllipseCurve
+    const points = path.getPoints(circle ? 8 : 3)
+    for (let index = 1; index < points.length; index += 1) {
+      const from = points[index - 1], to = points[index]
+      if (from.distanceToSquared(to) < 1e-10) continue
+      for (const z of [-depth / 2, depth / 2]) vertices.push(from.x, from.y, z, to.x, to.y, z)
+    }
+    const corners = circle ? path.getPoints(2) : path.curves.map(curve => curve.getPoint(0))
+    const unique = new Map(corners.map(p => [`${p.x.toFixed(6)},${p.y.toFixed(6)}`, p]))
+    unique.forEach(p => vertices.push(p.x, p.y, -depth / 2, p.x, p.y, depth / 2))
+  }
+  return new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+}
+
 const plate = (
   runtime: Runtime,
   part: Part,
   config: Config,
   position: THREE.Vector3,
   rotation: THREE.Euler,
-  top = false,
+  explodeDir: THREE.Vector3,
 ) => {
   const depth = config.thickness
-  const geometry = new THREE.ExtrudeGeometry(shapeFor(part, config, runtime.renderHoles, top), {
+  const shape = shapeFor(part, runtime.renderHoles)
+  const geometry = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: false,
+    curveSegments: runtime.renderHoles ? 4 : 1,
   })
   geometry.translate(0, 0, -depth / 2)
   geometry.computeVertexNormals()
-  const mesh = new THREE.Mesh(geometry, runtime.metal)
-  mesh.position.copy(position)
+  const width = part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * config.thickness : 0)
+  const height = part.height - (part.name === 'top' ? 0 : config.thickness)
+  const metricWeight = Number(partWeight(part, config).toFixed(1))
+  const unit = config.units === 'mm' ? 'mm' : 'in'
+  const mesh: PartMesh = Object.assign(new THREE.Mesh(geometry, runtime.metal), { userData: {
+    part: part.name, isPart: true as const, name: partTitles[part.name], basePos: position, explodeDir, currentFactor: runtime.factor,
+    dims: `${display(width, config.units, 0)} × ${display(height, config.units, 0)} ${unit}`,
+    weight: config.units === 'mm' ? metricWeight : (metricWeight * 2.20462).toFixed(1),
+    weightUnit: config.units === 'mm' ? 'kg' : 'lb', holesCount: part.holes.length,
+  } })
+  mesh.add(new THREE.LineSegments(edgesFor(shape, depth), new THREE.LineBasicMaterial({ color: runtime.colors.edge, linewidth: 2 })))
+  mesh.position.copy(position).addScaledVector(explodeDir, runtime.factor)
   mesh.rotation.copy(rotation)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
+
 
   runtime.assembly.add(mesh)
   runtime.meshes.push(mesh)
   return mesh
 }
 
-const addDimensionLine = (group: THREE.Group, from: THREE.Vector3, to: THREE.Vector3, offset: THREE.Vector3) => {
-  const material = new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.9 })
-  const start = from.clone().add(offset)
-  const end = to.clone().add(offset)
-  const direction = end.clone().sub(start).normalize()
-  const normal = new THREE.Vector3(-direction.z, 0, direction.x).multiplyScalar(26)
-  const geometry = new THREE.BufferGeometry().setFromPoints([start, end])
-  group.add(new THREE.Line(geometry, material))
-  ;[start, end].forEach(anchor => {
-    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-      anchor.clone().sub(normal), anchor.clone().add(normal),
-    ]), material))
-  })
-  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, start]), material))
-  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([to, end]), material))
-  return start.clone().add(end).multiplyScalar(0.5)
+const addDimensionLine = (runtime: Runtime, from: THREE.Vector3, to: THREE.Vector3, normal: THREE.Vector3) => {
+  const group = runtime.dimensions
+  const material = new THREE.LineBasicMaterial({ color: runtime.colors.dim, depthTest: false })
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]), material))
+  ;[from, to].forEach(anchor => group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+    anchor.clone().addScaledVector(normal, 20), anchor.clone().addScaledVector(normal, -20),
+  ]), material)))
 }
 
-const label = (value: string, position: THREE.Vector3) => {
+const label = (value: string, position: THREE.Vector3, color: number) => {
   const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 64
+  canvas.width = 512
+  canvas.height = 128
   const context = canvas.getContext('2d')
   if (!context) return undefined
-  context.font = '600 28px system-ui'
+  context.font = 'bold 64px Inter, sans-serif'
   context.textAlign = 'center'
   context.textBaseline = 'middle'
-  context.fillStyle = '#2563eb'
-  context.fillText(value, 128, 32)
+  context.fillStyle = `#${color.toString(16).padStart(6, '0')}`
+  context.fillText(value, 256, 64)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
   sprite.position.copy(position)
-  sprite.scale.set(360, 90, 1)
+  sprite.scale.set(300, 75, 1)
   return sprite
 }
 
@@ -136,37 +156,18 @@ const rebuildDimensions = (runtime: Runtime, config: Config) => {
   dispose(runtime.dimensions)
   runtime.dimensions.clear()
   if (!config.showDimensions) return
-  const y = 26
-  const length = addDimensionLine(
-    runtime.dimensions,
-    new THREE.Vector3(-config.length / 2, y, config.width / 2),
-    new THREE.Vector3(config.length / 2, y, config.width / 2),
-    new THREE.Vector3(0, 0, 110),
-  )
-  const width = addDimensionLine(
-    runtime.dimensions,
-    new THREE.Vector3(config.length / 2, y, -config.width / 2),
-    new THREE.Vector3(config.length / 2, y, config.width / 2),
-    new THREE.Vector3(110, 0, 0),
-  )
-  const verticalMaterial = new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.9 })
-  const verticalX = config.length / 2 + 110
-  const verticalZ = config.width / 2 + 80
-  const vertical = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(verticalX, 0, verticalZ), new THREE.Vector3(verticalX, -config.height, verticalZ),
-  ])
-  runtime.dimensions.add(new THREE.Line(vertical, verticalMaterial))
-  const cap = new THREE.Vector3(24, 0, 0)
-  ;[0, -config.height].forEach(yValue => runtime.dimensions.add(new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(verticalX, yValue, verticalZ).sub(cap), new THREE.Vector3(verticalX, yValue, verticalZ).add(cap),
-    ]), verticalMaterial,
-  )))
+  const offset = Math.max(config.length, config.width) * 0.08
+  const x = config.length / 2 + offset
+  const z = config.width / 2 + offset
+  const verticalNormal = new THREE.Vector3(Math.SQRT1_2, 0, -Math.SQRT1_2)
+  addDimensionLine(runtime, new THREE.Vector3(-config.length / 2, 0, z), new THREE.Vector3(config.length / 2, 0, z), new THREE.Vector3(0, 0, 1))
+  addDimensionLine(runtime, new THREE.Vector3(x, 0, config.width / 2), new THREE.Vector3(x, 0, -config.width / 2), new THREE.Vector3(1, 0, 0))
+  addDimensionLine(runtime, new THREE.Vector3(x, 0, z), new THREE.Vector3(x, -config.height, z), verticalNormal)
   const unit = config.units === 'mm' ? 'mm' : 'in'
   ;[
-    label(`${display(config.length, config.units, 0)} ${unit}`, length.add(new THREE.Vector3(0, 32, 0))),
-    label(`${display(config.width, config.units, 0)} ${unit}`, width.add(new THREE.Vector3(0, 32, 0))),
-    label(`${display(config.height, config.units, 0)} ${unit}`, new THREE.Vector3(verticalX + 50, -config.height / 2, verticalZ)),
+    label(`${display(config.length, config.units, 0)} ${unit}`, new THREE.Vector3(0, 0, z + 40), runtime.colors.dim),
+    label(`${display(config.width, config.units, 0)} ${unit}`, new THREE.Vector3(x + 40, 0, 0), runtime.colors.dim),
+    label(`${display(config.height, config.units, 0)} ${unit}`, new THREE.Vector3(x, -config.height / 2, z).addScaledVector(verticalNormal, 40), runtime.colors.dim),
   ].forEach(sprite => { if (sprite) runtime.dimensions.add(sprite) })
 }
 
@@ -176,44 +177,45 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
   runtime.meshes = []
   const parts = makeParts(config)
   const find = (name: Part['name']) => parts.find(part => part.name === name)
-  const separation = config.exploded / 100 * Math.max(config.length, config.width)
+  runtime.targetFactor = config.exploded / 100
+  runtime.assembly.position.y = config.height / 2
 
   const top = find('top')
   if (top) {
-    plate(runtime, top, config, new THREE.Vector3(0, -config.thickness / 2 + separation * 0.08, 0), new THREE.Euler(-Math.PI / 2, 0, 0), true)
+    plate(runtime, top, config, new THREE.Vector3(0, -config.thickness / 2, 0), new THREE.Euler(Math.PI / 2, 0, 0), new THREE.Vector3(0, config.width * 0.4, 0))
   }
   const longSkirt = find('longSkirt')
   if (longSkirt) {
-    for (const side of [-1, 1]) {
-      plate(runtime, longSkirt, config, new THREE.Vector3(0, -config.height / 2 - config.thickness / 2, side * (config.width / 2 - config.thickness / 2 + config.width * config.exploded / 100 * 0.12)), new THREE.Euler())
+    for (const side of [1, -1]) {
+      plate(runtime, longSkirt, config, new THREE.Vector3(0, -config.height / 2 - config.thickness / 2, side * (config.width / 2 - config.thickness / 2)), new THREE.Euler(), new THREE.Vector3(0, 0, side * config.width * 0.3))
     }
   }
   const shortSkirt = find('shortSkirt')
   if (shortSkirt) {
-    for (const side of [-1, 1]) {
-      plate(runtime, shortSkirt, config, new THREE.Vector3(side * (config.length / 2 - config.thickness / 2 + config.length * config.exploded / 100 * 0.12), -config.height / 2 - config.thickness / 2, 0), new THREE.Euler(0, Math.PI / 2, 0))
+    for (const side of [1, -1]) {
+      plate(runtime, shortSkirt, config, new THREE.Vector3(side * (config.length / 2 - config.thickness / 2), -config.height / 2 - config.thickness / 2, 0), new THREE.Euler(0, -Math.PI / 2, 0), new THREE.Vector3(side * config.length * 0.3, 0, 0))
     }
   }
   const positions = framePositions(config)
   const longRib = find('longRib')
   if (longRib) {
-    for (const z of positions.long) {
-      plate(runtime, longRib, config, new THREE.Vector3(0, -config.height / 2 - separation * 0.08, z), new THREE.Euler())
+    for (const z of [...positions.long].reverse()) {
+      plate(runtime, longRib, config, new THREE.Vector3(0, -config.height / 2, z), new THREE.Euler(), new THREE.Vector3(0, -config.height * 2, 0))
     }
   }
   const shortRib = find('shortRib')
   if (shortRib) {
     for (const x of positions.short) {
-      plate(runtime, shortRib, config, new THREE.Vector3(x, -config.height / 2 - separation * 0.08, 0), new THREE.Euler(0, Math.PI / 2, 0))
+      plate(runtime, shortRib, config, new THREE.Vector3(x, -config.height / 2, 0), new THREE.Euler(0, -Math.PI / 2, 0), new THREE.Vector3(0, -config.height * 4, 0))
     }
   }
   rebuildDimensions(runtime, config)
 }
 
 const resetCamera = (runtime: Runtime, config: Config) => {
-  const extent = Math.max(config.length, config.width, config.height * 2)
-  runtime.camera.position.set(extent * 1.2, extent * 0.75, extent * 1.2)
-  runtime.controls.target.set(0, -config.height / 2, 0)
+  const extent = Math.max(config.length, config.width)
+  runtime.camera.position.set(extent * 1.2, extent * 0.8, extent * 1.2)
+  runtime.controls.target.set(0, 0, 0)
   runtime.controls.update()
 }
 
@@ -221,12 +223,13 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const runtime = useRef<Runtime | undefined>(undefined)
   const [error, setError] = useState('')
+  const [hover, setHover] = useState<{ info: PartInfo; x: number; y: number } | null>(null)
 
   useEffect(() => {
     const mount = host.current
     if (!mount) return
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(45, 1, 1, 30000)
+    const camera = new THREE.PerspectiveCamera(45, 1, 1, 100000)
     let renderer: THREE.WebGLRenderer
     try { renderer = new THREE.WebGLRenderer({ antialias: true }) }
     catch { setError('3D rendering is unavailable in this browser. The 2D layout and exports are still available.'); return }
@@ -238,20 +241,26 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
     controls.dampingFactor = 0.08
     controls.minDistance = 250
     controls.maxDistance = 18000
-    scene.add(new THREE.AmbientLight(0xffffff, 3))
-    const light = new THREE.DirectionalLight(0xffffff, 4)
-    light.position.set(2400, 2400, 1200)
-    scene.add(light)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+    const extent = Math.max(config.length, config.width)
+    const light = new THREE.DirectionalLight(0xffffff, 0.8)
+    light.position.set(extent, extent, extent / 2)
+    const fill = new THREE.DirectionalLight(0xffffff, 0.3)
+    fill.position.set(-extent, 0, -extent)
+    scene.add(light, fill)
     const assembly = new THREE.Group()
     const dimensions = new THREE.Group()
     scene.add(assembly, dimensions)
     const state: Runtime = {
       scene, camera, renderer, controls, assembly, dimensions,
-      metal: [new THREE.MeshLambertMaterial({ color: 0x2d3239 }), new THREE.MeshBasicMaterial({ color: 0x1e293b })],
-      highlighted: new THREE.MeshLambertMaterial({ color: 0x3b82f6 }),
+      colors: colorsFor(dark),
+      metal: new THREE.MeshStandardMaterial({ color: 0x9aa7b8, metalness: 0.6, roughness: 0.4, side: THREE.DoubleSide }),
+      highlighted: new THREE.MeshStandardMaterial({ color: 0x9aa7b8, emissive: 0x2563eb, metalness: 0.6, roughness: 0.4, side: THREE.DoubleSide }),
       meshes: [],
       renderHoles: config.renderHoles,
       highlighting: config.highlighting,
+      factor: 0,
+      targetFactor: 0,
     }
     runtime.current = state
     const raycaster = new THREE.Raycaster()
@@ -264,8 +273,13 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
       raycaster.setFromCamera(pointer, active.camera)
       const hit = raycaster.intersectObjects(active.meshes, false)[0]?.object
       active.meshes.forEach(mesh => { mesh.material = mesh === hit ? active.highlighted : active.metal })
+      const selected = active.meshes.find(mesh => mesh === hit)
+      setHover(selected ? { info: selected.userData, x: event.clientX - bounds.left, y: event.clientY - bounds.top } : null)
     }
-    const leave = () => state.meshes.forEach(mesh => { mesh.material = state.metal })
+    const leave = () => {
+      state.meshes.forEach(mesh => { mesh.material = state.metal })
+      setHover(null)
+    }
     renderer.domElement.addEventListener('pointermove', move)
     renderer.domElement.addEventListener('pointerleave', leave)
     const resize = () => {
@@ -281,6 +295,11 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
     let frame = 0
     const render = () => {
       frame = requestAnimationFrame(render)
+      state.factor += (state.targetFactor - state.factor) * 0.1
+      state.meshes.forEach(mesh => {
+        mesh.userData.currentFactor = state.factor
+        mesh.position.copy(mesh.userData.basePos).addScaledVector(mesh.userData.explodeDir, state.factor)
+      })
       controls.update()
       renderer.render(scene, camera)
     }
@@ -293,7 +312,7 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
       dispose(assembly)
       dispose(dimensions)
 
-      state.metal.forEach(material => material.dispose())
+      state.metal.dispose()
       state.highlighted.dispose()
       controls.dispose()
       renderer.dispose()
@@ -308,6 +327,7 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
     if (!state) return
     state.renderHoles = config.renderHoles
     state.highlighting = config.highlighting
+    setHover(null)
 
     rebuildAssembly(state, config)
   }, [config])
@@ -316,6 +336,13 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
     const state = runtime.current
     if (!state) return
     state.scene.background = new THREE.Color(dark ? 0x0f172a : 0xe2e8f0)
+    state.colors = colorsFor(dark)
+    state.metal.color.setHex(state.colors.part)
+    state.highlighted.color.setHex(state.colors.part)
+    state.meshes.forEach(mesh => mesh.children.forEach(edge => {
+      if (edge instanceof THREE.LineSegments) (edge.material as THREE.LineBasicMaterial).color.setHex(state.colors.edge)
+    }))
+    rebuildDimensions(state, config)
   }, [dark])
 
   useEffect(() => {
@@ -324,5 +351,14 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
   // resetToken is the user-facing reset action; config edits preserve an orbit in progress.
   }, [resetToken])
 
-  return error ? <div className="three-loading" role="alert">{error}</div> : <div className="three-canvas" ref={host} aria-label="Interactive 3D welding table assembly" />
+  return error ? <div className="three-loading" role="alert">{error}</div> : <>
+    <div className="three-canvas" ref={host} aria-label="Interactive 3D welding table assembly" />
+    {hover && <div className="part-tooltip" style={{ left: Math.max(8, Math.min(hover.x + 15, (host.current?.clientWidth ?? 280) - 270)), top: Math.max(8, Math.min(hover.y + 15, (host.current?.clientHeight ?? 130) - 125)) }}>
+      <strong>{hover.info.name}</strong><dl>
+        <dt>Dimensions:</dt><dd>{hover.info.dims}</dd>
+        <dt>Weight:</dt><dd>{hover.info.weight} {hover.info.weightUnit}</dd>
+        <dt>Holes:</dt><dd>{hover.info.holesCount} pcs</dd>
+      </dl>
+    </div>}
+  </>
 }
