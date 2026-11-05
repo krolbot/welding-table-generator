@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://welding-table.zaitsv.dev/sitemap.xml

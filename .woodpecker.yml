@@ -1,0 +1,63 @@
+when:
+  - event: [push, manual]
+    branch: main
+
+steps:
+  build:
+    image: mirror.gcr.io/woodpeckerci/plugin-docker-buildx:latest@sha256:7ef5f056f7c395e116a98efc99ec2a588e89175b023ba71d8643df9476d34b11
+    privileged: true
+    settings:
+      registry: ghcr.io
+      repo: ghcr.io/krolbot/welding-table-generator
+      dockerfile: Dockerfile
+      context: .
+      platforms: linux/amd64
+      output: type=image,push=true
+      mirror: https://mirror.gcr.io
+      logins:
+        - registry: https://index.docker.io/v1/
+          mirrors:
+            - https://mirror.gcr.io
+      cache_from:
+        - 'type=registry\,ref=ghcr.io/krolbot/welding-table-generator:buildcache'
+      cache_to: "type=registry,ref=ghcr.io/krolbot/welding-table-generator:buildcache,mode=max,ignore-error=true"
+      username:
+        from_secret: ghcr_username
+      password:
+        from_secret: ghcr_token
+      tags:
+        - ${CI_COMMIT_SHA}
+        - latest
+      build_args:
+        SOURCE_DATE_EPOCH: ''
+        VCS_REF: ${CI_COMMIT_SHA}
+      labels:
+        - org.opencontainers.image.revision=${CI_COMMIT_SHA}
+        - org.opencontainers.image.source=${CI_REPO_LINK}
+
+  deploy:
+    image: appleboy/drone-ssh:1.8.2@sha256:76793a4ff5c33541ada5bd208f1fd4add8b172caae2f5640affd68ff6fd5c4aa
+    settings:
+      host:
+        from_secret: server_ip
+      username:
+        from_secret: server_user
+      port:
+        from_secret: server_port
+      key:
+        from_secret: ssh_private_key
+      fingerprint:
+        from_secret: server_fingerprint
+      command_timeout: 10m
+      script: |
+        set -eu
+        cd /root/lab/welding-table-generator
+        IMAGE_TAG=${CI_COMMIT_SHA} docker compose config -q
+        IMAGE_TAG=${CI_COMMIT_SHA} docker compose pull welding-table-generator
+        IMAGE_TAG=${CI_COMMIT_SHA} docker compose up -d --no-deps --wait --wait-timeout 120 welding-table-generator
+        test "$(docker inspect -f '{{.Config.Image}}' welding-table-generator)" = 'ghcr.io/krolbot/welding-table-generator:${CI_COMMIT_SHA}'
+        test "$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' welding-table-generator)" = '${CI_COMMIT_SHA}'
+        docker exec welding-table-generator sh -c "wget -qO- http://127.0.0.1/healthz | grep -qx ok"
+    depends_on: [build]
+
+concurrency: 1
