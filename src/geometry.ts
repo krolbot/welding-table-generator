@@ -154,6 +154,18 @@ const skirtEndTabCenters = (low: number, high: number) => {
   return pointsAlong(low + inset, high - inset, count)
 }
 
+const outerNotches = (name: PartName, c: Config): Slot[] => {
+  const depth = c.thickness + c.clearance
+  const tab = c.tabWidth + c.clearance
+  if (name === 'top') return [
+    ...topEdgeCenters(c.length, c).flatMap(x => [-1, 1].map(side => ({ x, y: side * (c.width - depth) / 2, width: tab, height: depth }))),
+    ...topEdgeCenters(c.width, c, true).flatMap(y => [-1, 1].map(side => ({ x: side * (c.length - depth) / 2, y, width: depth, height: tab }))),
+  ]
+  if (name !== 'longSkirt') return []
+  return skirtEndTabCenters((-c.height + c.thickness) / 2, (c.height - c.thickness) / 2)
+    .flatMap(y => [-1, 1].map(side => ({ x: side * (c.length - depth) / 2, y, width: depth, height: tab })))
+}
+
 const topOutline = (c: Config): Contour => {
   const edge = (span: number, halfDepth: number, centers: number[]) => {
     const halfTab = (c.tabWidth + c.clearance) / 2
@@ -311,6 +323,7 @@ export const makeParts = (c: Config): Part[] => {
   const lifting = c.liftingHoles && c.height - c.thickness >= 50 ? liftingCutout(c) : null
   return definition(c).filter(item => item.count > 0).map(item => {
     const slots = item.name === 'top' ? internal : skirtSlots(item.name, c)
+    const exclusions = [...slots, ...outerNotches(item.name, c)]
     const mounts: Hole[] = []
     legMountHoles(item.name, item.width, item.height, c, mounts)
     return {
@@ -321,7 +334,7 @@ export const makeParts = (c: Config): Part[] => {
       label: item.label,
       holes: decorate(item.name, item.width, item.height, c, grid(item.name, item.width, item.height, c, item.grid)).filter(hole => {
         if (hole.kind !== 'grid') return true
-        if (slots.some(slot => Math.hypot(Math.max(Math.abs(hole.x - slot.x) - slot.width / 2, 0), Math.max(Math.abs(hole.y - slot.y) - slot.height / 2, 0)) < hole.d / 2 + minimumHoleWeb)) return false
+        if (exclusions.some(slot => Math.abs(hole.x - slot.x) < slot.width / 2 + hole.d / 2 + minimumHoleWeb && Math.abs(hole.y - slot.y) < slot.height / 2 + hole.d / 2 + minimumHoleWeb)) return false
         if (mounts.some(mount => {
           const inset = (hole.d + mount.d) / 2 + mountHoleWeb
           return Math.abs(hole.x - mount.x) < inset && Math.abs(hole.y - mount.y) < inset

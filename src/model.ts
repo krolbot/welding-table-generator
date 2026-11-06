@@ -95,7 +95,7 @@ export const partLabels: Record<PartName, string> = {
 }
 
 export const mmPerInch = 25.4
-export const maxTabWidth = (c: Config) => Math.max(5, Math.floor(Math.min(c.height - c.thickness, c.length, c.width) / 2) - 5)
+export const maxTabWidth = (c: Config) => Math.max(0, Math.floor(Math.min(c.height - c.thickness, c.length, c.width) / 2) - 5)
 export const display = (value: number, units: Units, precision = 0) =>
   (units === 'mm' ? value : value / mmPerInch).toFixed(units === 'mm' ? precision : Math.max(2, precision + 2))
 export const readDisplay = (value: number, units: Units) => value * (units === 'mm' ? 1 : mmPerInch)

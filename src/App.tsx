@@ -24,7 +24,7 @@ import {
   type CustomHole,
   type PartName,
 } from './model'
-import { engravingLines, layoutParts, svgContourPath, totals, type Hole, type Point } from './geometry'
+import { contourPoints, engravingLines, layoutParts, svgContourPath, totals, type Hole, type Point } from './geometry'
 import { downloadFull, downloadZip } from './dxf'
 import { Icon, type IconName } from './Icon'
 import { NumberInput } from './NumberInput'
@@ -47,15 +47,15 @@ const numericKeys: NumericKey[] = [
   'legEdgeOffset', 'legBottomOffset', 'sheetLength', 'sheetWidth', 'exploded',
 ]
 const numericBounds: Record<NumericKey, { min: number; max: number }> = {
-  holeDiameter: { min: 1, max: 50 },
-  pitch: { min: 5, max: 500 },
-  margin: { min: 0, max: 500 },
+  holeDiameter: { min: 1, max: 40 },
+  pitch: { min: 11, max: 1000 },
+  margin: { min: 0, max: 200 * mmPerInch / 2 - 10 },
   length: { min: 500, max: 200 * mmPerInch },
   width: { min: 400, max: 200 * mmPerInch },
   height: { min: 50, max: 20 * mmPerInch },
   ribSpacing: { min: 200, max: 24 * mmPerInch },
-  thickness: { min: 1, max: 30 },
-  tabWidth: { min: 5, max: Math.floor((20 * mmPerInch - 1) / 2) - 5 },
+  thickness: { min: 1, max: 40 },
+  tabWidth: { min: 0, max: Math.floor((20 * mmPerInch - 1) / 2) - 5 },
   clearance: { min: 0, max: 2.5 },
   dogBoneDiameter: { min: 0.5, max: 5 },
   legBoltDiameter: { min: 1, max: 100 },
@@ -65,8 +65,8 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   legRows: { min: 1, max: 4 },
   legEdgeOffset: { min: 0, max: 1000 },
   legBottomOffset: { min: 0, max: 1000 },
-  sheetLength: { min: 500, max: 6000 },
-  sheetWidth: { min: 500, max: 3000 },
+  sheetLength: { min: 0, max: Infinity },
+  sheetWidth: { min: 0, max: Infinity },
   exploded: { min: 0, max: 100 },
 }
 const booleanKeys: BooleanKey[] = [
@@ -130,6 +130,9 @@ function normalizeConfig(input: unknown): Config {
     return [x, y, r].every(Number.isFinite) && r > 0
       ? [{ id: item.id as string | number, part, x, y, r }] : []
   }) : []
+  const fixtureEdgeWeb = 5
+  result.pitch = Math.max(result.pitch, result.holeDiameter + 2 * fixtureEdgeWeb)
+  result.margin = Math.max(result.holeDiameter / 2 + fixtureEdgeWeb, Math.min(result.margin, Math.min(result.length, result.width) / 2 - 2 * fixtureEdgeWeb))
   if (!value.preset) result.preset = Object.entries(presetValues).find(([, values]) =>
     values.holeDiameter === result.holeDiameter && values.pitch === result.pitch && values.margin === result.margin,
   )?.[0] as Config['preset'] ?? 'Custom'
@@ -203,11 +206,12 @@ export default function App() {
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null)
   const [measure, setMeasure] = useState<Measure | null>(null)
+  const [rulerCursor, setRulerCursor] = useState<Point | null>(null)
   const [notice, setNotice] = useState('')
   const [about, setAbout] = useState(false)
   const [reset3d, setReset3d] = useState(0)
   const pointers = useRef(new Map<number, { x: number; y: number }>())
-  const pinchDistance = useRef<number | null>(null)
+  const pinch = useRef<{ distance: number; center: Point; zoom: number; pan: Point } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -217,8 +221,16 @@ export default function App() {
 
   const summary = useMemo(() => totals(config), [config])
   const layout = useMemo(() => layoutParts(config), [config])
+  const snapPoints = useMemo(() => layout.instances.flatMap(item => [
+    ...item.part.contours.flatMap(contour => contourPoints(contour, 1)),
+    ...item.part.holes.flatMap(hole => [hole,
+      { x: hole.x - hole.d / 2, y: hole.y }, { x: hole.x + hole.d / 2, y: hole.y },
+      { x: hole.x, y: hole.y - hole.d / 2 }, { x: hole.x, y: hole.y + hole.d / 2 },
+    ]),
+  ].map(point => ({ x: item.position.x - layout.width / 2 + point.x, y: item.position.y - layout.height / 2 + point.y }))), [layout])
   const canvasWidth = layout.width + 300
   const canvasHeight = layout.height + 300
+  const rulerScale = Math.max(layout.width, layout.height) * 0.004 / zoom
   const unitLabel = config.units === 'mm' ? 'mm' : 'in'
 
   useEffect(() => {
@@ -264,7 +276,7 @@ export default function App() {
         next.legPatternY = Math.max(next.legPatternY, next.legBoltDiameter * 1.5)
       }
       if (key === 'holeDiameter' || key === 'pitch' || key === 'margin') next.preset = 'Custom'
-      return next
+      return normalizeConfig(next)
     })
   }
   const numberLabel = (millimetres: number, precision = 2) => String(Number((millimetres / (config.units === 'mm' ? 1 : mmPerInch)).toFixed(config.units === 'mm' ? 4 : precision)))
@@ -278,7 +290,7 @@ export default function App() {
   const slider = (key: NumericKey, label: string, min: number, max: number, step: number, percentage = false) => {
     const imperial = config.units === 'inch' ? inchRanges[key] : undefined
     const range = imperial ?? { min, max, step }
-    return <label className="slider-field"><span>{label}<output>{percentage ? `${config[key]}%` : numberLabel(config[key], 2)}</output></span><input aria-label={label} type="range" min={range.min} max={range.max} step={range.step} value={imperial ? config[key] / mmPerInch : config[key]} onChange={event => setNumeric(key, Number(event.target.value) * (imperial ? mmPerInch : 1))} /></label>
+    return <label className="slider-field"><span><span className="slider-label">{percentage && <Icon name="explode" size={14} />}{label}</span><output>{percentage ? `${config[key]}%` : numberLabel(config[key], 2)}</output></span><input aria-label={label} type="range" min={range.min} max={range.max} step={range.step} value={imperial ? config[key] / mmPerInch : config[key]} onChange={event => setNumeric(key, Number(event.target.value) * (imperial ? mmPerInch : 1))} /></label>
   }
   const toggle = (key: BooleanKey, label: string) => <label className="checkbox"><input type="checkbox" checked={config[key]} onChange={event => patch(key, event.target.checked)} /><span>{label}</span></label>
   const socialLinks: Array<{ name: string; icon: IconName; url: string }> = [
@@ -294,6 +306,10 @@ export default function App() {
     setZoom(1)
     setPan({ x: 0, y: 0 })
     setMeasure(null)
+    setRulerCursor(null)
+    pinch.current = null
+    pointers.current.clear()
+    setDrag(null)
     measuring.current = false
   }
   const removeHole = (hole: Hole, part?: PartName) => {
@@ -362,13 +378,31 @@ export default function App() {
       y: -(screen.y - canvasHeight / 2 - pan.y) / zoom,
     }
   }
+  const rulerPoint = (event: PointerEvent<SVGSVGElement>): Point => {
+    const point = drawingPoint(event)
+    let nearest = point
+    let distance = 20 / (Math.abs(event.currentTarget.getScreenCTM()?.a ?? 1) * zoom)
+    for (const candidate of snapPoints) {
+      const next = Math.hypot(candidate.x - point.x, candidate.y - point.y)
+      if (next < distance) { nearest = candidate; distance = next }
+    }
+    return nearest
+  }
   const pointerDown = (event: PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     event.currentTarget.setPointerCapture(event.pointerId)
-    if (pointers.current.size === 2) { measuring.current = false; return }
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()]
+      pinch.current = { distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, zoom, pan }
+      measuring.current = false
+      measureOrigin.current = null
+      setDrag(null)
+      return
+    }
     if (tool === 'ruler') {
-      const point = drawingPoint(event)
+      const point = rulerPoint(event)
+      setRulerCursor(point)
       if (measuring.current && measure) {
         setMeasure({ ...measure, end: point })
         measuring.current = false
@@ -383,16 +417,23 @@ export default function App() {
     const previous = pointers.current.get(event.pointerId)
     if (previous) pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     const active = [...pointers.current.values()]
-    if (active.length === 2) {
-      const distance = Math.hypot(active[0].x - active[1].x, active[0].y - active[1].y)
-      if (pinchDistance.current) setZoom(current => Math.max(0.1, Math.min(20, current * distance / pinchDistance.current!)))
-      pinchDistance.current = distance
+    if (active.length === 2 && pinch.current) {
+      const matrix = event.currentTarget.getScreenCTM()
+      if (!matrix) return
+      const origin = pinch.current
+      const next = Math.max(0.1, Math.min(20, origin.zoom * Math.hypot(active[0].x - active[1].x, active[0].y - active[1].y) / origin.distance))
+      const ratio = next / origin.zoom
+      const center = new DOMPoint((active[0].x + active[1].x) / 2, (active[0].y + active[1].y) / 2).matrixTransform(matrix.inverse())
+      const start = new DOMPoint(origin.center.x, origin.center.y).matrixTransform(matrix.inverse())
+      setPan({ x: center.x - canvasWidth / 2 - (start.x - canvasWidth / 2 - origin.pan.x) * ratio, y: center.y - canvasHeight / 2 - (start.y - canvasHeight / 2 - origin.pan.y) * ratio })
+      setZoom(next)
       return
     }
-    pinchDistance.current = null
-    if (tool === 'ruler' && measuring.current) {
-      const end = drawingPoint(event)
-      setMeasure(current => current ? { ...current, end } : current)
+    pinch.current = null
+    if (tool === 'ruler') {
+      const end = rulerPoint(event)
+      setRulerCursor(end)
+      if (measuring.current) setMeasure(current => current ? { ...current, end } : current)
       return
     }
     const matrix = svgRef.current?.getScreenCTM()
@@ -402,7 +443,7 @@ export default function App() {
   }
   const pointerUp = (event: PointerEvent<SVGSVGElement>) => {
     pointers.current.delete(event.pointerId)
-    if (pointers.current.size < 2) pinchDistance.current = null
+    if (pointers.current.size < 2) pinch.current = null
     if (tool === 'ruler' && measureOrigin.current && Math.hypot(event.clientX - measureOrigin.current.x, event.clientY - measureOrigin.current.y) > 4) measuring.current = false
     measureOrigin.current = null
     setDrag(null)
@@ -416,7 +457,7 @@ export default function App() {
       const matrix = svg.getScreenCTM()
       if (!matrix) return
       const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
-      const next = Math.max(0.1, Math.min(20, zoom * Math.exp(-event.deltaY * 0.001)))
+      const next = Math.max(0.1, Math.min(20, zoom * (1 - event.deltaY * 0.001)))
       const ratio = next / zoom
       setPan(current => ({
         x: point.x - canvasWidth / 2 - (point.x - canvasWidth / 2 - current.x) * ratio,
@@ -451,8 +492,8 @@ export default function App() {
         <div className="settings-scroll">
           <section className="fixture-card">
             <h3>Fixture System</h3>
-            <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={14} />}{preset}</button>)}</div>
-            <div className="fields three">{numericInput('holeDiameter', 'Hole Ø', 1, 50, 1)}{numericInput('pitch', 'Pitch', 5, 500, 5)}{numericInput('margin', 'Margin', 0, 500, 5)}</div>
+            <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={12} />}{preset}</button>)}</div>
+            <div className="fields three">{numericInput('holeDiameter', 'Hole Ø', numericBounds.holeDiameter.min, numericBounds.holeDiameter.max, 1)}{numericInput('pitch', 'Pitch', config.holeDiameter + 10, numericBounds.pitch.max, 5)}{numericInput('margin', 'Margin', config.holeDiameter / 2 + 5, Math.min(config.length, config.width) / 2 - 10, 5)}</div>
             <p className="grid-summary">Grid: Ø{numberLabel(config.holeDiameter, 3)} / {numberLabel(config.pitch, 3)} {unitLabel} pitch / {numberLabel(config.margin, 3)} {unitLabel} from edge</p>
             <div className="hole-pattern"><span>Hole Pattern</span><div className="grid-buttons"><button className={config.grid === 'square' ? 'active' : ''} onClick={() => patch('grid', 'square')}>Square grid</button><button className={config.grid === 'staggered' ? 'active' : ''} onClick={() => patch('grid', 'staggered')}>Staggered</button></div>{config.grid === 'staggered' && <p>Rows are offset by half a pitch. Grid engraving draws rows only — columns no longer line up.</p>}</div>
             <div className="fixture-options">{toggle('skirtHoles', 'Skirt Holes')}{toggle('engraving', 'Grid Engraving')}
@@ -465,13 +506,13 @@ export default function App() {
             {slider('width', 'Width (W)', 400, 5000, 50)}
             {slider('height', 'Table Height (H)', 50, 500, 10)}
           </section>
-          <section><h3><Icon name="frame" size={14} />Internal Frame</h3>{toggle('ribs', 'Generate Support Ribs')}
+          <section className="internal-frame"><h3><Icon name="frame" size={14} />Internal Frame</h3>{toggle('ribs', 'Generate Support Ribs')}
             {config.ribs && <div className="indented">{slider('ribSpacing', `Rib Spacing (${unitLabel})`, 200, 600, 50)}</div>}
           </section>
           <section><h3><Icon name="frame" size={14} />Tabs & Slots (Joints)</h3>
             <div className="joint-fields">
-              {numericInput('thickness', `Metal Thickness (${unitLabel})`, 1, 30, 1)}
-              {numericInput('tabWidth', `Tab Width (${unitLabel})`, 5, maxTabWidth(config), 5)}
+              {numericInput('thickness', `Metal Thickness (${unitLabel})`, numericBounds.thickness.min, numericBounds.thickness.max, 1)}
+              {numericInput('tabWidth', `Tab Width (${unitLabel})`, numericBounds.tabWidth.min, maxTabWidth(config), 5)}
               <div className="joint-clearance">{numericInput('clearance', `Joint Clearance (${unitLabel})`, 0, 2.5, 0.05, 2)}<p className="clearance-note">Max {numberLabel(2.5, 4)} {unitLabel}</p></div>
               <div className="relief-options">{toggle('dogBones', 'Dog-bone Reliefs')}
                 {config.dogBones && <div className="indented relief-control">{slider('dogBoneDiameter', `Diameter (${unitLabel})`, 0.5, 5, 0.5)}</div>}
@@ -496,20 +537,20 @@ export default function App() {
             </div>)}
             <button className="secondary full" onClick={addHole}><Icon name="plus" size={14} />Add hole</button>{config.customHoles.length > 0 && <p>Use the ruler in the 2D view to check the position before exporting.</p>}
           </section>
-          <section><h3><Icon name="trash" size={14} />Removed Holes{config.removedHoles.length > 0 && <small>{config.removedHoles.length}</small>}</h3>
+          <section className="removed-holes"><h3><Icon name="trash" size={14} />Removed Holes{config.removedHoles.length > 0 && <small>{config.removedHoles.length}</small>}</h3>
             {config.removedHoles.length ? <><ul className="removed">{config.removedHoles.map((hole, index) => <li key={typeof hole === 'string' ? hole : hole.id}>
               {typeof hole === 'string' ? <code>{hole}</code> : <><span>{partLabels[hole.part]}</span><code>{numberLabel(hole.x, 2)} : {numberLabel(hole.y, 2)}</code></>}
               <button title="Restore this hole" aria-label="Restore hole" onClick={() => patch('removedHoles', config.removedHoles.filter((_, item) => item !== index))}><Icon name="plus" size={12} /></button>
             </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Restore all</button><p>A removed hole disappears from every copy of that part. Coordinates are relative to the part centre.</p></> : <p>Switch on the Holes tool above the 2D drawing, then click any hole to remove it. Removed holes are listed here and can be restored.</p>}
           </section>
-          <section><h3><Icon name="box" size={14} />3D Visualization</h3>{slider('exploded', 'Exploded View', 0, 100, 1, true)}{toggle('showDimensions', 'Show Dimensions')}</section>
+          <section className="visualization"><h3><Icon name="eye" size={14} />3D Visualization</h3>{slider('exploded', 'Exploded View', 0, 100, 1, true)}{toggle('showDimensions', 'Show Dimensions')}</section>
         </div>
-        <section className="production-card"><h3><Icon name="frame" size={16} />Production Estimate</h3>
+        <section className="production-card"><h3><Icon name="scale" size={16} />Production Estimate</h3>
           <div className="estimate"><div><span>Estimated Weight</span><strong>{productionLabel(summary.kg, 2.20462)}<small>{config.units === 'mm' ? 'kg' : 'lb'}</small></strong></div><div><span>Cut Length</span><strong>{productionLabel(summary.cut, 3.28084)}<small>{config.units === 'mm' ? 'm' : 'ft'}</small></strong></div></div>
-          <div className="estimate-extra"><span>Holes: {summary.holes}</span>{summary.engraving > 0 && <span>Engraving: {productionLabel(summary.engraving, 3.28084)}{config.units === 'mm' ? 'm' : 'ft'}</span>}</div>
-          <div className="sheet-size"><span>Sheet size ({unitLabel})</span><div><NumberInput aria-label="Sheet length" value={numberLabel(config.sheetLength, 3)} min={1} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetLength', readDisplay(value, config.units))} /><span>×</span><NumberInput aria-label="Sheet width" value={numberLabel(config.sheetWidth, 3)} min={1} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetWidth', readDisplay(value, config.units))} /></div><p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? '✓ All parts fit the sheet' : '⚠ Some parts do not fit the sheet'}</p></div>
+          <div className="estimate-extra"><span>Holes: <b>{summary.holes}</b></span>{summary.engraving > 0 && <span>Engraving: <b>{productionLabel(summary.engraving, 3.28084)}{config.units === 'mm' ? 'm' : 'ft'}</b></span>}</div>
+          <div className="sheet-size"><div><span>Sheet size ({unitLabel})</span><div className="sheet-inputs"><NumberInput aria-label="Sheet length" value={numberLabel(config.sheetLength, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetLength', readDisplay(value, config.units))} /><span>×</span><NumberInput aria-label="Sheet width" value={numberLabel(config.sheetWidth, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetWidth', readDisplay(value, config.units))} /></div></div><p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? '✓ All parts fit the sheet' : '⚠ Some parts do not fit the sheet'}</p></div>
         </section>
-        <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" title="Open Project (.json)" onClick={() => fileInput.current?.click()}>Open</button><button className="secondary" title="Save Project (.json)" onClick={save}>Save</button></div><button className="secondary full" onClick={() => void share()}>Share Link</button><button className="zip" onClick={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))}>Download ZIP (Parts)</button><button className="dxf" onClick={() => downloadFull(config)}>Full Layout DXF</button></section>
+        <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" title="Open Project (.json)" onClick={() => fileInput.current?.click()}><Icon name="folder" size={14} />Open</button><button className="secondary" title="Save Project (.json)" onClick={save}><Icon name="save" size={14} />Save</button></div><button className="secondary full share" onClick={() => void share()}><Icon name="share" size={14} />Share Link</button><button className="zip" onClick={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))}><Icon name="archive" size={18} />Download ZIP (Parts)</button><button className="dxf" onClick={() => downloadFull(config)}><Icon name="download" size={16} />Full Layout DXF</button></section>
       </aside>
       <section className="work-area" data-view={view}>
         <div className="mode"><button className={view === '2d' ? 'active' : ''} onClick={() => setView('2d')}><Icon name="frame" />2D Layout</button><button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}><Icon name="box" />3D Assembly</button></div>
@@ -525,6 +566,7 @@ export default function App() {
             onPointerMove={pointerMove}
             onPointerUp={pointerUp}
             onPointerCancel={pointerUp}
+            onPointerLeave={() => setRulerCursor(null)}
             aria-label="Interactive 2D welding table parts layout"
           >
 
@@ -556,18 +598,21 @@ export default function App() {
               })}
               {measure && (
                 <g className="measurement">
-                  <line x1={measure.start.x} y1={-measure.start.y} x2={measure.end.x} y2={-measure.end.y} />
-                  <circle cx={measure.start.x} cy={-measure.start.y} r="10" />
-                  <circle cx={measure.end.x} cy={-measure.end.y} r="10" />
-                  <text x={(measure.start.x + measure.end.x) / 2 + 20} y={-(measure.start.y + measure.end.y) / 2 - 20}>
-                    {display(measureLength, config.units, 1)} {unitLabel}
-                  </text>
+                  <line x1={measure.start.x} y1={-measure.start.y} x2={measure.end.x} y2={-measure.end.y} strokeWidth={2.5 * rulerScale} strokeDasharray={`${8 * rulerScale} ${6 * rulerScale}`} />
+                  <g transform={`translate(${(measure.start.x + measure.end.x) / 2} ${-(measure.start.y + measure.end.y) / 2})`}>
+                    <rect x={-45 * rulerScale} y={-20 * rulerScale} width={90 * rulerScale} height={26 * rulerScale} rx={6 * rulerScale} strokeWidth={1.75 * rulerScale} />
+                    <text y={-5 * rulerScale} fontSize={14 * rulerScale}>{display(measureLength, config.units, 1)} {unitLabel}</text>
+                  </g>
                 </g>
               )}
+              {tool === 'ruler' && rulerCursor && <g className="ruler-cursor" strokeWidth={1.5 * rulerScale}>
+                <line x1={rulerCursor.x - 14 * rulerScale} y1={-rulerCursor.y} x2={rulerCursor.x + 14 * rulerScale} y2={-rulerCursor.y} />
+                <line x1={rulerCursor.x} y1={-rulerCursor.y - 14 * rulerScale} x2={rulerCursor.x} y2={-rulerCursor.y + 14 * rulerScale} />
+              </g>}
             </g>
           </svg>
           </div>
-          <div className="drawing-toolbar"><div className="laser-note"><Icon name="info" /><div><strong>File for Laser Cutting</strong><small>On DXF export, reliefs (dog-bones) are created as native <b>DXF ARC</b>, and grid holes as <b>DXF CIRCLE</b>.</small></div></div><div className="canvas-tools"><button aria-label="Holes" className={tool === 'holes' ? 'active holes-tool' : 'holes-tool'} onClick={() => { setTool(current => current === 'holes' ? null : 'holes'); measuring.current = false }}><Icon name="trash" /><span className="tool-label">Holes</span></button><button aria-label="Ruler" className={tool === 'ruler' ? 'active ruler-tool' : 'ruler-tool'} onClick={() => { setTool(current => current === 'ruler' ? null : 'ruler'); setMeasure(null); measuring.current = false }}><Icon name="ruler" /><span className="tool-label">Ruler</span></button><button title="Reset Zoom (Center)" onClick={reset2d}><Icon name="maximize" />{displayedLayoutWidth} x {displayedLayoutHeight} {unitLabel}</button></div></div>
+          <div className="drawing-toolbar"><div className="laser-note"><Icon name="info" /><div><strong>File for Laser Cutting</strong><small>On DXF export, reliefs (dog-bones) are created as native <b>DXF ARC</b>, and grid holes as <b>DXF CIRCLE</b>.</small></div></div><div className="canvas-tools"><button aria-label="Holes" className={tool === 'holes' ? 'active holes-tool' : 'holes-tool'} onClick={() => { setTool(current => current === 'holes' ? null : 'holes'); measuring.current = false }}><Icon name="trash" /><span className="tool-label">Holes{tool === 'holes' ? ' (Active)' : ''}</span></button><button aria-label="Ruler" className={tool === 'ruler' ? 'active ruler-tool' : 'ruler-tool'} onClick={() => { setTool(current => current === 'ruler' ? null : 'ruler'); setMeasure(null); measuring.current = false }}><Icon name="ruler" /><span className="tool-label">Ruler{tool === 'ruler' ? ' (Active)' : ''}</span></button><button title="Reset Zoom (Center)" onClick={reset2d}><Icon name="maximize" />{displayedLayoutWidth} x {displayedLayoutHeight} {unitLabel}</button></div></div>
         </> : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} dark={dark} /></Suspense></div><div className="three-tools"><header><h3><Icon name="layers" size={16} />Interactive 3D Assembly</h3><button title="Reset camera to the default view" onClick={() => setReset3d(value => value + 1)}><Icon name="maximize" size={12} />Reset view</button></header>{toggle('renderHoles', 'Render Holes (affects FPS)')}{toggle('highlighting', 'Interactive Part Highlighting')}</div></>}
         <nav className="social" aria-label="Original project links"><strong>DIY WELDING PROJECTS</strong><div>{socialLinks.map(link => <a key={link.name} title={link.name} aria-label={link.name} href={link.url} target="_blank" rel="noopener noreferrer"><Icon name={link.icon} size={18} /></a>)}</div></nav>
         <div className="legal-disclosure">{about && <article id="about-panel" className="legal-panel" aria-labelledby="about-title"><header><h3 id="about-title">About & Legal Info</h3><button ref={closeButton} className="icon" aria-label="Close About and Legal Info" onClick={() => setAbout(false)}><Icon name="close" /></button></header><small>VERSION 1.0.0</small><p>This independent clean-room implementation preserves the public generator's workflow. It is not affiliated with or endorsed by the original author.</p><p>Models, layouts and DXF files are informational only. Confirm dimensions, kerf tolerances and structural integrity with a qualified professional before CNC or laser cutting.</p><a href="https://welding-table-generator.com/" target="_blank" rel="noopener noreferrer">Original project ↗</a></article>}<button className="legal-link" aria-expanded={about} aria-controls="about-panel" onClick={() => setAbout(value => !value)}>About & Legal Info<Icon name="chevron" size={14} style={{ transform: about ? 'rotate(180deg)' : undefined }} /></button></div>
