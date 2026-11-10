@@ -13,6 +13,7 @@ export type Part = {
   name: PartName
   width: number
   height: number
+  thickness: number
   count: number
   holes: Hole[]
   slots: Slot[]
@@ -45,37 +46,36 @@ const pointsAlong = (start: number, end: number, count: number) => count < 2
 /** The reference uses the common 1.5 mm oversize for clearance holes. */
 const boltHoleDiameter = (bolt: number) => bolt + 1.5
 
-export type LegSocketSpec = {
-  inner: number
-  outer: number
-  height: number
+export type LegCornerPlateSpec = {
+  size: number
+  thickness: number
   centerX: number
   centerZ: number
-  lockHoleDiameter: number
-  lockHoleY: number
+  holeDiameter: number
+  holeSpacing: number
 }
 
-export const legSocketSpec = (c: Config): LegSocketSpec | undefined => {
-  if (!c.legMounts || c.legMountStyle !== 'squareSocket') return undefined
-  const inner = c.legProfileSize + 2 * c.legSocketClearance
-  const outer = inner + 2 * c.thickness
-  const height = c.height - c.thickness
-  const centerX = c.length / 2 - c.legSocketEdgeInset - outer / 2
-  const centerZ = c.width / 2 - c.legSocketEdgeInset - outer / 2
-  const lockHoleDiameter = c.legSocketLockBoltDiameter > 0 ? boltHoleDiameter(c.legSocketLockBoltDiameter) : 0
-  const lockHoleY = -height / 2 + c.legSocketLockOffset
+export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined => {
+  if (!c.legMounts || c.legMountStyle !== 'cornerPlate') return undefined
+  const size = c.legPlateSize
+  const thickness = c.legPlateThickness
+  const centerX = c.length / 2 - c.thickness - c.legPlateEdgeInset - size / 2
+  const centerZ = c.width / 2 - c.thickness - c.legPlateEdgeInset - size / 2
+  const holeDiameter = c.legPlateHoleDiameter
+  const holeSpacing = c.legPlateHoleSpacing
   const minimumEdgeWeb = 5
-  const lockFits = !lockHoleDiameter
-    || c.legSocketLockOffset >= lockHoleDiameter / 2 + minimumEdgeWeb
-      && c.legSocketLockOffset <= height - lockHoleDiameter / 2 - minimumEdgeWeb
+  const holesFit = holeSpacing > 0 && holeDiameter > 0
+    && holeSpacing / 2 + holeDiameter / 2 + minimumEdgeWeb <= size / 2
+  const legClearsHoles = c.legProfileSize > 0
+    && c.legProfileSize / 2 + minimumEdgeWeb <= holeSpacing / 2 - holeDiameter / 2
   const frame = framePositions(c)
-  const ribClearance = outer / 2 + c.thickness / 2
+  const ribClearance = size / 2 + c.thickness / 2
   const overlapsRib = (center: number, positions: number[]) => positions.some(position =>
     Math.abs(center - position) < ribClearance || Math.abs(-center - position) < ribClearance
   )
-  const clearsFrame = !overlapsRib(centerX, frame.short) && !overlapsRib(centerZ, frame.long)
-  if (inner <= 0 || height <= 0 || centerX < outer / 2 || centerZ < outer / 2 || !lockFits || !clearsFrame) return undefined
-  return { inner, outer, height, centerX, centerZ, lockHoleDiameter, lockHoleY }
+  const clearsFrame = !c.ribs || !overlapsRib(centerX, frame.short) && !overlapsRib(centerZ, frame.long)
+  if (size <= 0 || thickness <= 0 || holeDiameter <= 0 || centerX < size / 2 || centerZ < size / 2 || !holesFit || !legClearsHoles || !clearsFrame) return undefined
+  return { size, thickness, centerX, centerZ, holeDiameter, holeSpacing }
 }
 
 const grid = (part: PartName, width: number, height: number, c: Config, enabled: boolean): Hole[] => {
@@ -347,17 +347,16 @@ const rectangleOutline = (width: number, height: number): Contour => [
   line(point(-width / 2, height / 2), point(-width / 2, -height / 2)),
 ]
 
-const definition = (c: Config): Array<{ name: PartName; width: number; height: number; count: number; label: string; outline: Contour; grid: boolean }> => {
+const definition = (c: Config): Array<{ name: PartName; width: number; height: number; thickness: number; count: number; label: string; outline: Contour; grid: boolean }> => {
   const positions = framePositions(c)
-  const socket = legSocketSpec(c)
+  const cornerPlate = legCornerPlateSpec(c)
   return [
-    { name: 'top', width: c.length, height: c.width, count: 1, label: 'TOP PLATE', outline: topOutline(c), grid: true },
-    { name: 'longSkirt', width: c.length, height: c.height, count: 2, label: 'LONG SKIRT', outline: skirtOutline(c.length, c, false), grid: c.skirtHoles },
-    { name: 'shortSkirt', width: c.width, height: c.height, count: 2, label: 'SHORT SKIRT', outline: skirtOutline(c.width, c, true), grid: c.skirtHoles },
-    { name: 'longRib', width: c.length, height: c.height - c.thickness, count: positions.long.length, label: 'LONG RIB', outline: ribOutline(c.length, c, true), grid: false },
-    { name: 'shortRib', width: c.width, height: c.height - c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
-    { name: 'legSocketFace', width: socket?.outer ?? 0, height: socket?.height ?? 0, count: socket ? 8 : 0, label: 'LEG SOCKET FACE', outline: socket ? rectangleOutline(socket.outer, socket.height) : [], grid: false },
-    { name: 'legSocketSide', width: socket?.inner ?? 0, height: socket?.height ?? 0, count: socket ? 8 : 0, label: 'LEG SOCKET SIDE', outline: socket ? rectangleOutline(socket.inner, socket.height) : [], grid: false },
+    { name: 'top', width: c.length, height: c.width, thickness: c.thickness, count: 1, label: 'TOP PLATE', outline: topOutline(c), grid: true },
+    { name: 'longSkirt', width: c.length, height: c.height, thickness: c.thickness, count: 2, label: 'LONG SKIRT', outline: skirtOutline(c.length, c, false), grid: c.skirtHoles },
+    { name: 'shortSkirt', width: c.width, height: c.height, thickness: c.thickness, count: 2, label: 'SHORT SKIRT', outline: skirtOutline(c.width, c, true), grid: c.skirtHoles },
+    { name: 'longRib', width: c.length, height: c.height - c.thickness, thickness: c.thickness, count: positions.long.length, label: 'LONG RIB', outline: ribOutline(c.length, c, true), grid: false },
+    { name: 'shortRib', width: c.width, height: c.height - c.thickness, thickness: c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
+    { name: 'legCornerPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: cornerPlate?.thickness ?? c.legPlateThickness, count: cornerPlate ? 4 : 0, label: `LEG CORNER PLATE T${c.legPlateThickness}`, outline: cornerPlate ? rectangleOutline(cornerPlate.size, cornerPlate.size) : [], grid: false },
   ]
 }
 
@@ -369,18 +368,23 @@ export const makeParts = (c: Config): Part[] => {
     const exclusions = [...slots, ...outerNotches(item.name, c)]
     const mounts: Hole[] = []
     legMountHoles(item.name, item.width, item.height, c, mounts)
-    const socket = legSocketSpec(c)
-    const socketHoles: Hole[] = []
-    if (item.name === 'legSocketFace' && socket?.lockHoleDiameter) {
-      pushHole(socketHoles, item.name, 0, socket.lockHoleY, socket.lockHoleDiameter, 'mount')
+    const cornerPlate = legCornerPlateSpec(c)
+    const plateHoles: Hole[] = []
+    if (item.name === 'legCornerPlate' && cornerPlate) {
+      for (const x of [-cornerPlate.holeSpacing / 2, cornerPlate.holeSpacing / 2]) {
+        for (const y of [-cornerPlate.holeSpacing / 2, cornerPlate.holeSpacing / 2]) {
+          pushHole(plateHoles, item.name, x, y, cornerPlate.holeDiameter, 'mount')
+        }
+      }
     }
     return {
       name: item.name,
       width: item.width,
       height: item.height,
+      thickness: item.thickness,
       count: item.count,
       label: item.label,
-      holes: decorate(item.name, item.width, item.height, c, [...grid(item.name, item.width, item.height, c, item.grid), ...socketHoles]).filter(hole => {
+      holes: decorate(item.name, item.width, item.height, c, [...grid(item.name, item.width, item.height, c, item.grid), ...plateHoles]).filter(hole => {
         if (hole.kind !== 'grid') return true
         if (exclusions.some(slot => Math.abs(hole.x - slot.x) < slot.width / 2 + hole.d / 2 + minimumHoleWeb && Math.abs(hole.y - slot.y) < slot.height / 2 + hole.d / 2 + minimumHoleWeb)) return false
         if (mounts.some(mount => {
@@ -397,13 +401,13 @@ export const makeParts = (c: Config): Part[] => {
 
 export const layoutParts = (c: Config): Layout => {
   // Fabrication layout is packed from the top plate at Y=0 upward, exactly as
-  // the exported full DXF: top, skirts, longitudinal ribs, transverse ribs and optional leg receivers.
-  const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legSocketFace', 'legSocketSide']
+  // the exported full DXF: top, skirts, longitudinal ribs, transverse ribs and optional corner plates.
+  const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate']
   const parts = makeParts(c).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
   const packed = parts.map(part => ({
     part,
     width: part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * c.thickness : 0),
-    height: part.name === 'top' || part.name.startsWith('legSocket')
+    height: part.name === 'top' || part.name === 'legCornerPlate'
       ? part.height
       : part.height - (part.name.endsWith('Rib') ? 2 * c.thickness : c.thickness),
   }))
@@ -434,11 +438,11 @@ export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
     for (let y = -halfH; y <= halfH + epsilon; y += step) lines.push({ from: point(-halfW, y), to: point(halfW, y) })
   }
   if (c.nameMarking) {
-    const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legSocketFace', 'legSocketSide']
+    const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate']
     const value = `${order.indexOf(part.name) + 1} ${part.label}`
     const skirt = part.name.endsWith('Skirt')
     const bodyHalfWidth = part.width / 2 - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? c.thickness : 0)
-    const bodyHeight = part.name === 'top' || part.name.startsWith('legSocket')
+    const bodyHeight = part.name === 'top' || part.name === 'legCornerPlate'
       ? part.height
       : skirt ? c.height - c.thickness : c.height - 2 * c.thickness
     const inset = Math.min(2 * c.thickness, bodyHeight * 0.12)
@@ -487,10 +491,10 @@ export const contourLength = (contour: Contour) => contour.reduce((sum, segment)
   return sum + segment.radius * Math.abs(radians(arcSweep(segment)))
 }, 0)
 
-export const partWeight = (part: Part, c: Config) => {
+export const partWeight = (part: Part, _c: Config) => {
   const contourArea = Math.abs(signedArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedArea(contour)), 0)
   const holeArea = part.holes.reduce((area, hole) => area + Math.PI * (hole.d / 2) ** 2, 0)
-  return (contourArea - holeArea) * c.thickness * densityKgPerMm3
+  return (contourArea - holeArea) * part.thickness * densityKgPerMm3
 }
 
 export const totals = (c: Config) => {

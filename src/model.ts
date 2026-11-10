@@ -2,8 +2,8 @@ export type Units = 'mm' | 'inch'
 export type Preset = 'D16' | 'D28' | 'Custom'
 export type Grid = 'square' | 'staggered'
 export type EngravingMode = 'through' | 'between'
-export type LegMountStyle = 'boltPattern' | 'squareSocket'
-export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib' | 'legSocketFace' | 'legSocketSide'
+export type LegMountStyle = 'boltPattern' | 'cornerPlate'
+export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib' | 'legCornerPlate'
 export type CustomHole = { id: string | number; part: PartName; x: number; y: number; d: number }
 export type RemovedHole = { id: string | number; part: PartName; x: number; y: number; r: number }
 
@@ -39,10 +39,11 @@ export type Config = {
   legEdgeOffset: number
   legBottomOffset: number
   legProfileSize: number
-  legSocketClearance: number
-  legSocketEdgeInset: number
-  legSocketLockBoltDiameter: number
-  legSocketLockOffset: number
+  legPlateSize: number
+  legPlateThickness: number
+  legPlateHoleDiameter: number
+  legPlateHoleSpacing: number
+  legPlateEdgeInset: number
   legLength: number
   customHoles: CustomHole[]
   removedHoles: Array<RemovedHole | string>
@@ -86,10 +87,11 @@ export const defaults: Config = {
   legEdgeOffset: 60,
   legBottomOffset: 40,
   legProfileSize: 60,
-  legSocketClearance: 1,
-  legSocketEdgeInset: 20,
-  legSocketLockBoltDiameter: 12,
-  legSocketLockOffset: 40,
+  legPlateSize: 150,
+  legPlateThickness: 6,
+  legPlateHoleDiameter: 10,
+  legPlateHoleSpacing: 100,
+  legPlateEdgeInset: 0,
   legLength: 700,
   customHoles: [],
   removedHoles: [],
@@ -107,8 +109,7 @@ export const partLabels: Record<PartName, string> = {
   shortSkirt: 'Short skirt',
   longRib: 'Long rib',
   shortRib: 'Short rib',
-  legSocketFace: 'Leg socket face',
-  legSocketSide: 'Leg socket side',
+  legCornerPlate: 'Leg corner plate',
 }
 
 export const mmPerInch = 25.4
@@ -130,7 +131,7 @@ export const projectFields = {
 } as const
 export const projectParts: Record<PartName, string> = {
   top: 'top', longSkirt: 'long', shortSkirt: 'short', longRib: 'long_rib', shortRib: 'short_rib',
-  legSocketFace: 'leg_socket_face', legSocketSide: 'leg_socket_side',
+  legCornerPlate: 'leg_corner_plate',
 }
 export const readPart = (value: unknown): PartName | undefined =>
   (Object.keys(projectParts) as PartName[]).find(part => part === value || projectParts[part] === value)

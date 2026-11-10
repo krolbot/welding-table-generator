@@ -24,7 +24,7 @@ import {
   type CustomHole,
   type PartName,
 } from './model'
-import { contourPoints, engravingLines, layoutParts, legSocketSpec, svgContourPath, totals, type Hole, type Point } from './geometry'
+import { contourPoints, engravingLines, layoutParts, legCornerPlateSpec, svgContourPath, totals, type Hole, type Point } from './geometry'
 import { downloadFull, downloadZip } from './dxf'
 import { Icon, type IconName } from './Icon'
 import { NumberInput } from './NumberInput'
@@ -44,8 +44,8 @@ type BooleanKey = {
 const numericKeys: NumericKey[] = [
   'holeDiameter', 'pitch', 'margin', 'length', 'width', 'height', 'ribSpacing', 'thickness', 'tabWidth',
   'clearance', 'dogBoneDiameter', 'legBoltDiameter', 'legPatternX', 'legPatternY', 'legCols', 'legRows',
-  'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legSocketClearance', 'legSocketEdgeInset',
-  'legSocketLockBoltDiameter', 'legSocketLockOffset', 'legLength', 'sheetLength', 'sheetWidth', 'exploded',
+  'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize', 'legPlateThickness',
+  'legPlateHoleDiameter', 'legPlateHoleSpacing', 'legPlateEdgeInset', 'legLength', 'sheetLength', 'sheetWidth', 'exploded',
 ]
 const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   holeDiameter: { min: 1, max: 40 },
@@ -67,10 +67,11 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   legEdgeOffset: { min: 0, max: 1000 },
   legBottomOffset: { min: 0, max: 1000 },
   legProfileSize: { min: 20, max: 200 },
-  legSocketClearance: { min: 0, max: 10 },
-  legSocketEdgeInset: { min: 0, max: 1000 },
-  legSocketLockBoltDiameter: { min: 0, max: 50 },
-  legSocketLockOffset: { min: 0, max: 1000 },
+  legPlateSize: { min: 80, max: 400 },
+  legPlateThickness: { min: 3, max: 40 },
+  legPlateHoleDiameter: { min: 1, max: 40 },
+  legPlateHoleSpacing: { min: 20, max: 350 },
+  legPlateEdgeInset: { min: 0, max: 1000 },
   legLength: { min: 100, max: 1500 },
   sheetLength: { min: 0, max: Infinity },
   sheetWidth: { min: 0, max: Infinity },
@@ -127,7 +128,8 @@ function normalizeConfig(input: unknown): Config {
   if (value.preset === 'D16' || value.preset === 'D28' || value.preset === 'Custom') result.preset = value.preset
   if (value.grid === 'square' || value.grid === 'staggered') result.grid = value.grid
   if (value.engravingMode === 'through' || value.engravingMode === 'between') result.engravingMode = value.engravingMode
-  if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'squareSocket') result.legMountStyle = value.legMountStyle
+  if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') result.legMountStyle = value.legMountStyle
+  if (value.legMountStyle === 'squareSocket') result.legMountStyle = 'cornerPlate'
   result.customHoles = parseCustomHoles(value.customHoles)
   result.removedHoles = Array.isArray(value.removedHoles) ? value.removedHoles.flatMap((item): Array<RemovedHole | string> => {
     if (typeof item === 'string') return [item]
@@ -229,7 +231,7 @@ export default function App() {
 
   const summary = useMemo(() => totals(config), [config])
   const layout = useMemo(() => layoutParts(config), [config])
-  const socket = useMemo(() => legSocketSpec(config), [config])
+  const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
   const snapPoints = useMemo(() => layout.instances.flatMap(item => [
     ...item.part.contours.flatMap(contour => contourPoints(contour, 1)),
     ...item.part.holes.flatMap(hole => [hole,
@@ -531,7 +533,7 @@ export default function App() {
           <section className="ergonomics"><h3><Icon name="settings" size={14} />Ergonomics (Construction)</h3>
             {toggle('legMounts', 'Leg Mounts')}
             {config.legMounts && <div className="leg-options">
-              <div className="grid-buttons leg-style"><button className={config.legMountStyle === 'boltPattern' ? 'active' : ''} onClick={() => patch('legMountStyle', 'boltPattern')}>Bolt pattern</button><button className={config.legMountStyle === 'squareSocket' ? 'active' : ''} onClick={() => patch('legMountStyle', 'squareSocket')}>Square socket</button></div>
+              <div className="grid-buttons leg-style"><button className={config.legMountStyle === 'boltPattern' ? 'active' : ''} onClick={() => patch('legMountStyle', 'boltPattern')}>Bolt pattern</button><button className={config.legMountStyle === 'cornerPlate' ? 'active' : ''} onClick={() => patch('legMountStyle', 'cornerPlate')}>Corner plates</button></div>
               {config.legMountStyle === 'boltPattern' ? <>
                 <div className="fields"><label className="field"><span>Bolt size (M)</span><NumberInput value={numberLabel(config.legBoltDiameter, 2)} min={1 / (config.units === 'mm' ? 1 : mmPerInch)} max={100 / (config.units === 'mm' ? 1 : mmPerInch)} step={config.units === 'mm' ? 1 : 0.0625} onValue={value => setNumeric('legBoltDiameter', readDisplay(value, config.units))} /></label><label className="field"><span>Hole Ø (auto)</span><output>{numberLabel(config.legBoltDiameter + 1.5, 3)} {unitLabel}</output></label></div>
                 <div className="fields">{numericInput('legPatternX', 'Pattern X', config.legBoltDiameter * 1.5, 1000, 5)}{numericInput('legPatternY', 'Pattern Y', config.legBoltDiameter * 1.5, 1000, 5)}</div>
@@ -539,11 +541,12 @@ export default function App() {
                 <div className="fields">{numericInput('legEdgeOffset', 'From edge', 0, 1000, 5)}{numericInput('legBottomOffset', 'From bottom', 0, 1000, 5)}</div>
                 <p>{config.legCols * config.legRows} holes per corner, both ends of every skirt. Minimum spacing for M{config.legBoltDiameter}: {numberLabel(config.legBoltDiameter * 1.5, 2)} {unitLabel}.</p>
               </> : <>
-                <div className="fields">{numericInput('legProfileSize', 'Square tube', 20, 200, 5)}{numericInput('legSocketClearance', 'Clearance / side', 0, 10, 0.1, 2)}</div>
-                <div className="fields">{numericInput('legSocketEdgeInset', 'From table edge', 0, 1000, 5)}{numericInput('legLength', 'Leg below skirt', 100, 1500, 25)}</div>
-                <div className="fields"><label className="field"><span>Lock bolt (M, 0=none)</span><NumberInput value={numberLabel(config.legSocketLockBoltDiameter, 2)} min={0} max={50 / (config.units === 'mm' ? 1 : mmPerInch)} step={config.units === 'mm' ? 1 : 0.0625} onValue={value => setNumeric('legSocketLockBoltDiameter', readDisplay(value, config.units))} /></label>{numericInput('legSocketLockOffset', 'Lock from bottom', 0, 1000, 5)}</div>
-                {socket ? <p>4 receivers: 8 face plates {numberLabel(socket.outer, 2)} × {numberLabel(socket.height, 2)} and 8 side plates {numberLabel(socket.inner, 2)} × {numberLabel(socket.height, 2)} {unitLabel}. Internal opening: {numberLabel(socket.inner, 2)} × {numberLabel(socket.inner, 2)} {unitLabel}.</p> : <p className="socket-error">The receiver does not fit the current table, internal frame or lock-hole dimensions. Increase the table/skirt size, move the receiver or reduce its inputs.</p>}
-                <p>The receiver is generated around the selected square tube with the specified clearance. The default profile is 60 × 60 mm.</p>
+                <div className="fields">{numericInput('legPlateSize', 'Plate size', 80, 400, 5)}{numericInput('legPlateThickness', 'Plate thickness', 3, 40, 1)}</div>
+                <div className="fields">{numericInput('legPlateHoleDiameter', 'Mounting hole Ø', 1, 40, 1)}{numericInput('legPlateHoleSpacing', 'Hole pattern', 20, 350, 5)}</div>
+                <div className="fields">{numericInput('legPlateEdgeInset', 'From inner edge', 0, 1000, 5)}{numericInput('legProfileSize', 'Square tube', 20, 200, 5)}</div>
+                <div className="fields">{numericInput('legLength', 'Leg below frame', 100, 1500, 25)}</div>
+                {cornerPlate ? <p>4 horizontal corner plates {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with four Ø{numberLabel(cornerPlate.holeDiameter, 2)} holes on a {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel} pattern.</p> : <p className="socket-error">The corner plate does not fit the current table, internal frame or hole pattern. Increase the table size, move the plate inward or reduce its inputs.</p>}
+                <p>The default plate matches the supplied 150 × 150 × 6 mm example with four Ø10 mm holes. The leg meets the plate from below; no sleeve is generated.</p>
               </>}
             </div>}
             {toggle('liftingHoles', 'Lifting Holes')}
@@ -636,7 +639,7 @@ export default function App() {
         <div className="legal-disclosure">{about && <article id="about-panel" className="legal-panel" aria-labelledby="about-title"><header><h3 id="about-title">About & Legal Info</h3><button ref={closeButton} className="icon" aria-label="Close About and Legal Info" onClick={() => setAbout(false)}><Icon name="close" /></button></header><small>VERSION 1.0.0</small><p>This independent clean-room implementation preserves the public generator's workflow. It is not affiliated with or endorsed by the original author.</p><p>Models, layouts and DXF files are informational only. Confirm dimensions, kerf tolerances and structural integrity with a qualified professional before CNC or laser cutting.</p><a href="https://welding-table-generator.com/" target="_blank" rel="noopener noreferrer">Original project ↗</a></article>}<button className="legal-link" aria-expanded={about} aria-controls="about-panel" onClick={() => setAbout(value => !value)}>About & Legal Info<Icon name="chevron" size={14} style={{ transform: about ? 'rotate(180deg)' : undefined }} /></button></div>
         {notice && <output className="notice" aria-live="polite" onClick={() => setNotice('')}>{notice}</output>}
       </section>
-      <article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose a 16 mm or 28 mm fixture grid, or set a custom hole diameter, pitch and margin. Square and staggered patterns, skirt holes and grid engraving share one metric geometry model.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four square receivers for removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>
+      <article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose a 16 mm or 28 mm fixture grid, or set a custom hole diameter, pitch and margin. Square and staggered patterns, skirt holes and grid engraving share one metric geometry model.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates for removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>
     </main>
   )
 }
