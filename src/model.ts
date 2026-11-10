@@ -2,6 +2,7 @@ export type Units = 'mm' | 'inch'
 export type Preset = 'D16' | 'D28' | 'Custom'
 export type Grid = 'square' | 'staggered'
 export type EngravingMode = 'through' | 'between'
+export type SkirtHoleLayout = 'canonical' | 'compact'
 export type LegMountStyle = 'boltPattern' | 'cornerPlate'
 export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib' | 'legCornerPlate'
 export type CustomHole = { id: string | number; part: PartName; x: number; y: number; d: number }
@@ -15,6 +16,7 @@ export type Config = {
   margin: number
   grid: Grid
   skirtHoles: boolean
+  skirtHoleLayout: SkirtHoleLayout
   engraving: boolean
   engravingMode: EngravingMode
   nameMarking: boolean
@@ -62,6 +64,7 @@ export const defaults: Config = {
   margin: 50,
   grid: 'square',
   skirtHoles: true,
+  skirtHoleLayout: 'canonical',
   engraving: true,
   engravingMode: 'through',
   nameMarking: false,

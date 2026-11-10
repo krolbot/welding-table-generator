@@ -102,8 +102,16 @@ const grid = (part: PartName, width: number, height: number, c: Config, enabled:
   const holes: Hole[] = []
   const xs = centeredGridCoordinates(width, c)
   const rowPitch = c.grid === 'staggered' ? c.pitch / 2 : c.pitch
-  const rowCount = Math.max(part === 'top' ? 0 : 1, Math.floor((height - (part === 'top' ? 0 : c.thickness) - 2 * c.margin) / rowPitch + epsilon) + 1)
-  const ys = Array.from({ length: rowCount }, (_, index) => (index - (rowCount - 1) / 2) * rowPitch)
+  const compactSkirt = part.endsWith('Skirt') && c.skirtHoleLayout === 'compact'
+  // Compact skirts keep the declared coordinate pitch vertically; staggered mode only offsets alternate rows horizontally.
+  const verticalPitch = compactSkirt ? c.pitch : rowPitch
+  const canonicalRowCount = Math.max(part === 'top' ? 0 : 1, Math.floor((height - (part === 'top' ? 0 : c.thickness) - 2 * c.margin) / rowPitch + epsilon) + 1)
+  const compactNominalRowCount = Math.max(1, Math.floor(height / verticalPitch + epsilon))
+  const compactSafeRowCount = Math.max(0, Math.floor((height - c.thickness - c.holeDiameter - 2 * minimumHoleWeb) / verticalPitch + epsilon) + 1)
+  const rowCount = compactSkirt
+    ? Math.min(compactNominalRowCount, compactSafeRowCount)
+    : canonicalRowCount
+  const ys = Array.from({ length: rowCount }, (_, index) => (index - (rowCount - 1) / 2) * verticalPitch)
   for (let row = 0; row < ys.length; row += 1) {
     const y = ys[row]
     const offset = c.grid === 'staggered' && row % 2 ? c.pitch / 2 : 0

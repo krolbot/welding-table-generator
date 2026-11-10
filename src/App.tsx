@@ -126,6 +126,7 @@ function normalizeConfig(input: unknown): Config {
   if (value.units === 'in') result.units = 'inch'
   if (value.preset === 'D16' || value.preset === 'D28' || value.preset === 'Custom') result.preset = value.preset
   if (value.grid === 'square' || value.grid === 'staggered') result.grid = value.grid
+  if (value.skirtHoleLayout === 'canonical' || value.skirtHoleLayout === 'compact') result.skirtHoleLayout = value.skirtHoleLayout
   if (value.engravingMode === 'through' || value.engravingMode === 'between') result.engravingMode = value.engravingMode
   if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') result.legMountStyle = value.legMountStyle
   if (value.legMountStyle === 'squareSocket') result.legMountStyle = 'cornerPlate'
@@ -506,7 +507,9 @@ export default function App() {
             <div className="fields three">{numericInput('holeDiameter', 'Hole Ø', numericBounds.holeDiameter.min, numericBounds.holeDiameter.max, 1)}{numericInput('pitch', 'Pitch', config.holeDiameter + 10, numericBounds.pitch.max, 5)}{numericInput('margin', 'Margin', config.holeDiameter / 2 + 5, Math.min(config.length, config.width) / 2 - 10, 5)}</div>
             <p className="grid-summary">Grid: Ø{numberLabel(config.holeDiameter, 3)} / {numberLabel(config.pitch, 3)} {unitLabel} pitch / {numberLabel(config.margin, 3)} {unitLabel} from edge</p>
             <div className="hole-pattern"><span>Hole Pattern</span><div className="grid-buttons"><button className={config.grid === 'square' ? 'active' : ''} onClick={() => patch('grid', 'square')}>Square grid</button><button className={config.grid === 'staggered' ? 'active' : ''} onClick={() => patch('grid', 'staggered')}>Staggered</button></div>{config.grid === 'staggered' && <p>Rows are offset by half a pitch. Grid engraving draws rows only — columns no longer line up.</p>}</div>
-            <div className="fixture-options">{toggle('skirtHoles', 'Skirt Holes')}{toggle('engraving', 'Grid Engraving')}
+            <div className="fixture-options">{toggle('skirtHoles', 'Skirt Holes')}
+              {config.skirtHoles && <div className="skirt-layout-options"><span>Skirt hole layout</span><div className="grid-buttons"><button className={config.skirtHoleLayout === 'canonical' ? 'active' : ''} onClick={() => patch('skirtHoleLayout', 'canonical')}>Canonical</button><button className={config.skirtHoleLayout === 'compact' ? 'active' : ''} onClick={() => patch('skirtHoleLayout', 'compact')}>Compact edge rows</button></div><p>{config.skirtHoleLayout === 'compact' ? 'Vertical rows are centred with at least half a pitch to the nominal skirt edges, independent of the tabletop margin. D16 / 50 mm gives two rows on a 100 mm skirt.' : 'Vertical rows use the same edge margin as the canonical tabletop grid.'}</p></div>}
+              {toggle('engraving', 'Grid Engraving')}
               {config.engraving && <div className="engraving-options"><span>Engraving layout</span><div className="grid-buttons"><button title="Lines run through the hole centres" className={config.engravingMode === 'through' ? 'active' : ''} onClick={() => patch('engravingMode', 'through')}>Through holes</button><button title="Lines run between the holes, forming cells" className={config.engravingMode === 'between' ? 'active' : ''} onClick={() => patch('engravingMode', 'between')}>Between (cells)</button></div></div>}
               {toggle('nameMarking', 'Part Name Marking')}
             </div>

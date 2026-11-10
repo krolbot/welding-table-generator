@@ -59,7 +59,7 @@ input[type="number"], select { width: 100%; min-width: 0; border: 1px solid var(
 .field output { display: flex; align-items: center; padding: 4px 8px; border: 1px solid var(--input-border); background: var(--soft); color: var(--muted); font-size: 12px; line-height: 16px; height: 26px; border-radius: 4px; }
 .grid-summary { margin: 6px 0 0; font-size: 10px; line-height: 15px; }
 .hole-pattern { margin-top: 12px; }
-.hole-pattern > span, .engraving-options > span { display: block; font-size: 12px; line-height: 16px; color: #334155; margin-bottom: 4px; }
+.hole-pattern > span, .engraving-options > span, .skirt-layout-options > span { display: block; font-size: 12px; line-height: 16px; color: #334155; margin-bottom: 4px; }
 .grid-buttons { display: flex; gap: 8px; }
 .grid-buttons button { flex: 1; min-width: 0; background: var(--control-bg); color: var(--control-text); border-radius: 8px; padding: 6px 8px; font-size: 12px; line-height: 16px; font-weight: 500; }
 .grid-buttons button.active { background: var(--blue); color: var(--accent-contrast); box-shadow: 0 4px 6px #0001; }
@@ -67,9 +67,10 @@ input[type="number"], select { width: 100%; min-width: 0; border: 1px solid var(
 .checkbox { display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; margin: 0 0 12px; cursor: pointer; color: #1e293b; }
 .checkbox:last-child { margin-bottom: 0; }
 .checkbox input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); cursor: pointer; flex-shrink: 0; }
-.engraving-options { margin: 0 0 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.engraving-options .grid-buttons { gap: 8px; }
-.engraving-options .grid-buttons button { padding: 6px 8px; font-size: 10px; line-height: 15px; }
+.engraving-options, .skirt-layout-options { margin: 0 0 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.engraving-options .grid-buttons, .skirt-layout-options .grid-buttons { gap: 8px; }
+.engraving-options .grid-buttons button, .skirt-layout-options .grid-buttons button { padding: 6px 8px; font-size: 10px; line-height: 15px; }
+.skirt-layout-options p { margin: 6px 0 0; }
 .slider-field { display: block; margin: 16px 0 0; min-height: 48px; }
 .slider-field:last-child { margin-bottom: 0; }
 .slider-field > span { display: flex; justify-content: space-between; align-items: center; font-size: 14px; line-height: 20px; color: #334155; margin-bottom: 4px; }
@@ -243,12 +244,12 @@ h3 small { margin-left: 2px; color: var(--faint); font-size: 10px; font-weight: 
 .fixture-card h3, .production-card h3 { text-transform: uppercase; }
 .fixture-card .field { margin-top: 0; }
 .fixture-card .field > span { font-size: 12px; line-height: 16px; }
-.engraving-options > span { font-size: 10px; line-height: 15px; margin-bottom: 6px; }
+.engraving-options > span, .skirt-layout-options > span { font-size: 10px; line-height: 15px; margin-bottom: 6px; }
 .indented > .slider-field { margin-top: 0; }
 .canvas-tools .holes-tool { color: #f87171; font: 600 12px/16px ui-sans-serif, system-ui, sans-serif; }
 .canvas-tools .ruler-tool { color: #b45309; font: 600 12px/16px ui-sans-serif, system-ui, sans-serif; }
 .part .slot-contour { fill: var(--paper); stroke: #dc2626; stroke-width: 2.2222; }
-[data-theme="dark"] .brand h2, [data-theme="dark"] .field > span, [data-theme="dark"] .slider-field > span, [data-theme="dark"] .hole-pattern > span { color: #cbd5e1; }
+[data-theme="dark"] .brand h2, [data-theme="dark"] .field > span, [data-theme="dark"] .slider-field > span, [data-theme="dark"] .hole-pattern > span, [data-theme="dark"] .engraving-options > span, [data-theme="dark"] .skirt-layout-options > span { color: #cbd5e1; }
 [data-theme="dark"] input[type="number"], [data-theme="dark"] select { color: #fff; }
 [data-theme="dark"] .checkbox, [data-theme="dark"] input[type="range"] { color: #e2e8f0; }
 [data-theme="dark"] .drawing-frame { background: #0f172a; }
@@ -330,7 +331,7 @@ h3 small { margin-left: 2px; color: var(--faint); font-size: 10px; font-weight: 
   .exports .share { height: 30px; padding: 6px 12px; }
   .exports .zip { height: 34px; padding: 8px 12px; }
   .exports .dxf { height: 29px; padding: 6px 12px; }
-  .fixture-options .checkbox, .engraving-options { margin-bottom: 8px; }
+  .fixture-options .checkbox, .engraving-options, .skirt-layout-options { margin-bottom: 8px; }
   .fixture-options > .checkbox:last-child { margin-bottom: 0; }
   .settings-scroll > section:not(.fixture-card) > h3 { padding-bottom: 6px; margin-bottom: 0; }
   .slider-field output { font-size: 12px; line-height: 16px; }
