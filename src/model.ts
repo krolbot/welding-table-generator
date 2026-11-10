@@ -43,7 +43,6 @@ export type Config = {
   legPlateThickness: number
   legPlateHoleDiameter: number
   legPlateHoleSpacing: number
-  legPlateEdgeInset: number
   legLength: number
   customHoles: CustomHole[]
   removedHoles: Array<RemovedHole | string>
@@ -91,7 +90,6 @@ export const defaults: Config = {
   legPlateThickness: 6,
   legPlateHoleDiameter: 10,
   legPlateHoleSpacing: 100,
-  legPlateEdgeInset: 0,
   legLength: 700,
   customHoles: [],
   removedHoles: [],

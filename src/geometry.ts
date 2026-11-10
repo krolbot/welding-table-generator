@@ -59,22 +59,41 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   if (!c.legMounts || c.legMountStyle !== 'cornerPlate') return undefined
   const size = c.legPlateSize
   const thickness = c.legPlateThickness
-  const centerX = c.length / 2 - c.thickness - c.legPlateEdgeInset - size / 2
-  const centerZ = c.width / 2 - c.thickness - c.legPlateEdgeInset - size / 2
+  const centerX = c.length / 2 - size / 2
+  const centerZ = c.width / 2 - size / 2
   const holeDiameter = c.legPlateHoleDiameter
   const holeSpacing = c.legPlateHoleSpacing
   const minimumEdgeWeb = 5
+  const reliefRadius = c.dogBones ? c.dogBoneDiameter / 2 : 0
+  const notchDepth = c.thickness + c.clearance
+  const notchWidth = c.tabWidth + c.clearance
   const holesFit = holeSpacing > 0 && holeDiameter > 0
     && holeSpacing / 2 + holeDiameter / 2 + minimumEdgeWeb <= size / 2
   const legClearsHoles = c.legProfileSize > 0
     && c.legProfileSize / 2 + minimumEdgeWeb <= holeSpacing / 2 - holeDiameter / 2
+  const notchesFit = notchWidth + 2 * (minimumEdgeWeb + reliefRadius) <= size
+    && notchDepth + minimumEdgeWeb + reliefRadius < size / 2
+    && c.tabWidth + 2 * c.thickness <= size
+  const legClearsNotches = c.legProfileSize / 2 + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
+  const clearsNotch = (x: number, y: number, notchX: number, notchY: number, width: number, height: number) => {
+    const dx = Math.max(Math.abs(x - notchX) - width / 2, 0)
+    const dy = Math.max(Math.abs(y - notchY) - height / 2, 0)
+    return Math.hypot(dx, dy) >= holeDiameter / 2 + minimumEdgeWeb + reliefRadius
+  }
+  const holesClearNotches = [-holeSpacing / 2, holeSpacing / 2].every(x =>
+    [-holeSpacing / 2, holeSpacing / 2].every(y =>
+      clearsNotch(x, y, size / 2 - notchDepth / 2, 0, notchDepth, notchWidth)
+      && clearsNotch(x, y, 0, size / 2 - notchDepth / 2, notchWidth, notchDepth),
+    ),
+  )
   const frame = framePositions(c)
   const ribClearance = size / 2 + c.thickness / 2
   const overlapsRib = (center: number, positions: number[]) => positions.some(position =>
     Math.abs(center - position) < ribClearance || Math.abs(-center - position) < ribClearance
   )
   const clearsFrame = !c.ribs || !overlapsRib(centerX, frame.short) && !overlapsRib(centerZ, frame.long)
-  if (size <= 0 || thickness <= 0 || holeDiameter <= 0 || centerX < size / 2 || centerZ < size / 2 || !holesFit || !legClearsHoles || !clearsFrame) return undefined
+  if (size <= 0 || thickness <= 0 || holeDiameter <= 0 || centerX < size / 2 || centerZ < size / 2
+    || !holesFit || !legClearsHoles || !notchesFit || !legClearsNotches || !holesClearNotches || !clearsFrame) return undefined
   return { size, thickness, centerX, centerZ, holeDiameter, holeSpacing }
 }
 
@@ -291,10 +310,23 @@ const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
   const body = outer - (short ? c.thickness : 0)
   const halfEar = (c.tabWidth + (short ? 0 : c.clearance)) / 2
   const inner = outer - c.thickness - c.clearance
+  const cornerPlate = legCornerPlateSpec(c)
+  const bottomTabDepth = cornerPlate?.thickness ?? 0
+  const bottomTabCenters = cornerPlate
+    ? [-1, 1].map(sign => sign * (short ? cornerPlate.centerZ : cornerPlate.centerX))
+    : []
+  const bottom: Point[] = [point(-body, low)]
+  for (const center of bottomTabCenters) bottom.push(
+    point(center - c.tabWidth / 2, low),
+    point(center - c.tabWidth / 2, low - bottomTabDepth),
+    point(center + c.tabWidth / 2, low - bottomTabDepth),
+    point(center + c.tabWidth / 2, low),
+  )
+  bottom.push(point(body, low))
   const right = skirtEndTabCenters(low, high).flatMap(center => short
     ? [point(body, center - halfEar), point(outer, center - halfEar), point(outer, center + halfEar), point(body, center + halfEar)]
     : [point(outer, center - halfEar), point(inner, center - halfEar), point(inner, center + halfEar), point(outer, center + halfEar)])
-  const vertices = [point(-body, low), point(body, low), ...right, point(body, high)]
+  const vertices = [...bottom, ...right, point(body, high)]
   for (const center of topEdgeCenters(width, c, short).reverse()) {
     vertices.push(point(center + c.tabWidth / 2, high), point(center + c.tabWidth / 2, tabHigh), point(center - c.tabWidth / 2, tabHigh), point(center - c.tabWidth / 2, high))
   }
@@ -340,12 +372,18 @@ const liftingCutout = (c: Config): Contour => {
   ]
 }
 
-const rectangleOutline = (width: number, height: number): Contour => [
-  line(point(-width / 2, -height / 2), point(width / 2, -height / 2)),
-  line(point(width / 2, -height / 2), point(width / 2, height / 2)),
-  line(point(width / 2, height / 2), point(-width / 2, height / 2)),
-  line(point(-width / 2, height / 2), point(-width / 2, -height / 2)),
-]
+const cornerPlateOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
+  const half = spec.size / 2
+  const halfNotch = (c.tabWidth + c.clearance) / 2
+  const depth = c.thickness + c.clearance
+  return relievedPolygon([
+    point(-half, -half), point(half, -half),
+    point(half, -halfNotch), point(half - depth, -halfNotch),
+    point(half - depth, halfNotch), point(half, halfNotch), point(half, half),
+    point(halfNotch, half), point(halfNotch, half - depth),
+    point(-halfNotch, half - depth), point(-halfNotch, half), point(-half, half),
+  ], c)
+}
 
 const definition = (c: Config): Array<{ name: PartName; width: number; height: number; thickness: number; count: number; label: string; outline: Contour; grid: boolean }> => {
   const positions = framePositions(c)
@@ -356,7 +394,7 @@ const definition = (c: Config): Array<{ name: PartName; width: number; height: n
     { name: 'shortSkirt', width: c.width, height: c.height, thickness: c.thickness, count: 2, label: 'SHORT SKIRT', outline: skirtOutline(c.width, c, true), grid: c.skirtHoles },
     { name: 'longRib', width: c.length, height: c.height - c.thickness, thickness: c.thickness, count: positions.long.length, label: 'LONG RIB', outline: ribOutline(c.length, c, true), grid: false },
     { name: 'shortRib', width: c.width, height: c.height - c.thickness, thickness: c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
-    { name: 'legCornerPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: cornerPlate?.thickness ?? c.legPlateThickness, count: cornerPlate ? 4 : 0, label: `LEG CORNER PLATE T${c.legPlateThickness}`, outline: cornerPlate ? rectangleOutline(cornerPlate.size, cornerPlate.size) : [], grid: false },
+    { name: 'legCornerPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: cornerPlate?.thickness ?? c.legPlateThickness, count: cornerPlate ? 4 : 0, label: `LEG CORNER PLATE T${c.legPlateThickness}`, outline: cornerPlate ? cornerPlateOutline(c, cornerPlate) : [], grid: false },
   ]
 }
 

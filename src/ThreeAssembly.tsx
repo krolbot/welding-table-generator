@@ -215,7 +215,10 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
       for (const zSign of [-1, 1]) {
         const x = xSign * cornerPlate.centerX
         const z = zSign * cornerPlate.centerZ
-        plate(runtime, cornerPlatePart, config, new THREE.Vector3(x, y, z), new THREE.Euler(Math.PI / 2, 0, 0), new THREE.Vector3(xSign * config.length * 0.15, 0, zSign * config.width * 0.15))
+        const angle = xSign > 0
+          ? zSign > 0 ? 0 : -Math.PI / 2
+          : zSign > 0 ? Math.PI / 2 : Math.PI
+        plate(runtime, cornerPlatePart, config, new THREE.Vector3(x, y, z), new THREE.Euler(Math.PI / 2, 0, angle), new THREE.Vector3(xSign * config.length * 0.15, 0, zSign * config.width * 0.15))
         squareTubeLeg(runtime, config, x, z, cornerPlate.thickness)
       }
     }
