@@ -2,7 +2,8 @@ export type Units = 'mm' | 'inch'
 export type Preset = 'D16' | 'D28' | 'Custom'
 export type Grid = 'square' | 'staggered'
 export type EngravingMode = 'through' | 'between'
-export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib'
+export type LegMountStyle = 'boltPattern' | 'squareSocket'
+export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib' | 'legSocketFace' | 'legSocketSide'
 export type CustomHole = { id: string | number; part: PartName; x: number; y: number; d: number }
 export type RemovedHole = { id: string | number; part: PartName; x: number; y: number; r: number }
 
@@ -28,6 +29,7 @@ export type Config = {
   dogBones: boolean
   dogBoneDiameter: number
   legMounts: boolean
+  legMountStyle: LegMountStyle
   liftingHoles: boolean
   legBoltDiameter: number
   legPatternX: number
@@ -36,6 +38,12 @@ export type Config = {
   legRows: number
   legEdgeOffset: number
   legBottomOffset: number
+  legProfileSize: number
+  legSocketClearance: number
+  legSocketEdgeInset: number
+  legSocketLockBoltDiameter: number
+  legSocketLockOffset: number
+  legLength: number
   customHoles: CustomHole[]
   removedHoles: Array<RemovedHole | string>
   sheetLength: number
@@ -68,6 +76,7 @@ export const defaults: Config = {
   dogBones: true,
   dogBoneDiameter: 2,
   legMounts: false,
+  legMountStyle: 'boltPattern',
   liftingHoles: false,
   legBoltDiameter: 16,
   legPatternX: 60,
@@ -76,6 +85,12 @@ export const defaults: Config = {
   legRows: 2,
   legEdgeOffset: 60,
   legBottomOffset: 40,
+  legProfileSize: 60,
+  legSocketClearance: 1,
+  legSocketEdgeInset: 20,
+  legSocketLockBoltDiameter: 12,
+  legSocketLockOffset: 40,
+  legLength: 700,
   customHoles: [],
   removedHoles: [],
   sheetLength: 3000,
@@ -92,6 +107,8 @@ export const partLabels: Record<PartName, string> = {
   shortSkirt: 'Short skirt',
   longRib: 'Long rib',
   shortRib: 'Short rib',
+  legSocketFace: 'Leg socket face',
+  legSocketSide: 'Leg socket side',
 }
 
 export const mmPerInch = 25.4
@@ -113,6 +130,7 @@ export const projectFields = {
 } as const
 export const projectParts: Record<PartName, string> = {
   top: 'top', longSkirt: 'long', shortSkirt: 'short', longRib: 'long_rib', shortRib: 'short_rib',
+  legSocketFace: 'leg_socket_face', legSocketSide: 'leg_socket_side',
 }
 export const readPart = (value: unknown): PartName | undefined =>
   (Object.keys(projectParts) as PartName[]).find(part => part === value || projectParts[part] === value)

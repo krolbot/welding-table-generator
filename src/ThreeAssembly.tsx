@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { display, type Config } from './model'
-import { framePositions, makeParts, partWeight, type Contour, type Part } from './geometry'
+import { framePositions, legSocketSpec, makeParts, partWeight, type Contour, type Part } from './geometry'
 
 type Props = { config: Config; resetToken: number; dark: boolean }
 type PartInfo = { part: Part['name']; isPart: true; name: string; dims: string; weight: string | number; weightUnit: string; holesCount: number; basePos: THREE.Vector3; explodeDir: THREE.Vector3; currentFactor: number }
@@ -11,6 +11,7 @@ const colorsFor = (dark: boolean) => ({ part: dark ? 0x64748b : 0x9aa7b8, edge: 
 const partTitles: Record<Part['name'], string> = {
   top: 'Main Top Plate', longSkirt: 'Longitudinal Skirt', shortSkirt: 'Transverse Skirt',
   longRib: 'Longitudinal Support Rib', shortRib: 'Transverse Support Rib',
+  legSocketFace: 'Leg Socket Face', legSocketSide: 'Leg Socket Side',
 }
 type Runtime = {
   scene: THREE.Scene
@@ -105,7 +106,9 @@ const plate = (
   geometry.translate(0, 0, -depth / 2)
   geometry.computeVertexNormals()
   const width = part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * config.thickness : 0)
-  const height = part.height - (part.name === 'top' ? 0 : config.thickness)
+  const height = part.name.startsWith('legSocket')
+    ? part.height
+    : part.height - (part.name === 'top' ? 0 : config.thickness)
   const metricWeight = Number(partWeight(part, config).toFixed(1))
   const unit = config.units === 'mm' ? 'mm' : 'in'
   const mesh: PartMesh = Object.assign(new THREE.Mesh(geometry, runtime.metal), { userData: {
@@ -122,6 +125,17 @@ const plate = (
   runtime.assembly.add(mesh)
   runtime.meshes.push(mesh)
   return mesh
+}
+
+const squareTubeLeg = (runtime: Runtime, config: Config, x: number, z: number, socketHeight: number) => {
+  const totalHeight = socketHeight + config.legLength
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(config.legProfileSize, totalHeight, config.legProfileSize), runtime.metal)
+  mesh.position.set(x, -(config.thickness + config.height + config.legLength) / 2, z)
+  mesh.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({ color: runtime.colors.edge }),
+  ))
+  runtime.assembly.add(mesh)
 }
 
 const addDimensionLine = (runtime: Runtime, from: THREE.Vector3, to: THREE.Vector3, normal: THREE.Vector3) => {
@@ -194,6 +208,23 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
   if (shortSkirt) {
     for (const side of [1, -1]) {
       plate(runtime, shortSkirt, config, new THREE.Vector3(side * (config.length / 2 - config.thickness / 2), -config.height / 2 - config.thickness / 2, 0), new THREE.Euler(0, -Math.PI / 2, 0), new THREE.Vector3(side * config.length * 0.3, 0, 0))
+    }
+  }
+  const socket = legSocketSpec(config)
+  const socketFace = find('legSocketFace')
+  const socketSide = find('legSocketSide')
+  if (socket && socketFace && socketSide) {
+    const y = -(config.height + config.thickness) / 2
+    for (const xSign of [-1, 1]) {
+      for (const zSign of [-1, 1]) {
+        const x = xSign * socket.centerX
+        const z = zSign * socket.centerZ
+        for (const face of [-1, 1]) {
+          plate(runtime, socketFace, config, new THREE.Vector3(x, y, z + face * (socket.inner + config.thickness) / 2), new THREE.Euler(), new THREE.Vector3())
+          plate(runtime, socketSide, config, new THREE.Vector3(x + face * (socket.inner + config.thickness) / 2, y, z), new THREE.Euler(0, -Math.PI / 2, 0), new THREE.Vector3())
+        }
+        squareTubeLeg(runtime, config, x, z, socket.height)
+      }
     }
   }
   const positions = framePositions(config)
@@ -339,9 +370,9 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
     state.colors = colorsFor(dark)
     state.metal.color.setHex(state.colors.part)
     state.highlighted.color.setHex(state.colors.part)
-    state.meshes.forEach(mesh => mesh.children.forEach(edge => {
-      if (edge instanceof THREE.LineSegments) (edge.material as THREE.LineBasicMaterial).color.setHex(state.colors.edge)
-    }))
+    state.assembly.traverse((item: THREE.Object3D) => {
+      if (item instanceof THREE.LineSegments) (item.material as THREE.LineBasicMaterial).color.setHex(state.colors.edge)
+    })
     rebuildDimensions(state, config)
   }, [dark])
 

@@ -45,6 +45,39 @@ const pointsAlong = (start: number, end: number, count: number) => count < 2
 /** The reference uses the common 1.5 mm oversize for clearance holes. */
 const boltHoleDiameter = (bolt: number) => bolt + 1.5
 
+export type LegSocketSpec = {
+  inner: number
+  outer: number
+  height: number
+  centerX: number
+  centerZ: number
+  lockHoleDiameter: number
+  lockHoleY: number
+}
+
+export const legSocketSpec = (c: Config): LegSocketSpec | undefined => {
+  if (!c.legMounts || c.legMountStyle !== 'squareSocket') return undefined
+  const inner = c.legProfileSize + 2 * c.legSocketClearance
+  const outer = inner + 2 * c.thickness
+  const height = c.height - c.thickness
+  const centerX = c.length / 2 - c.legSocketEdgeInset - outer / 2
+  const centerZ = c.width / 2 - c.legSocketEdgeInset - outer / 2
+  const lockHoleDiameter = c.legSocketLockBoltDiameter > 0 ? boltHoleDiameter(c.legSocketLockBoltDiameter) : 0
+  const lockHoleY = -height / 2 + c.legSocketLockOffset
+  const minimumEdgeWeb = 5
+  const lockFits = !lockHoleDiameter
+    || c.legSocketLockOffset >= lockHoleDiameter / 2 + minimumEdgeWeb
+      && c.legSocketLockOffset <= height - lockHoleDiameter / 2 - minimumEdgeWeb
+  const frame = framePositions(c)
+  const ribClearance = outer / 2 + c.thickness / 2
+  const overlapsRib = (center: number, positions: number[]) => positions.some(position =>
+    Math.abs(center - position) < ribClearance || Math.abs(-center - position) < ribClearance
+  )
+  const clearsFrame = !overlapsRib(centerX, frame.short) && !overlapsRib(centerZ, frame.long)
+  if (inner <= 0 || height <= 0 || centerX < outer / 2 || centerZ < outer / 2 || !lockFits || !clearsFrame) return undefined
+  return { inner, outer, height, centerX, centerZ, lockHoleDiameter, lockHoleY }
+}
+
 const grid = (part: PartName, width: number, height: number, c: Config, enabled: boolean): Hole[] => {
   if (!enabled) return []
   const holes: Hole[] = []
@@ -79,7 +112,7 @@ const removeConfiguredHoles = (part: PartName, holes: Hole[], c: Config) => hole
 ))
 
 const legMountHoles = (part: PartName, width: number, height: number, c: Config, holes: Hole[]) => {
-  if (!c.legMounts || (part !== 'longSkirt' && part !== 'shortSkirt')) return
+  if (!c.legMounts || c.legMountStyle !== 'boltPattern' || (part !== 'longSkirt' && part !== 'shortSkirt')) return
   const inset = c.legEdgeOffset + (part === 'shortSkirt' ? c.thickness : 0)
   const diameter = boltHoleDiameter(c.legBoltDiameter)
   const baseY = -height / 2 + c.thickness / 2 + c.legBottomOffset
@@ -244,7 +277,7 @@ const internalSlots = (c: Config) => {
 }
 
 const skirtSlots = (name: PartName, c: Config) => {
-  if (!c.ribs || name === 'longRib' || name === 'shortRib') return []
+  if (!c.ribs || (name !== 'longSkirt' && name !== 'shortSkirt')) return []
   const positions = framePositions(c)
   const centers = name === 'longSkirt' ? positions.short : positions.long
   return centers.map(x => slot(x, c.thickness / 2, c.thickness + c.clearance, c.tabWidth + c.clearance, c))
@@ -307,14 +340,24 @@ const liftingCutout = (c: Config): Contour => {
   ]
 }
 
+const rectangleOutline = (width: number, height: number): Contour => [
+  line(point(-width / 2, -height / 2), point(width / 2, -height / 2)),
+  line(point(width / 2, -height / 2), point(width / 2, height / 2)),
+  line(point(width / 2, height / 2), point(-width / 2, height / 2)),
+  line(point(-width / 2, height / 2), point(-width / 2, -height / 2)),
+]
+
 const definition = (c: Config): Array<{ name: PartName; width: number; height: number; count: number; label: string; outline: Contour; grid: boolean }> => {
   const positions = framePositions(c)
+  const socket = legSocketSpec(c)
   return [
     { name: 'top', width: c.length, height: c.width, count: 1, label: 'TOP PLATE', outline: topOutline(c), grid: true },
     { name: 'longSkirt', width: c.length, height: c.height, count: 2, label: 'LONG SKIRT', outline: skirtOutline(c.length, c, false), grid: c.skirtHoles },
     { name: 'shortSkirt', width: c.width, height: c.height, count: 2, label: 'SHORT SKIRT', outline: skirtOutline(c.width, c, true), grid: c.skirtHoles },
     { name: 'longRib', width: c.length, height: c.height - c.thickness, count: positions.long.length, label: 'LONG RIB', outline: ribOutline(c.length, c, true), grid: false },
     { name: 'shortRib', width: c.width, height: c.height - c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
+    { name: 'legSocketFace', width: socket?.outer ?? 0, height: socket?.height ?? 0, count: socket ? 8 : 0, label: 'LEG SOCKET FACE', outline: socket ? rectangleOutline(socket.outer, socket.height) : [], grid: false },
+    { name: 'legSocketSide', width: socket?.inner ?? 0, height: socket?.height ?? 0, count: socket ? 8 : 0, label: 'LEG SOCKET SIDE', outline: socket ? rectangleOutline(socket.inner, socket.height) : [], grid: false },
   ]
 }
 
@@ -326,13 +369,18 @@ export const makeParts = (c: Config): Part[] => {
     const exclusions = [...slots, ...outerNotches(item.name, c)]
     const mounts: Hole[] = []
     legMountHoles(item.name, item.width, item.height, c, mounts)
+    const socket = legSocketSpec(c)
+    const socketHoles: Hole[] = []
+    if (item.name === 'legSocketFace' && socket?.lockHoleDiameter) {
+      pushHole(socketHoles, item.name, 0, socket.lockHoleY, socket.lockHoleDiameter, 'mount')
+    }
     return {
       name: item.name,
       width: item.width,
       height: item.height,
       count: item.count,
       label: item.label,
-      holes: decorate(item.name, item.width, item.height, c, grid(item.name, item.width, item.height, c, item.grid)).filter(hole => {
+      holes: decorate(item.name, item.width, item.height, c, [...grid(item.name, item.width, item.height, c, item.grid), ...socketHoles]).filter(hole => {
         if (hole.kind !== 'grid') return true
         if (exclusions.some(slot => Math.abs(hole.x - slot.x) < slot.width / 2 + hole.d / 2 + minimumHoleWeb && Math.abs(hole.y - slot.y) < slot.height / 2 + hole.d / 2 + minimumHoleWeb)) return false
         if (mounts.some(mount => {
@@ -349,13 +397,15 @@ export const makeParts = (c: Config): Part[] => {
 
 export const layoutParts = (c: Config): Layout => {
   // Fabrication layout is packed from the top plate at Y=0 upward, exactly as
-  // the exported full DXF: top, skirts, longitudinal ribs, transverse ribs.
-  const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib']
+  // the exported full DXF: top, skirts, longitudinal ribs, transverse ribs and optional leg receivers.
+  const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legSocketFace', 'legSocketSide']
   const parts = makeParts(c).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
   const packed = parts.map(part => ({
     part,
     width: part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * c.thickness : 0),
-    height: part.height - (part.name === 'top' ? 0 : c.thickness),
+    height: part.name === 'top' || part.name.startsWith('legSocket')
+      ? part.height
+      : part.height - (part.name.endsWith('Rib') ? 2 * c.thickness : c.thickness),
   }))
   const count = parts.reduce((sum, part) => sum + part.count, 0)
   const height = packed.reduce((sum, item) => sum + item.height * item.part.count, 0) + Math.max(0, count - 1) * layoutGap
@@ -384,11 +434,13 @@ export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
     for (let y = -halfH; y <= halfH + epsilon; y += step) lines.push({ from: point(-halfW, y), to: point(halfW, y) })
   }
   if (c.nameMarking) {
-    const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib']
+    const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legSocketFace', 'legSocketSide']
     const value = `${order.indexOf(part.name) + 1} ${part.label}`
     const skirt = part.name.endsWith('Skirt')
     const bodyHalfWidth = part.width / 2 - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? c.thickness : 0)
-    const bodyHeight = part.name === 'top' ? part.height : skirt ? c.height - c.thickness : c.height - 2 * c.thickness
+    const bodyHeight = part.name === 'top' || part.name.startsWith('legSocket')
+      ? part.height
+      : skirt ? c.height - c.thickness : c.height - 2 * c.thickness
     const inset = Math.min(2 * c.thickness, bodyHeight * 0.12)
     const glyphBounds = value.split('').flatMap((character, index) => (strokeGlyphs[character] ?? [])
       .flatMap(([x1, , x2]) => [index + x1 / 6, index + x2 / 6]))

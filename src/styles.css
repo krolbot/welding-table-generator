@@ -80,9 +80,11 @@ input[type="range"] { display: inline-block; width: 100%; height: 16px; accent-c
 .relief-control { margin-top: 12px; }
 .clearance-note { margin: -8px 0 12px; }
 .leg-options { background: var(--soft); padding: 12px; border-radius: 6px; margin: 0 0 12px 24px; border: 1px solid var(--border); }
+.leg-style { margin-bottom: 12px; }
 .leg-options .fields { margin-bottom: 8px; }
 .leg-options .field span { font-size: 10px; line-height: 15px; }
 .leg-options p { margin-top: 8px; }
+.leg-options .socket-error { color: #dc2626; }
 .hole-row { background: var(--soft); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin: 12px 0; }
 .hole-part { display: flex; gap: 6px; margin-bottom: 8px; }
 .hole-part select { flex: 1; }

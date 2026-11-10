@@ -5,6 +5,7 @@ An independent, browser-only welding-table layout planner. This is a clean-room 
 ## Features
 
 - Metric canonical model with mm/in display, D16/D28/custom fixture grids, square/staggered placement, markings, optional construction holes, ribs, tabs and dog-bone reliefs.
+- Alternative leg mounting with the original skirt bolt pattern or four configurable laser-cut square receivers for removable square-tube legs; the 3D assembly shows the matching legs while DXF exports include the receiver plates.
 - Interactive SVG layout with pan, wheel/pinch zoom, hole removal and coordinate ruler; Three.js assembly with OrbitControls, hover highlighting, exploded view and dimensions.
 - Browser-only JSON open/save/share, production estimates, sheet fit feedback, individual-part DXF ZIPs and full-layout ASCII DXF R12 exports using `OUTLINE`, `ENGRAVE`, and `HOLES` layers.
 
