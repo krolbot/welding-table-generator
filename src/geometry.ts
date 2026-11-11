@@ -55,8 +55,11 @@ export type LegCornerPlateSpec = {
   holeSpacing: number
   jumperLength: number
   jumperWidth: number
-  jumperNotchDepth: number
-  jumperNotchWidth: number
+  jumperTabWidth: number
+  jumperTabDepth: number
+  jumperSlotCenter: number
+  jumperSlotLength: number
+  jumperSlotWidth: number
 }
 
 export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined => {
@@ -69,8 +72,11 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const holeSpacing = c.legPlateHoleSpacing
   const jumperLength = c.legJumperLength
   const jumperWidth = c.legJumperWidth
-  const jumperNotchDepth = c.thickness + c.clearance
-  const jumperNotchWidth = c.thickness + c.clearance
+  const jumperTabWidth = c.tabWidth
+  const jumperTabDepth = c.thickness
+  const jumperSlotCenter = c.legProfileSize / 2 + c.thickness / (2 * Math.SQRT2)
+  const jumperSlotLength = jumperTabWidth + c.clearance
+  const jumperSlotWidth = c.thickness + c.clearance
   const minimumEdgeWeb = 5
   const reliefRadius = c.dogBones ? c.dogBoneDiameter / 2 : 0
   const notchDepth = c.thickness + c.clearance
@@ -82,9 +88,11 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const notchesFit = notchWidth + 2 * (minimumEdgeWeb + reliefRadius) <= size
     && notchDepth + minimumEdgeWeb + reliefRadius < size / 2
     && c.tabWidth + 2 * c.thickness <= size
-  const jumperFits = jumperNotchWidth + 2 * (minimumEdgeWeb + reliefRadius) <= jumperWidth
-    && jumperNotchDepth + minimumEdgeWeb + reliefRadius < jumperLength / 2
+  const jumperSlotExtent = (jumperSlotLength + jumperSlotWidth) / (2 * Math.SQRT2)
+  const jumperFits = jumperTabWidth + 2 * (minimumEdgeWeb + reliefRadius) <= jumperLength
+    && jumperWidth - jumperTabDepth >= minimumEdgeWeb
     && jumperLength + 2 * minimumEdgeWeb <= Math.SQRT2 * (size - c.legProfileSize)
+    && jumperSlotCenter + jumperSlotExtent + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
   const legClearsNotches = c.legProfileSize / 2 + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
   const clearsNotch = (x: number, y: number, notchX: number, notchY: number, width: number, height: number) => {
     const dx = Math.max(Math.abs(x - notchX) - width / 2, 0)
@@ -97,6 +105,17 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
       && clearsNotch(x, y, 0, size / 2 - notchDepth / 2, notchWidth, notchDepth),
     ),
   )
+  const holesClearJumperSlot = [-holeSpacing / 2, holeSpacing / 2].every(x =>
+    [-holeSpacing / 2, holeSpacing / 2].every(y => {
+      const dx = x - jumperSlotCenter
+      const dy = y - jumperSlotCenter
+      const tangent = (dx - dy) * Math.SQRT1_2
+      const normal = (dx + dy) * Math.SQRT1_2
+      const gapX = Math.max(Math.abs(tangent) - jumperSlotLength / 2, 0)
+      const gapY = Math.max(Math.abs(normal) - jumperSlotWidth / 2, 0)
+      return Math.hypot(gapX, gapY) >= holeDiameter / 2 + minimumEdgeWeb + reliefRadius
+    }),
+  )
   const frame = framePositions(c)
   const ribClearance = size / 2 + c.thickness / 2
   const overlapsRib = (center: number, positions: number[]) => positions.some(position =>
@@ -104,8 +123,11 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   )
   const clearsFrame = !c.ribs || !overlapsRib(centerX, frame.short) && !overlapsRib(centerZ, frame.long)
   if (size <= 0 || thickness <= 0 || holeDiameter <= 0 || centerX < size / 2 || centerZ < size / 2
-    || !holesFit || !legClearsHoles || !notchesFit || !jumperFits || !legClearsNotches || !holesClearNotches || !clearsFrame) return undefined
-  return { size, thickness, centerX, centerZ, holeDiameter, holeSpacing, jumperLength, jumperWidth, jumperNotchDepth, jumperNotchWidth }
+    || !holesFit || !legClearsHoles || !notchesFit || !jumperFits || !legClearsNotches || !holesClearNotches || !holesClearJumperSlot || !clearsFrame) return undefined
+  return {
+    size, thickness, centerX, centerZ, holeDiameter, holeSpacing, jumperLength, jumperWidth,
+    jumperTabWidth, jumperTabDepth, jumperSlotCenter, jumperSlotLength, jumperSlotWidth,
+  }
 }
 
 const grid = (part: PartName, width: number, height: number, c: Config, enabled: boolean): Hole[] => {
@@ -118,10 +140,14 @@ const grid = (part: PartName, width: number, height: number, c: Config, enabled:
   const verticalPitch = compactSkirt ? c.pitch : rowPitch
   const canonicalRowCount = Math.max(part === 'top' ? 0 : 1, Math.floor((height - (part === 'top' ? 0 : c.thickness) - 2 * c.margin) / rowPitch + epsilon) + 1)
   const compactNominalRowCount = Math.max(1, Math.floor(height / verticalPitch + epsilon))
-  const compactSafeRowCount = Math.max(0, Math.floor((height - c.thickness - c.holeDiameter - 2 * minimumHoleWeb) / verticalPitch + epsilon) + 1)
+  const safePitch = compactSkirt ? verticalPitch : rowPitch
+  const cornerMount = c.legMounts && c.legMountStyle === 'cornerPlate'
+  const skirtSafeRowCount = part.endsWith('Skirt')
+    ? Math.max(0, Math.floor((height - (cornerMount ? 2 : 1) * c.thickness - c.holeDiameter - 2 * minimumHoleWeb) / safePitch + epsilon) + 1)
+    : Number.POSITIVE_INFINITY
   const rowCount = compactSkirt
-    ? Math.min(compactNominalRowCount, compactSafeRowCount)
-    : canonicalRowCount
+    ? Math.min(compactNominalRowCount, skirtSafeRowCount)
+    : Math.min(canonicalRowCount, skirtSafeRowCount)
   const ys = Array.from({ length: rowCount }, (_, index) => (index - (rowCount - 1) / 2) * verticalPitch)
   for (let row = 0; row < ys.length; row += 1) {
     const y = ys[row]
@@ -265,6 +291,26 @@ const slot = (x: number, y: number, width: number, height: number, c: Config) =>
   ], c),
 })
 
+const jumperPlateSlot = (c: Config, spec: LegCornerPlateSpec) => {
+  const center = spec.jumperSlotCenter
+  const halfLength = spec.jumperSlotLength / 2
+  const halfWidth = spec.jumperSlotWidth / 2
+  const placed = (along: number, across: number) => point(
+    center + (along + across) * Math.SQRT1_2,
+    center + (-along + across) * Math.SQRT1_2,
+  )
+  return {
+    x: center,
+    y: center,
+    width: spec.jumperSlotLength,
+    height: spec.jumperSlotWidth,
+    contour: relievedPolygon([
+      placed(-halfLength, -halfWidth), placed(-halfLength, halfWidth),
+      placed(halfLength, halfWidth), placed(halfLength, -halfWidth),
+    ], c),
+  }
+}
+
 const centeredGridCoordinates = (span: number, c: Config) => {
   const count = Math.max(0, Math.floor((span - 2 * c.margin) / c.pitch + epsilon) + 1)
   return Array.from({ length: count }, (_, index) => (index - (count - 1) / 2) * c.pitch)
@@ -322,8 +368,9 @@ const skirtSlots = (name: PartName, c: Config) => {
 }
 
 const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
-  const low = -c.height / 2 + c.thickness / 2
-  const high = c.height / 2 - c.thickness / 2
+  const cornerMount = c.legMounts && c.legMountStyle === 'cornerPlate'
+  const low = -c.height / 2 + (cornerMount ? c.thickness : c.thickness / 2)
+  const high = c.height / 2 - (cornerMount ? c.thickness : c.thickness / 2)
   const tabHigh = high + c.thickness
   const outer = width / 2
   const body = outer - (short ? c.thickness : 0)
@@ -407,12 +454,13 @@ const cornerPlateOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
 const legJumperOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
   const halfLength = spec.jumperLength / 2
   const halfWidth = spec.jumperWidth / 2
-  const halfNotch = spec.jumperNotchWidth / 2
+  const halfTab = spec.jumperTabWidth / 2
+  const bodyTop = halfWidth - spec.jumperTabDepth
   return relievedPolygon([
     point(-halfLength, -halfWidth), point(halfLength, -halfWidth),
-    point(halfLength, -halfNotch), point(halfLength - spec.jumperNotchDepth, -halfNotch),
-    point(halfLength - spec.jumperNotchDepth, halfNotch), point(halfLength, halfNotch),
-    point(halfLength, halfWidth), point(-halfLength, halfWidth),
+    point(halfLength, bodyTop), point(halfTab, bodyTop),
+    point(halfTab, halfWidth), point(-halfTab, halfWidth),
+    point(-halfTab, bodyTop), point(-halfLength, bodyTop),
   ], c)
 }
 
@@ -433,12 +481,15 @@ const definition = (c: Config): Array<{ name: PartName; width: number; height: n
 export const makeParts = (c: Config): Part[] => {
   const internal = internalSlots(c)
   const lifting = c.liftingHoles && c.height - c.thickness >= 50 ? liftingCutout(c) : null
+  const cornerPlate = legCornerPlateSpec(c)
   return definition(c).filter(item => item.count > 0).map(item => {
-    const slots = item.name === 'top' ? internal : skirtSlots(item.name, c)
+    const slots = [
+      ...(item.name === 'top' ? internal : skirtSlots(item.name, c)),
+      ...(item.name === 'legCornerPlate' && cornerPlate ? [jumperPlateSlot(c, cornerPlate)] : []),
+    ]
     const exclusions = [...slots, ...outerNotches(item.name, c)]
     const mounts: Hole[] = []
     legMountHoles(item.name, item.width, item.height, c, mounts)
-    const cornerPlate = legCornerPlateSpec(c)
     const plateHoles: Hole[] = []
     if (item.name === 'legCornerPlate' && cornerPlate) {
       for (const x of [-cornerPlate.holeSpacing / 2, cornerPlate.holeSpacing / 2]) {
@@ -477,7 +528,7 @@ export const layoutParts = (c: Config): Layout => {
   const packed = parts.map(part => ({
     part,
     width: part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * c.thickness : 0),
-    height: part.name === 'top' || part.name === 'legCornerPlate' || part.name === 'legJumper'
+    height: part.name === 'top' || (part.name.endsWith('Skirt') && c.legMounts && c.legMountStyle === 'cornerPlate') || part.name === 'legCornerPlate' || part.name === 'legJumper'
       ? part.height
       : part.height - (part.name.endsWith('Rib') ? 2 * c.thickness : c.thickness),
   }))
