@@ -222,17 +222,17 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
           ? zSign > 0 ? 0 : -Math.PI / 2
           : zSign > 0 ? Math.PI / 2 : Math.PI
         plate(runtime, cornerPlatePart, config, new THREE.Vector3(x, y, z), new THREE.Euler(Math.PI / 2, 0, angle), new THREE.Vector3(xSign * config.length * 0.15, 0, zSign * config.width * 0.15))
-        const outward = new THREE.Vector3(xSign, 0, zSign).normalize()
+        const inward = new THREE.Vector3(-xSign, 0, -zSign).normalize()
         const jumperOffset = config.legProfileSize / Math.SQRT2 + jumperPart.thickness / 2
         const jumperPosition = new THREE.Vector3(x, -config.height + jumperPart.height / 2, z)
-          .addScaledVector(outward, jumperOffset)
+          .addScaledVector(inward, jumperOffset)
         plate(
           runtime,
           jumperPart,
           config,
           jumperPosition,
-          new THREE.Euler(0, Math.atan2(outward.x, outward.z), 0),
-          new THREE.Vector3(outward.x * config.length * 0.15, -config.height * 2, outward.z * config.width * 0.15),
+          new THREE.Euler(0, Math.atan2(inward.x, inward.z), 0),
+          new THREE.Vector3(inward.x * config.length * 0.15, -config.height * 2, inward.z * config.width * 0.15),
         )
         squareTubeLeg(runtime, config, x, z)
       }
@@ -264,15 +264,15 @@ const resetCamera = (runtime: Runtime, config: Config) => {
 const focusCornerMount = (runtime: Runtime, config: Config) => {
   const spec = legCornerPlateSpec(config)
   if (!spec) return
-  const outward = new THREE.Vector3(1, 0, 1).normalize()
+  const inward = new THREE.Vector3(-1, 0, -1).normalize()
   const target = new THREE.Vector3(
     spec.centerX,
     -config.height / 2 + spec.jumperLength / 2,
     spec.centerZ,
-  ).addScaledVector(outward, config.legProfileSize / Math.SQRT2 + spec.thickness / 2)
+  ).addScaledVector(inward, config.legProfileSize / Math.SQRT2 + spec.thickness / 2)
   const distance = Math.max(spec.size * 2.5, config.legProfileSize * 5, 300)
   runtime.camera.position.copy(target)
-    .addScaledVector(outward, -distance)
+    .addScaledVector(inward, distance)
     .add(new THREE.Vector3(0, -Math.max(spec.size * 0.7, 90), 0))
   runtime.controls.target.copy(target)
   runtime.controls.update()

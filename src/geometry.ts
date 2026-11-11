@@ -76,7 +76,7 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const reliefRadius = c.dogBones ? c.dogBoneDiameter / 2 : 0
   const jumperTabWidth = Math.min(c.tabWidth, jumperWidth - 2 * (minimumEdgeWeb + reliefRadius))
   const jumperTabDepth = thickness
-  const jumperSlotCenter = c.legProfileSize / 2 + c.thickness / (2 * Math.SQRT2)
+  const jumperSlotCenter = -(c.legProfileSize / 2 + c.thickness / (2 * Math.SQRT2))
   const jumperSlotLength = jumperTabWidth + c.clearance
   const jumperSlotWidth = c.thickness + c.clearance
   const notchDepth = c.thickness + c.clearance
@@ -93,7 +93,7 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
     && jumperTabWidth + 2 * (minimumEdgeWeb + reliefRadius) <= jumperWidth
     && jumperLength - jumperTabDepth >= minimumEdgeWeb
     && jumperWidth + 2 * minimumEdgeWeb <= Math.SQRT2 * (size - c.legProfileSize)
-    && jumperSlotCenter + jumperSlotExtent + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
+    && Math.abs(jumperSlotCenter) + jumperSlotExtent + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
   const legClearsNotches = c.legProfileSize / 2 + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
   const clearsNotch = (x: number, y: number, notchX: number, notchY: number, width: number, height: number) => {
     const dx = Math.max(Math.abs(x - notchX) - width / 2, 0)
