@@ -7,6 +7,7 @@ import { framePositions, legCornerPlateSpec, makeParts, partWeight, type Contour
 type Props = { config: Config; resetToken: number; mountFocusToken: number; dark: boolean }
 type PartInfo = { part: Part['name']; isPart: true; name: string; dims: string; weight: string | number; weightUnit: string; holesCount: number; basePos: THREE.Vector3; explodeDir: THREE.Vector3; currentFactor: number }
 type PartMesh = THREE.Mesh<THREE.ExtrudeGeometry, THREE.MeshStandardMaterial> & { userData: PartInfo }
+const holeCurveSegments = 24
 const colorsFor = (dark: boolean) => ({ part: dark ? 0x64748b : 0x9aa7b8, edge: dark ? 0x020617 : 0x1e293b, dim: dark ? 0x60a5fa : 0x1d4ed8 })
 const partTitles: Record<Part['name'], string> = {
   top: 'Main Top Plate', longSkirt: 'Longitudinal Skirt', shortSkirt: 'Transverse Skirt',
@@ -76,7 +77,7 @@ const edgesFor = (shape: THREE.Shape, depth: number) => {
   const vertices: number[] = []
   for (const path of [shape, ...shape.holes]) {
     const circle = path.curves.length === 1 && path.curves[0] instanceof THREE.EllipseCurve
-    const points = path.getPoints(circle ? 8 : 3)
+    const points = path.getPoints(circle ? holeCurveSegments : 3)
     for (let index = 1; index < points.length; index += 1) {
       const from = points[index - 1], to = points[index]
       if (from.distanceToSquared(to) < 1e-10) continue
@@ -102,7 +103,7 @@ const plate = (
   const geometry = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: false,
-    curveSegments: runtime.renderHoles ? 4 : 1,
+    curveSegments: runtime.renderHoles ? holeCurveSegments : 1,
   })
   geometry.translate(0, 0, -depth / 2)
   geometry.computeVertexNormals()
