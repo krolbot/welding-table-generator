@@ -216,7 +216,7 @@ const decorate = (part: PartName, width: number, height: number, c: Config, base
 }
 
 // A relief is the long way round a concave material corner, not a circle laid over an untrimmed edge.
-const relievedPolygon = (vertices: Point[], c: Config): Contour => {
+const relievedPolygon = (vertices: Point[], c: Config, radiusCap?: (vertex: Point) => number): Contour => {
   const corners = vertices.map((vertex, index) => {
     const previous = vertices[(index + vertices.length - 1) % vertices.length]
     const next = vertices[(index + 1) % vertices.length]
@@ -225,7 +225,9 @@ const relievedPolygon = (vertices: Point[], c: Config): Contour => {
     const incoming = point((vertex.x - previous.x) / beforeLength, (vertex.y - previous.y) / beforeLength)
     const outgoing = point((next.x - vertex.x) / afterLength, (next.y - vertex.y) / afterLength)
     const concave = incoming.x * outgoing.y - incoming.y * outgoing.x < -epsilon
-    const radius = c.dogBones && concave ? Math.min(c.dogBoneDiameter / 2, beforeLength / 2, afterLength / 2) : 0
+    const radius = c.dogBones && concave
+      ? Math.min(c.dogBoneDiameter / 2, beforeLength / 2, afterLength / 2, radiusCap?.(vertex) ?? Infinity)
+      : 0
     return {
       center: vertex,
       before: point(vertex.x - incoming.x * radius, vertex.y - incoming.y * radius),
@@ -434,6 +436,7 @@ const ribOutline = (width: number, c: Config, long: boolean): Contour => {
   const positions = framePositions(c)
   const crossings = long ? positions.short : positions.long
   const halfLap = (c.thickness + c.clearance) / 2
+  const crossLapReliefRadius = c.thickness / 4 + c.clearance / 2
   const vertices = [point(-body, low)]
   if (long) for (const center of crossings) vertices.push(
     point(center - halfLap, low), point(center - halfLap, 0),
@@ -449,7 +452,7 @@ const ribOutline = (width: number, c: Config, long: boolean): Contour => {
     point(feature.center - feature.half, feature.end), point(feature.center - feature.half, high),
   )
   vertices.push(point(-body, high), point(-body, c.tabWidth / 2), point(-outer, c.tabWidth / 2), point(-outer, -c.tabWidth / 2), point(-body, -c.tabWidth / 2))
-  return relievedPolygon(vertices, c)
+  return relievedPolygon(vertices, c, vertex => Math.abs(vertex.y) < epsilon ? crossLapReliefRadius : Infinity)
 }
 
 const liftingCutout = (c: Config): Contour => {
