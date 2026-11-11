@@ -81,11 +81,11 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const jumperSlotCenter = -(c.legProfileSize / 2 + c.thickness / (2 * Math.SQRT2))
   const jumperSlotLength = jumperTabWidth + c.clearance
   const jumperSlotWidth = c.thickness + c.clearance
-  const freeOuterLand = (size - c.tabWidth) / 2 - thickness
-  const weldReliefLength = Math.max(0, Math.min(c.tabWidth, freeOuterLand))
-  const weldReliefDepth = thickness
   const notchDepth = c.thickness + c.clearance
   const notchWidth = c.tabWidth + c.clearance
+  const freeEdgeLand = (size - notchWidth) / 2 - thickness
+  const weldReliefLength = Math.max(0, Math.min(c.tabWidth, freeEdgeLand))
+  const weldReliefDepth = notchDepth
   const holesFit = holeSpacing > 0 && holeDiameter > 0
     && holeSpacing / 2 + holeDiameter / 2 + minimumEdgeWeb <= size / 2
   const legClearsHoles = c.legProfileSize > 0
@@ -93,9 +93,9 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const notchesFit = notchWidth + 2 * (minimumEdgeWeb + reliefRadius) <= size
     && notchDepth + minimumEdgeWeb + reliefRadius < size / 2
     && c.tabWidth + 2 * c.thickness <= size
-  const weldReliefStart = size / 2 - weldReliefLength
+  const weldReliefLand = size / 2 - notchWidth / 2 - weldReliefLength
   const weldReliefFits = weldReliefLength >= minimumEdgeWeb && weldReliefDepth > 0
-    && weldReliefStart - notchWidth / 2 >= minimumEdgeWeb + reliefRadius
+    && weldReliefLand >= minimumEdgeWeb + reliefRadius
     && holeSpacing / 2 + holeDiameter / 2 + minimumEdgeWeb + reliefRadius <= size / 2 - weldReliefDepth
   const jumperSlotExtent = (jumperSlotLength + jumperSlotWidth) / (2 * Math.SQRT2)
   const jumperFits = jumperTabWidth > 0
@@ -466,17 +466,15 @@ const liftingCutout = (c: Config): Contour => {
 const cornerPlateOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
   const half = spec.size / 2
   const halfNotch = (c.tabWidth + c.clearance) / 2
-  const depth = c.thickness + c.clearance
-  const weldStart = half - spec.weldReliefLength
-  const weldInner = half - spec.weldReliefDepth
+  const weldStart = -halfNotch - spec.weldReliefLength
+  const inner = half - spec.weldReliefDepth
   return relievedPolygon([
     point(-half, -half), point(half, -half),
-    point(half, -halfNotch), point(half - depth, -halfNotch),
-    point(half - depth, halfNotch), point(half, halfNotch),
-    point(half, weldStart), point(weldInner, weldStart),
-    point(weldInner, weldInner), point(weldStart, weldInner), point(weldStart, half),
-    point(halfNotch, half), point(halfNotch, half - depth),
-    point(-halfNotch, half - depth), point(-halfNotch, half), point(-half, half),
+    point(half, weldStart), point(inner, weldStart),
+    point(inner, halfNotch), point(half, halfNotch),
+    point(half, half),
+    point(halfNotch, half), point(halfNotch, inner),
+    point(weldStart, inner), point(weldStart, half), point(-half, half),
   ], c)
 }
 
