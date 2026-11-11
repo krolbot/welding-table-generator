@@ -44,7 +44,7 @@ type BooleanKey = {
 const numericKeys: NumericKey[] = [
   'holeDiameter', 'pitch', 'margin', 'length', 'width', 'height', 'ribSpacing', 'thickness', 'tabWidth',
   'clearance', 'dogBoneDiameter', 'legBoltDiameter', 'legPatternX', 'legPatternY', 'legCols', 'legRows',
-  'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize', 'legJumperLength', 'legJumperWidth',
+  'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize',
   'legPlateHoleDiameter', 'legPlateHoleSpacing', 'legLength', 'sheetLength', 'sheetWidth', 'exploded',
 ]
 const numericBounds: Record<NumericKey, { min: number; max: number }> = {
@@ -68,8 +68,6 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   legBottomOffset: { min: 0, max: 1000 },
   legProfileSize: { min: 20, max: 200 },
   legPlateSize: { min: 80, max: 400 },
-  legJumperLength: { min: 40, max: 300 },
-  legJumperWidth: { min: 20, max: 100 },
   legPlateHoleDiameter: { min: 1, max: 40 },
   legPlateHoleSpacing: { min: 20, max: 350 },
   legLength: { min: 100, max: 1500 },
@@ -545,11 +543,11 @@ export default function App() {
                 <p>{config.legCols * config.legRows} holes per corner, both ends of every skirt. Minimum spacing for M{config.legBoltDiameter}: {numberLabel(config.legBoltDiameter * 1.5, 2)} {unitLabel}.</p>
               </> : <>
                 <div className="fields">{numericInput('legPlateSize', 'Plate size', 80, 400, 5)}<label className="field"><span>Plate & jumper thickness</span><output>{numberLabel(config.thickness, 2)} {unitLabel} — table stock</output></label></div>
-                <div className="fields">{numericInput('legJumperLength', 'Jumper length', 40, 300, 1)}{numericInput('legJumperWidth', 'Jumper width', 20, 100, 1)}</div>
+                <div className="fields"><label className="field"><span>Jumper length (auto)</span><output>{numberLabel(config.height - config.thickness, 2)} {unitLabel}</output></label><label className="field"><span>Jumper width (auto)</span><output>{numberLabel(config.height * 0.3, 2)} {unitLabel}</output></label></div>
                 <div className="fields">{numericInput('legPlateHoleDiameter', 'Mounting hole Ø', 1, 40, 1)}{numericInput('legPlateHoleSpacing', 'Hole pattern', 20, 350, 5)}</div>
                 <div className="fields">{numericInput('legProfileSize', 'Square tube', 20, 200, 5)}{numericInput('legLength', 'Leg below frame', 100, 1500, 25)}</div>
                 {cornerPlate ? <p>4 horizontal corner plates {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with four Ø{numberLabel(cornerPlate.holeDiameter, 2)} holes on a {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel} pattern. Four support jumpers: {numberLabel(cornerPlate.jumperLength, 2)} × {numberLabel(cornerPlate.jumperWidth, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with a {numberLabel(cornerPlate.jumperTabWidth, 2)} {unitLabel} partial-width tab.</p> : <p className="socket-error">The corner plate, jumper, tabs, slots or hole pattern do not fit the current table and internal frame. Increase the table or plate size, or reduce the conflicting inputs.</p>}
-                <p>The plate underside is flush with the finished frame bottom. Partial-width skirt tabs leave weld lands beside them, while each plain support jumper engages a closed slot in the plate with its own tab. Plates and jumpers use the selected table stock; 94 × 30 mm is the reference jumper size.</p>
+                <p>The plate underside is flush with the finished frame bottom. Each jumper rises from the plate to the tabletop underside: length is H − stock thickness and width is 0.3 × H. A partial bottom tab engages the closed plate slot. Plates and jumpers use the selected table stock; H100 / T6 produces the 94 × 30 mm reference blank.</p>
               </>}
             </div>}
             {toggle('liftingHoles', 'Lifting Holes')}

@@ -70,15 +70,15 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const centerZ = c.width / 2 - size / 2
   const holeDiameter = c.legPlateHoleDiameter
   const holeSpacing = c.legPlateHoleSpacing
-  const jumperLength = c.legJumperLength
-  const jumperWidth = c.legJumperWidth
-  const jumperTabWidth = c.tabWidth
-  const jumperTabDepth = c.thickness
+  const jumperLength = c.height - c.thickness
+  const jumperWidth = c.height * 0.3
+  const minimumEdgeWeb = 5
+  const reliefRadius = c.dogBones ? c.dogBoneDiameter / 2 : 0
+  const jumperTabWidth = Math.min(c.tabWidth, jumperWidth - 2 * (minimumEdgeWeb + reliefRadius))
+  const jumperTabDepth = thickness
   const jumperSlotCenter = c.legProfileSize / 2 + c.thickness / (2 * Math.SQRT2)
   const jumperSlotLength = jumperTabWidth + c.clearance
   const jumperSlotWidth = c.thickness + c.clearance
-  const minimumEdgeWeb = 5
-  const reliefRadius = c.dogBones ? c.dogBoneDiameter / 2 : 0
   const notchDepth = c.thickness + c.clearance
   const notchWidth = c.tabWidth + c.clearance
   const holesFit = holeSpacing > 0 && holeDiameter > 0
@@ -89,9 +89,10 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
     && notchDepth + minimumEdgeWeb + reliefRadius < size / 2
     && c.tabWidth + 2 * c.thickness <= size
   const jumperSlotExtent = (jumperSlotLength + jumperSlotWidth) / (2 * Math.SQRT2)
-  const jumperFits = jumperTabWidth + 2 * (minimumEdgeWeb + reliefRadius) <= jumperLength
-    && jumperWidth - jumperTabDepth >= minimumEdgeWeb
-    && jumperLength + 2 * minimumEdgeWeb <= Math.SQRT2 * (size - c.legProfileSize)
+  const jumperFits = jumperTabWidth > 0
+    && jumperTabWidth + 2 * (minimumEdgeWeb + reliefRadius) <= jumperWidth
+    && jumperLength - jumperTabDepth >= minimumEdgeWeb
+    && jumperWidth + 2 * minimumEdgeWeb <= Math.SQRT2 * (size - c.legProfileSize)
     && jumperSlotCenter + jumperSlotExtent + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
   const legClearsNotches = c.legProfileSize / 2 + minimumEdgeWeb + reliefRadius <= size / 2 - notchDepth
   const clearsNotch = (x: number, y: number, notchX: number, notchY: number, width: number, height: number) => {
@@ -452,15 +453,15 @@ const cornerPlateOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
 }
 
 const legJumperOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
-  const halfLength = spec.jumperLength / 2
   const halfWidth = spec.jumperWidth / 2
+  const halfLength = spec.jumperLength / 2
   const halfTab = spec.jumperTabWidth / 2
-  const bodyTop = halfWidth - spec.jumperTabDepth
+  const bodyBottom = -halfLength + spec.jumperTabDepth
   return relievedPolygon([
-    point(-halfLength, -halfWidth), point(halfLength, -halfWidth),
-    point(halfLength, bodyTop), point(halfTab, bodyTop),
-    point(halfTab, halfWidth), point(-halfTab, halfWidth),
-    point(-halfTab, bodyTop), point(-halfLength, bodyTop),
+    point(-halfTab, -halfLength), point(halfTab, -halfLength),
+    point(halfTab, bodyBottom), point(halfWidth, bodyBottom),
+    point(halfWidth, halfLength), point(-halfWidth, halfLength),
+    point(-halfWidth, bodyBottom), point(-halfTab, bodyBottom),
   ], c)
 }
 
@@ -474,7 +475,7 @@ const definition = (c: Config): Array<{ name: PartName; width: number; height: n
     { name: 'longRib', width: c.length, height: c.height - c.thickness, thickness: c.thickness, count: positions.long.length, label: 'LONG RIB', outline: ribOutline(c.length, c, true), grid: false },
     { name: 'shortRib', width: c.width, height: c.height - c.thickness, thickness: c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
     { name: 'legCornerPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `LEG CORNER PLATE T${c.thickness}`, outline: cornerPlate ? cornerPlateOutline(c, cornerPlate) : [], grid: false },
-    { name: 'legJumper', width: cornerPlate?.jumperLength ?? 0, height: cornerPlate?.jumperWidth ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `LEG JUMPER ${c.legJumperLength}X${c.legJumperWidth} T${c.thickness}`, outline: cornerPlate ? legJumperOutline(c, cornerPlate) : [], grid: false },
+    { name: 'legJumper', width: cornerPlate?.jumperWidth ?? 0, height: cornerPlate?.jumperLength ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `LEG JUMPER ${cornerPlate?.jumperLength ?? 0}X${cornerPlate?.jumperWidth ?? 0} T${c.thickness}`, outline: cornerPlate ? legJumperOutline(c, cornerPlate) : [], grid: false },
   ]
 }
 

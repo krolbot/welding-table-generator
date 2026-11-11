@@ -42,8 +42,6 @@ export type Config = {
   legBottomOffset: number
   legProfileSize: number
   legPlateSize: number
-  legJumperLength: number
-  legJumperWidth: number
   legPlateHoleDiameter: number
   legPlateHoleSpacing: number
   legLength: number
@@ -91,8 +89,6 @@ export const defaults: Config = {
   legBottomOffset: 40,
   legProfileSize: 60,
   legPlateSize: 150,
-  legJumperLength: 94,
-  legJumperWidth: 30,
   legPlateHoleDiameter: 10,
   legPlateHoleSpacing: 100,
   legLength: 700,

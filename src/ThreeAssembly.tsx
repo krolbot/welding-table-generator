@@ -224,7 +224,7 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
         plate(runtime, cornerPlatePart, config, new THREE.Vector3(x, y, z), new THREE.Euler(Math.PI / 2, 0, angle), new THREE.Vector3(xSign * config.length * 0.15, 0, zSign * config.width * 0.15))
         const outward = new THREE.Vector3(xSign, 0, zSign).normalize()
         const jumperOffset = config.legProfileSize / Math.SQRT2 + jumperPart.thickness / 2
-        const jumperPosition = new THREE.Vector3(x, -config.height + cornerPlate.thickness - jumperPart.height / 2, z)
+        const jumperPosition = new THREE.Vector3(x, -config.height + jumperPart.height / 2, z)
           .addScaledVector(outward, jumperOffset)
         plate(
           runtime,
