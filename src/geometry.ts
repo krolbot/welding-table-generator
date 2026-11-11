@@ -60,8 +60,8 @@ export type LegCornerPlateSpec = {
   jumperSlotCenter: number
   jumperSlotLength: number
   jumperSlotWidth: number
-  weldOpeningWidth: number
-  weldOpeningHeight: number
+  weldReliefLength: number
+  weldReliefDepth: number
 }
 
 export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined => {
@@ -82,8 +82,8 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const jumperSlotLength = jumperTabWidth + c.clearance
   const jumperSlotWidth = c.thickness + c.clearance
   const freeOuterLand = (size - c.tabWidth) / 2 - thickness
-  const weldOpeningWidth = Math.max(0, Math.min(c.tabWidth, freeOuterLand))
-  const weldOpeningHeight = thickness
+  const weldReliefLength = Math.max(0, Math.min(c.tabWidth, freeOuterLand))
+  const weldReliefDepth = thickness
   const notchDepth = c.thickness + c.clearance
   const notchWidth = c.tabWidth + c.clearance
   const holesFit = holeSpacing > 0 && holeDiameter > 0
@@ -93,7 +93,10 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   const notchesFit = notchWidth + 2 * (minimumEdgeWeb + reliefRadius) <= size
     && notchDepth + minimumEdgeWeb + reliefRadius < size / 2
     && c.tabWidth + 2 * c.thickness <= size
-  const weldOpeningFits = weldOpeningWidth >= minimumEdgeWeb && weldOpeningHeight > 0
+  const weldReliefStart = size / 2 - weldReliefLength
+  const weldReliefFits = weldReliefLength >= minimumEdgeWeb && weldReliefDepth > 0
+    && weldReliefStart - notchWidth / 2 >= minimumEdgeWeb + reliefRadius
+    && holeSpacing / 2 + holeDiameter / 2 + minimumEdgeWeb + reliefRadius <= size / 2 - weldReliefDepth
   const jumperSlotExtent = (jumperSlotLength + jumperSlotWidth) / (2 * Math.SQRT2)
   const jumperFits = jumperTabWidth > 0
     && jumperTabWidth + 2 * (minimumEdgeWeb + reliefRadius) <= jumperWidth
@@ -130,11 +133,11 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   )
   const clearsFrame = !c.ribs || !overlapsRib(centerX, frame.short) && !overlapsRib(centerZ, frame.long)
   if (size <= 0 || thickness <= 0 || holeDiameter <= 0 || centerX < size / 2 || centerZ < size / 2
-    || !holesFit || !legClearsHoles || !notchesFit || !weldOpeningFits || !jumperFits || !legClearsNotches || !holesClearNotches || !holesClearJumperSlot || !clearsFrame) return undefined
+    || !holesFit || !legClearsHoles || !notchesFit || !weldReliefFits || !jumperFits || !legClearsNotches || !holesClearNotches || !holesClearJumperSlot || !clearsFrame) return undefined
   return {
     size, thickness, centerX, centerZ, holeDiameter, holeSpacing, jumperLength, jumperWidth,
     jumperTabWidth, jumperTabDepth, jumperSlotCenter, jumperSlotLength, jumperSlotWidth,
-    weldOpeningWidth, weldOpeningHeight,
+    weldReliefLength, weldReliefDepth,
   }
 }
 
@@ -390,24 +393,14 @@ const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
   const bottomTabCenters = cornerPlate
     ? [-1, 1].map(sign => sign * (short ? cornerPlate.centerZ : cornerPlate.centerX))
     : []
-  const bottom: Point[] = cornerPlate ? [] : [point(-body, plateSeat), point(body, plateSeat)]
+  const bottom: Point[] = cornerPlate ? [point(-body, plateSeat)] : [point(-body, plateSeat), point(body, plateSeat)]
   if (cornerPlate) {
     const [leftCenter, rightCenter] = bottomTabCenters
     const leftSeatEnd = Math.min(body, leftCenter + cornerPlate.size / 2)
     const rightSeatStart = Math.max(-body, rightCenter - cornerPlate.size / 2)
-    const leftTabStart = leftCenter - c.tabWidth / 2
-    const rightTabEnd = rightCenter + c.tabWidth / 2
-    const leftWeldOpening = Math.max(0, Math.min(cornerPlate.weldOpeningWidth, leftTabStart + body))
-    const rightWeldOpening = Math.max(0, Math.min(cornerPlate.weldOpeningWidth, body - rightTabEnd))
-    const weldOpeningHigh = Math.min(high, plateSeat + cornerPlate.weldOpeningHeight)
-    bottom.push(...(leftWeldOpening > epsilon ? [
-      point(-body, weldOpeningHigh),
-      point(-body + leftWeldOpening, weldOpeningHigh),
-      point(-body + leftWeldOpening, plateSeat),
-    ] : [point(-body, plateSeat)]))
     bottom.push(
-      point(leftTabStart, plateSeat),
-      point(leftTabStart, plateSeat - bottomTabDepth),
+      point(leftCenter - c.tabWidth / 2, plateSeat),
+      point(leftCenter - c.tabWidth / 2, plateSeat - bottomTabDepth),
       point(leftCenter + c.tabWidth / 2, plateSeat - bottomTabDepth),
       point(leftCenter + c.tabWidth / 2, plateSeat),
       point(leftSeatEnd, plateSeat),
@@ -417,19 +410,14 @@ const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
       point(rightCenter - c.tabWidth / 2, plateSeat),
       point(rightCenter - c.tabWidth / 2, plateSeat - bottomTabDepth),
       point(rightCenter + c.tabWidth / 2, plateSeat - bottomTabDepth),
-      point(rightTabEnd, plateSeat),
+      point(rightCenter + c.tabWidth / 2, plateSeat),
+      point(body, plateSeat),
     )
-    bottom.push(...(rightWeldOpening > epsilon ? [
-      point(body - rightWeldOpening, plateSeat),
-      point(body - rightWeldOpening, weldOpeningHigh),
-      point(body, weldOpeningHigh),
-    ] : [point(body, plateSeat)]))
   }
-  const distinctBottom = bottom.filter((value, index) => index === 0 || distance(bottom[index - 1], value) > epsilon)
   const right = skirtEndTabCenters(plateSeat, high).flatMap(center => short
     ? [point(body, center - halfEar), point(outer, center - halfEar), point(outer, center + halfEar), point(body, center + halfEar)]
     : [point(outer, center - halfEar), point(inner, center - halfEar), point(inner, center + halfEar), point(outer, center + halfEar)])
-  const vertices = [...distinctBottom, ...right, point(body, high)]
+  const vertices = [...bottom, ...right, point(body, high)]
   for (const center of topEdgeCenters(width, c, short).reverse()) {
     vertices.push(point(center + c.tabWidth / 2, high), point(center + c.tabWidth / 2, tabHigh), point(center - c.tabWidth / 2, tabHigh), point(center - c.tabWidth / 2, high))
   }
@@ -479,10 +467,14 @@ const cornerPlateOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
   const half = spec.size / 2
   const halfNotch = (c.tabWidth + c.clearance) / 2
   const depth = c.thickness + c.clearance
+  const weldStart = half - spec.weldReliefLength
+  const weldInner = half - spec.weldReliefDepth
   return relievedPolygon([
     point(-half, -half), point(half, -half),
     point(half, -halfNotch), point(half - depth, -halfNotch),
-    point(half - depth, halfNotch), point(half, halfNotch), point(half, half),
+    point(half - depth, halfNotch), point(half, halfNotch),
+    point(half, weldStart), point(weldInner, weldStart),
+    point(weldInner, weldInner), point(weldStart, weldInner), point(weldStart, half),
     point(halfNotch, half), point(halfNotch, half - depth),
     point(-halfNotch, half - depth), point(-halfNotch, half), point(-half, half),
   ], c)
