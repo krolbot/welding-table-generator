@@ -77,13 +77,11 @@ const edgesFor = (shape: THREE.Shape, depth: number) => {
   const vertices: number[] = []
   for (const path of [shape, ...shape.holes]) {
     const circle = path.curves.length === 1 && path.curves[0] instanceof THREE.EllipseCurve
-    if (path === shape || circle) {
-      const points = path.getPoints(circle ? holeCurveSegments : 3)
-      for (let index = 1; index < points.length; index += 1) {
-        const from = points[index - 1], to = points[index]
-        if (from.distanceToSquared(to) < 1e-10) continue
-        for (const z of [-depth / 2, depth / 2]) vertices.push(from.x, from.y, z, to.x, to.y, z)
-      }
+    const points = path.getPoints(circle ? holeCurveSegments : 3)
+    for (let index = 1; index < points.length; index += 1) {
+      const from = points[index - 1], to = points[index]
+      if (from.distanceToSquared(to) < 1e-10) continue
+      for (const z of [-depth / 2, depth / 2]) vertices.push(from.x, from.y, z, to.x, to.y, z)
     }
     const corners = circle ? path.getPoints(2) : path.curves.map(curve => curve.getPoint(0))
     const unique = new Map(corners.map(p => [`${p.x.toFixed(6)},${p.y.toFixed(6)}`, p]))
@@ -334,18 +332,12 @@ export function ThreeAssembly({ config, resetToken, mountFocusToken, dark }: Pro
       pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -(event.clientY - bounds.top) / bounds.height * 2 + 1)
       raycaster.setFromCamera(pointer, active.camera)
       const hit = raycaster.intersectObjects(active.meshes, false)[0]?.object
-      active.meshes.forEach(mesh => {
-        mesh.material = mesh === hit ? active.highlighted : active.metal
-        mesh.children.forEach(child => { if (child instanceof THREE.LineSegments) child.visible = mesh !== hit })
-      })
+      active.meshes.forEach(mesh => { mesh.material = mesh === hit ? active.highlighted : active.metal })
       const selected = active.meshes.find(mesh => mesh === hit)
       setHover(selected ? { info: selected.userData, x: event.clientX - bounds.left, y: event.clientY - bounds.top } : null)
     }
     const leave = () => {
-      state.meshes.forEach(mesh => {
-        mesh.material = state.metal
-        mesh.children.forEach(child => { if (child instanceof THREE.LineSegments) child.visible = true })
-      })
+      state.meshes.forEach(mesh => { mesh.material = state.metal })
       setHover(null)
     }
     renderer.domElement.addEventListener('pointermove', move)

@@ -436,13 +436,13 @@ const ribOutline = (width: number, c: Config, long: boolean): Contour => {
   const halfLap = (c.thickness + c.clearance) / 2
   const vertices = [point(-body, low)]
   if (long) for (const center of crossings) vertices.push(
-    point(center - halfLap, low), point(center - halfLap, c.clearance),
-    point(center + halfLap, c.clearance), point(center + halfLap, low),
+    point(center - halfLap, low), point(center - halfLap, 0),
+    point(center + halfLap, 0), point(center + halfLap, low),
   )
   vertices.push(point(body, low), point(body, -c.tabWidth / 2), point(outer, -c.tabWidth / 2), point(outer, c.tabWidth / 2), point(body, c.tabWidth / 2), point(body, high))
   const topFeatures = [
     ...ribTabs(width, crossings, c).map(center => ({ center, half: c.tabWidth / 2, end: tabHigh })),
-    ...(long ? [] : crossings.map(center => ({ center, half: halfLap, end: -c.clearance }))),
+    ...(long ? [] : crossings.map(center => ({ center, half: halfLap, end: 0 }))),
   ].sort((a, b) => b.center - a.center)
   for (const feature of topFeatures) vertices.push(
     point(feature.center + feature.half, high), point(feature.center + feature.half, feature.end),
