@@ -5,7 +5,7 @@ An independent, browser-only welding-table layout planner. This is a clean-room 
 ## Features
 
 - Metric canonical model with mm/in display, D16/D28/custom fixture grids, square/staggered placement, markings, optional construction holes, ribs, tabs and dog-bone reliefs. Skirt perforation keeps the canonical shared-margin layout by default and offers an explicit compact, centred edge-row layout with independent vertical placement.
-- Alternative leg mounting with the original skirt bolt pattern or four configurable horizontal corner plates for removable square-tube legs; each plate interlocks with both adjoining skirts, and DXF exports include the support plates at their own stock thickness.
+- Alternative leg mounting with the original skirt bolt pattern or four configurable horizontal corner plates for removable square-tube legs; each plate interlocks with both adjoining skirts and is reinforced by one configurable notched jumper (94×30 mm by default). Plates and jumpers use the selected table-sheet thickness in 2D, 3D, estimates and DXF exports.
 - Interactive SVG layout with pan, wheel/pinch zoom, hole removal and coordinate ruler; Three.js assembly with OrbitControls, hover highlighting, exploded view and dimensions.
 - Browser-only JSON open/save/share, production estimates, sheet fit feedback, individual-part DXF ZIPs and full-layout ASCII DXF R12 exports using `OUTLINE`, `ENGRAVE`, and `HOLES` layers.
 

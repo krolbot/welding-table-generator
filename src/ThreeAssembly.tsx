@@ -12,6 +12,7 @@ const partTitles: Record<Part['name'], string> = {
   top: 'Main Top Plate', longSkirt: 'Longitudinal Skirt', shortSkirt: 'Transverse Skirt',
   longRib: 'Longitudinal Support Rib', shortRib: 'Transverse Support Rib',
   legCornerPlate: 'Leg Corner Plate',
+  legJumper: 'Leg Support Jumper',
 }
 type Runtime = {
   scene: THREE.Scene
@@ -106,7 +107,7 @@ const plate = (
   geometry.translate(0, 0, -depth / 2)
   geometry.computeVertexNormals()
   const width = part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * config.thickness : 0)
-  const height = part.height - (part.name === 'top' || part.name === 'legCornerPlate' ? 0 : config.thickness)
+  const height = part.height - (part.name === 'top' || part.name === 'legCornerPlate' || part.name === 'legJumper' ? 0 : config.thickness)
   const metricWeight = Number(partWeight(part, config).toFixed(1))
   const unit = config.units === 'mm' ? 'mm' : 'in'
   const mesh: PartMesh = Object.assign(new THREE.Mesh(geometry, runtime.metal), { userData: {
@@ -209,7 +210,8 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
   }
   const cornerPlate = legCornerPlateSpec(config)
   const cornerPlatePart = find('legCornerPlate')
-  if (cornerPlate && cornerPlatePart) {
+  const jumperPart = find('legJumper')
+  if (cornerPlate && cornerPlatePart && jumperPart) {
     const y = -config.height - cornerPlate.thickness / 2
     for (const xSign of [-1, 1]) {
       for (const zSign of [-1, 1]) {
@@ -219,6 +221,18 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
           ? zSign > 0 ? 0 : -Math.PI / 2
           : zSign > 0 ? Math.PI / 2 : Math.PI
         plate(runtime, cornerPlatePart, config, new THREE.Vector3(x, y, z), new THREE.Euler(Math.PI / 2, 0, angle), new THREE.Vector3(xSign * config.length * 0.15, 0, zSign * config.width * 0.15))
+        const outward = new THREE.Vector3(xSign, 0, zSign).normalize()
+        const jumperOffset = config.legProfileSize / Math.SQRT2 + jumperPart.thickness / 2
+        const jumperPosition = new THREE.Vector3(x, -config.height - cornerPlate.thickness - jumperPart.height / 2, z)
+          .addScaledVector(outward, jumperOffset)
+        plate(
+          runtime,
+          jumperPart,
+          config,
+          jumperPosition,
+          new THREE.Euler(0, Math.atan2(outward.x, outward.z), 0),
+          new THREE.Vector3(outward.x * config.length * 0.15, -config.height * 2, outward.z * config.width * 0.15),
+        )
         squareTubeLeg(runtime, config, x, z, cornerPlate.thickness)
       }
     }

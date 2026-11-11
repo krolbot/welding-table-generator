@@ -44,7 +44,7 @@ type BooleanKey = {
 const numericKeys: NumericKey[] = [
   'holeDiameter', 'pitch', 'margin', 'length', 'width', 'height', 'ribSpacing', 'thickness', 'tabWidth',
   'clearance', 'dogBoneDiameter', 'legBoltDiameter', 'legPatternX', 'legPatternY', 'legCols', 'legRows',
-  'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize', 'legPlateThickness',
+  'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize', 'legJumperLength', 'legJumperWidth',
   'legPlateHoleDiameter', 'legPlateHoleSpacing', 'legLength', 'sheetLength', 'sheetWidth', 'exploded',
 ]
 const numericBounds: Record<NumericKey, { min: number; max: number }> = {
@@ -68,7 +68,8 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   legBottomOffset: { min: 0, max: 1000 },
   legProfileSize: { min: 20, max: 200 },
   legPlateSize: { min: 80, max: 400 },
-  legPlateThickness: { min: 3, max: 40 },
+  legJumperLength: { min: 40, max: 300 },
+  legJumperWidth: { min: 20, max: 100 },
   legPlateHoleDiameter: { min: 1, max: 40 },
   legPlateHoleSpacing: { min: 20, max: 350 },
   legLength: { min: 100, max: 1500 },
@@ -543,11 +544,12 @@ export default function App() {
                 <div className="fields">{numericInput('legEdgeOffset', 'From edge', 0, 1000, 5)}{numericInput('legBottomOffset', 'From bottom', 0, 1000, 5)}</div>
                 <p>{config.legCols * config.legRows} holes per corner, both ends of every skirt. Minimum spacing for M{config.legBoltDiameter}: {numberLabel(config.legBoltDiameter * 1.5, 2)} {unitLabel}.</p>
               </> : <>
-                <div className="fields">{numericInput('legPlateSize', 'Plate size', 80, 400, 5)}{numericInput('legPlateThickness', 'Plate thickness', 3, 40, 1)}</div>
+                <div className="fields">{numericInput('legPlateSize', 'Plate size', 80, 400, 5)}<label className="field"><span>Plate & jumper thickness</span><output>{numberLabel(config.thickness, 2)} {unitLabel} — table stock</output></label></div>
+                <div className="fields">{numericInput('legJumperLength', 'Jumper length', 40, 300, 1)}{numericInput('legJumperWidth', 'Jumper width', 20, 100, 1)}</div>
                 <div className="fields">{numericInput('legPlateHoleDiameter', 'Mounting hole Ø', 1, 40, 1)}{numericInput('legPlateHoleSpacing', 'Hole pattern', 20, 350, 5)}</div>
                 <div className="fields">{numericInput('legProfileSize', 'Square tube', 20, 200, 5)}{numericInput('legLength', 'Leg below frame', 100, 1500, 25)}</div>
-                {cornerPlate ? <p>4 horizontal corner plates {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with four Ø{numberLabel(cornerPlate.holeDiameter, 2)} holes on a {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel} pattern. Edge slots: {numberLabel(config.tabWidth + config.clearance, 2)} × {numberLabel(config.thickness + config.clearance, 2)} {unitLabel}.</p> : <p className="socket-error">The corner plate, tabs or hole pattern do not fit the current table and internal frame. Increase the table or plate size, or reduce the conflicting inputs.</p>}
-                <p>The default plate matches the supplied 150 × 150 × 6 mm example with four Ø10 mm holes. Tabs on both adjoining skirts engage matching edge slots in the plate; the leg meets it from below.</p>
+                {cornerPlate ? <p>4 horizontal corner plates {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with four Ø{numberLabel(cornerPlate.holeDiameter, 2)} holes on a {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel} pattern. Four notched support jumpers: {numberLabel(cornerPlate.jumperLength, 2)} × {numberLabel(cornerPlate.jumperWidth, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}.</p> : <p className="socket-error">The corner plate, jumper, tabs or hole pattern do not fit the current table and internal frame. Increase the table or plate size, or reduce the conflicting inputs.</p>}
+                <p>Both the corner plates and support jumpers are cut from the selected table stock; 94 × 30 mm is the reference jumper size. Tabs on both adjoining skirts engage matching edge slots in the plate; the leg and jumper meet it from below.</p>
               </>}
             </div>}
             {toggle('liftingHoles', 'Lifting Holes')}
