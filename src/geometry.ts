@@ -370,7 +370,8 @@ const skirtSlots = (name: PartName, c: Config) => {
 
 const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
   const cornerMount = c.legMounts && c.legMountStyle === 'cornerPlate'
-  const low = -c.height / 2 + (cornerMount ? c.thickness : c.thickness / 2)
+  const finishedLow = -c.height / 2
+  const plateSeat = finishedLow + (cornerMount ? c.thickness : c.thickness / 2)
   const high = c.height / 2 - (cornerMount ? c.thickness : c.thickness / 2)
   const tabHigh = high + c.thickness
   const outer = width / 2
@@ -382,15 +383,28 @@ const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
   const bottomTabCenters = cornerPlate
     ? [-1, 1].map(sign => sign * (short ? cornerPlate.centerZ : cornerPlate.centerX))
     : []
-  const bottom: Point[] = [point(-body, low)]
-  for (const center of bottomTabCenters) bottom.push(
-    point(center - c.tabWidth / 2, low),
-    point(center - c.tabWidth / 2, low - bottomTabDepth),
-    point(center + c.tabWidth / 2, low - bottomTabDepth),
-    point(center + c.tabWidth / 2, low),
-  )
-  bottom.push(point(body, low))
-  const right = skirtEndTabCenters(low, high).flatMap(center => short
+  const bottom: Point[] = cornerPlate ? [point(-body, plateSeat)] : [point(-body, plateSeat), point(body, plateSeat)]
+  if (cornerPlate) {
+    const [leftCenter, rightCenter] = bottomTabCenters
+    const leftSeatEnd = Math.min(body, leftCenter + cornerPlate.size / 2)
+    const rightSeatStart = Math.max(-body, rightCenter - cornerPlate.size / 2)
+    bottom.push(
+      point(leftCenter - c.tabWidth / 2, plateSeat),
+      point(leftCenter - c.tabWidth / 2, plateSeat - bottomTabDepth),
+      point(leftCenter + c.tabWidth / 2, plateSeat - bottomTabDepth),
+      point(leftCenter + c.tabWidth / 2, plateSeat),
+      point(leftSeatEnd, plateSeat),
+      point(leftSeatEnd, finishedLow),
+      point(rightSeatStart, finishedLow),
+      point(rightSeatStart, plateSeat),
+      point(rightCenter - c.tabWidth / 2, plateSeat),
+      point(rightCenter - c.tabWidth / 2, plateSeat - bottomTabDepth),
+      point(rightCenter + c.tabWidth / 2, plateSeat - bottomTabDepth),
+      point(rightCenter + c.tabWidth / 2, plateSeat),
+      point(body, plateSeat),
+    )
+  }
+  const right = skirtEndTabCenters(plateSeat, high).flatMap(center => short
     ? [point(body, center - halfEar), point(outer, center - halfEar), point(outer, center + halfEar), point(body, center + halfEar)]
     : [point(outer, center - halfEar), point(inner, center - halfEar), point(inner, center + halfEar), point(outer, center + halfEar)])
   const vertices = [...bottom, ...right, point(body, high)]
