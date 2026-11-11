@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { display, type Config } from './model'
 import { framePositions, legCornerPlateSpec, makeParts, partWeight, type Contour, type Part } from './geometry'
 
-type Props = { config: Config; resetToken: number; dark: boolean }
+type Props = { config: Config; resetToken: number; mountFocusToken: number; dark: boolean }
 type PartInfo = { part: Part['name']; isPart: true; name: string; dims: string; weight: string | number; weightUnit: string; holesCount: number; basePos: THREE.Vector3; explodeDir: THREE.Vector3; currentFactor: number }
 type PartMesh = THREE.Mesh<THREE.ExtrudeGeometry, THREE.MeshStandardMaterial> & { userData: PartInfo }
 const colorsFor = (dark: boolean) => ({ part: dark ? 0x64748b : 0x9aa7b8, edge: dark ? 0x020617 : 0x1e293b, dim: dark ? 0x60a5fa : 0x1d4ed8 })
@@ -261,7 +261,24 @@ const resetCamera = (runtime: Runtime, config: Config) => {
   runtime.controls.update()
 }
 
-export function ThreeAssembly({ config, resetToken, dark }: Props) {
+const focusCornerMount = (runtime: Runtime, config: Config) => {
+  const spec = legCornerPlateSpec(config)
+  if (!spec) return
+  const outward = new THREE.Vector3(1, 0, 1).normalize()
+  const target = new THREE.Vector3(
+    spec.centerX,
+    -config.height / 2 + spec.jumperLength / 2,
+    spec.centerZ,
+  ).addScaledVector(outward, config.legProfileSize / Math.SQRT2 + spec.thickness / 2)
+  const distance = Math.max(spec.size * 2.5, config.legProfileSize * 5, 300)
+  runtime.camera.position.copy(target)
+    .addScaledVector(outward, -distance)
+    .add(new THREE.Vector3(0, -Math.max(spec.size * 0.7, 90), 0))
+  runtime.controls.target.copy(target)
+  runtime.controls.update()
+}
+
+export function ThreeAssembly({ config, resetToken, mountFocusToken, dark }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const runtime = useRef<Runtime | undefined>(undefined)
   const [error, setError] = useState('')
@@ -392,6 +409,12 @@ export function ThreeAssembly({ config, resetToken, dark }: Props) {
     if (state) resetCamera(state, config)
   // resetToken is the user-facing reset action; config edits preserve an orbit in progress.
   }, [resetToken])
+
+  useEffect(() => {
+    const state = runtime.current
+    if (state && mountFocusToken > 0) focusCornerMount(state, config)
+  // mountFocusToken is a deliberate camera action; later edits preserve the chosen detail orbit.
+  }, [mountFocusToken])
 
   return error ? <div className="three-loading" role="alert">{error}</div> : <>
     <div className="three-canvas" ref={host} aria-label="Interactive 3D welding table assembly" />
