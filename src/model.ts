@@ -4,7 +4,7 @@ export type Grid = 'square' | 'staggered'
 export type EngravingMode = 'through' | 'between'
 export type SkirtHoleLayout = 'canonical' | 'compact'
 export type LegMountStyle = 'boltPattern' | 'cornerPlate'
-export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib' | 'legCornerPlate' | 'legJumper'
+export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib' | 'legCornerPlate' | 'legJumper' | 'legMountPlate'
 export type CustomHole = { id: string | number; part: PartName; x: number; y: number; d: number }
 export type RemovedHole = { id: string | number; part: PartName; x: number; y: number; r: number }
 
@@ -25,6 +25,8 @@ export type Config = {
   height: number
   ribs: boolean
   ribSpacing: number
+  ribAccessHoles: boolean
+  ribAccessHoleDiameter: number
   thickness: number
   tabWidth: number
   clearance: number
@@ -76,6 +78,8 @@ export const defaults: Config = {
   height: 200,
   ribs: true,
   ribSpacing: 400,
+  ribAccessHoles: false,
+  ribAccessHoleDiameter: 80,
   thickness: 8,
   tabWidth: 50,
   clearance: 0.2,
@@ -118,6 +122,7 @@ export const partLabels: Record<PartName, string> = {
   shortRib: 'Short rib',
   legCornerPlate: 'Leg corner plate',
   legJumper: 'Leg support jumper',
+  legMountPlate: 'Leg mounting plate',
 }
 
 export const mmPerInch = 25.4
@@ -139,7 +144,7 @@ export const projectFields = {
 } as const
 export const projectParts: Record<PartName, string> = {
   top: 'top', longSkirt: 'long', shortSkirt: 'short', longRib: 'long_rib', shortRib: 'short_rib',
-  legCornerPlate: 'leg_corner_plate', legJumper: 'leg_jumper',
+  legCornerPlate: 'leg_corner_plate', legJumper: 'leg_jumper', legMountPlate: 'leg_mount_plate',
 }
 export const readPart = (value: unknown): PartName | undefined =>
   (Object.keys(projectParts) as PartName[]).find(part => part === value || projectParts[part] === value)

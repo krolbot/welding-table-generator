@@ -2,7 +2,7 @@ import type { Config, PartName, RemovedHole } from './model'
 import { strokeGlyphs } from './strokeGlyphs.js'
 
 export type Point = { x: number; y: number }
-export type Hole = Point & { id: string; d: number; kind: 'grid' | 'custom' | 'mount' | 'lift' }
+export type Hole = Point & { id: string; d: number; kind: 'grid' | 'custom' | 'mount' | 'lift' | 'access' }
 export type Slot = Point & { width: number; height: number }
 export type EngravingLine = { from: Point; to: Point }
 export type LineSegment = { type: 'line'; from: Point; to: Point }
@@ -84,6 +84,7 @@ export type LegCornerPlateSpec = {
   jumperSlotWidth: number
   weldReliefLength: number
   weldReliefDepth: number
+  legTubeLength: number
 }
 
 export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined => {
@@ -154,12 +155,13 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
     Math.abs(center - position) < ribClearance || Math.abs(-center - position) < ribClearance
   )
   const clearsFrame = !c.ribs || !overlapsRib(centerX, frame.short) && !overlapsRib(centerZ, frame.long)
-  if (size <= 0 || thickness <= 0 || holeDiameter <= 0 || centerX < size / 2 || centerZ < size / 2
+  if (size <= 0 || thickness <= 0 || holeDiameter <= 0 || c.legLength <= thickness || centerX < size / 2 || centerZ < size / 2
     || !holesFit || !legClearsHoles || !notchesFit || !weldReliefFits || !jumperFits || !legClearsNotches || !holesClearNotches || !holesClearJumperSlot || !clearsFrame) return undefined
   return {
     size, thickness, centerX, centerZ, holeDiameter, holeSpacing, jumperLength, jumperWidth,
     jumperTabWidth, jumperTabDepth, jumperSlotCenter, jumperSlotLength, jumperSlotWidth,
     weldReliefLength, weldReliefDepth,
+    legTubeLength: c.legLength - thickness,
   }
 }
 
@@ -382,6 +384,40 @@ export const framePositions = (c: Config) => ({
   short: ribPositions(c.length, c), long: ribPositions(c.width, c, 2),
 })
 
+const crossLapReliefLimit = (c: Config) => c.thickness / 4 + c.clearance / 2
+
+export const ribAccessHoleSpec = (c: Config) => {
+  if (!c.ribs || !c.ribAccessHoles) return undefined
+  const positions = framePositions(c)
+  const web = Math.max(5, c.thickness)
+  const relief = c.dogBones ? Math.min(c.dogBoneDiameter / 2, crossLapReliefLimit(c)) : 0
+  const jointInset = (c.thickness + c.clearance) / 2 + relief
+  const segments = (span: number, crossings: number[]) => {
+    const edges = [-span / 2 + c.thickness, ...crossings, span / 2 - c.thickness]
+    return edges.slice(1).map((edge, index) => {
+      const left = edges[index] + (index > 0 ? jointInset : 0)
+      const right = edge - (index < crossings.length ? jointInset : 0)
+      return { x: (left + right) / 2, y: 0, width: right - left }
+    })
+  }
+  const longRib = segments(c.length, positions.short)
+  const shortRib = segments(c.width, positions.long)
+  const maxDiameter = Math.max(0, Math.min(c.height - 2 * c.thickness, ...[...longRib, ...shortRib].map(s => s.width)) - 2 * web)
+  const valid = Number.isFinite(c.ribAccessHoleDiameter) && c.ribAccessHoleDiameter > 0 && c.ribAccessHoleDiameter <= maxDiameter
+  return { longRib, shortRib, web, maxDiameter, diameter: c.ribAccessHoleDiameter, valid }
+}
+
+export const fabricationError = (c: Config): string | undefined => {
+  if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return 'The leg plates, joints or mounting holes do not fit the frame. Adjust the conflicting dimensions before fabrication export.'
+  const access = ribAccessHoleSpec(c)
+  if (access && !access.valid) return `Rib access holes do not fit. Maximum diameter is ${access.maxDiameter.toFixed(2)} mm for the current ribs. Reduce the hole diameter or increase the available rib web. Fabrication export is disabled.`
+}
+
+export const assertFabricationReady = (c: Config) => {
+  const error = fabricationError(c)
+  if (error) throw new Error(error)
+}
+
 const internalSlots = (c: Config) => {
   if (!c.ribs) return []
   const positions = framePositions(c)
@@ -459,7 +495,7 @@ const ribOutline = (width: number, c: Config, long: boolean): Contour => {
   const positions = framePositions(c)
   const crossings = long ? positions.short : positions.long
   const halfLap = (c.thickness + c.clearance) / 2
-  const crossLapReliefRadius = c.thickness / 4 + c.clearance / 2
+  const crossLapReliefRadius = crossLapReliefLimit(c)
   const vertices = [point(-body, low)]
   if (long) for (const center of crossings) vertices.push(
     point(center - halfLap, low), point(center - halfLap, 0),
@@ -531,6 +567,12 @@ const legJumperOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
   ], c)
 }
 
+const legMountPlateOutline = (size: number): Contour => {
+  const half = size / 2
+  const corners = [point(-half, -half), point(half, -half), point(half, half), point(-half, half)]
+  return corners.map((from, index) => line(from, corners[(index + 1) % corners.length]))
+}
+
 const definition = (c: Config): Array<{ name: PartName; width: number; height: number; thickness: number; count: number; label: string; outline: Contour; grid: boolean }> => {
   const positions = framePositions(c)
   const cornerPlate = legCornerPlateSpec(c)
@@ -542,6 +584,7 @@ const definition = (c: Config): Array<{ name: PartName; width: number; height: n
     { name: 'shortRib', width: c.width, height: c.height - c.thickness, thickness: c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
     { name: 'legCornerPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `LEG CORNER PLATE T${c.thickness}`, outline: cornerPlate ? cornerPlateOutline(c, cornerPlate) : [], grid: false },
     { name: 'legJumper', width: cornerPlate?.jumperWidth ?? 0, height: cornerPlate?.jumperLength ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `LEG JUMPER ${cornerPlate?.jumperLength ?? 0}X${cornerPlate?.jumperWidth ?? 0} T${c.thickness}`, outline: cornerPlate ? legJumperOutline(c, cornerPlate) : [], grid: false },
+    { name: 'legMountPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: c.thickness, count: cornerPlate ? 4 : 0, label: `LEG MOUNT PLATE T${c.thickness}`, outline: cornerPlate ? legMountPlateOutline(cornerPlate.size) : [], grid: false },
   ]
 }
 
@@ -549,6 +592,7 @@ export const makeParts = (c: Config): Part[] => {
   const internal = internalSlots(c)
   const lifting = c.liftingHoles && c.height - c.thickness >= 50 ? liftingCutout(c) : null
   const cornerPlate = legCornerPlateSpec(c)
+  const access = ribAccessHoleSpec(c)
   return definition(c).filter(item => item.count > 0).map(item => {
     const slots = [
       ...(item.name === 'top' ? internal : skirtSlots(item.name, c)),
@@ -558,12 +602,16 @@ export const makeParts = (c: Config): Part[] => {
     const mounts: Hole[] = []
     legMountHoles(item.name, item.width, item.height, c, mounts)
     const plateHoles: Hole[] = []
-    if (item.name === 'legCornerPlate' && cornerPlate) {
+    if ((item.name === 'legCornerPlate' || item.name === 'legMountPlate') && cornerPlate) {
       for (const x of [-cornerPlate.holeSpacing / 2, cornerPlate.holeSpacing / 2]) {
         for (const y of [-cornerPlate.holeSpacing / 2, cornerPlate.holeSpacing / 2]) {
           pushHole(plateHoles, item.name, x, y, cornerPlate.holeDiameter, 'mount')
         }
       }
+    }
+    const accessHoles: Hole[] = []
+    if (access?.valid && (item.name === 'longRib' || item.name === 'shortRib')) {
+      for (const center of access[item.name]) pushHole(accessHoles, item.name, center.x, center.y, access.diameter, 'access')
     }
     return {
       name: item.name,
@@ -572,7 +620,7 @@ export const makeParts = (c: Config): Part[] => {
       thickness: item.thickness,
       count: item.count,
       label: item.label,
-      holes: decorate(item.name, item.width, item.height, c, [...grid(item.name, item.width, item.height, c, item.grid), ...plateHoles]).filter(hole => {
+      holes: decorate(item.name, item.width, item.height, c, [...grid(item.name, item.width, item.height, c, item.grid), ...plateHoles, ...accessHoles]).filter(hole => {
         if (hole.kind !== 'grid') return true
         if (exclusions.some(slot => Math.abs(hole.x - slot.x) < slot.width / 2 + hole.d / 2 + minimumHoleWeb && Math.abs(hole.y - slot.y) < slot.height / 2 + hole.d / 2 + minimumHoleWeb)) return false
         if (mounts.some(mount => {
@@ -592,12 +640,12 @@ export const makeParts = (c: Config): Part[] => {
 export const layoutParts = (c: Config): Layout => {
   // Fabrication layout is packed from the top plate at Y=0 upward, exactly as
   // exported full DXF: top, skirts, longitudinal ribs, transverse ribs and optional leg supports.
-  const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate', 'legJumper']
+  const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate', 'legJumper', 'legMountPlate']
   const parts = makeParts(c).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
   const packed = parts.map(part => ({
     part,
     width: part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * c.thickness : 0),
-    height: part.name === 'top' || (part.name.endsWith('Skirt') && c.legMounts && c.legMountStyle === 'cornerPlate') || part.name === 'legCornerPlate' || part.name === 'legJumper'
+    height: part.name === 'top' || (part.name.endsWith('Skirt') && c.legMounts && c.legMountStyle === 'cornerPlate') || part.name === 'legCornerPlate' || part.name === 'legJumper' || part.name === 'legMountPlate'
       ? part.height
       : part.height - (part.name.endsWith('Rib') ? 2 * c.thickness : c.thickness),
   }))
@@ -629,11 +677,11 @@ export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
   }
   if (c.nameMarking) {
     const nameLines: EngravingLine[] = []
-    const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate', 'legJumper']
+    const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate', 'legJumper', 'legMountPlate']
     const value = `${order.indexOf(part.name) + 1} ${part.label}`
     const skirt = part.name.endsWith('Skirt')
     const bodyHalfWidth = part.width / 2 - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? c.thickness : 0)
-    const bodyHeight = part.name === 'top' || part.name === 'legCornerPlate' || part.name === 'legJumper'
+    const bodyHeight = part.name === 'top' || part.name === 'legCornerPlate' || part.name === 'legJumper' || part.name === 'legMountPlate'
       ? part.height
       : skirt ? c.height - c.thickness : c.height - 2 * c.thickness
     const inset = Math.min(2 * c.thickness, bodyHeight * 0.12)

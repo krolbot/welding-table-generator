@@ -24,7 +24,7 @@ import {
   type CustomHole,
   type PartName,
 } from './model'
-import { contourPoints, engravingLines, layoutParts, legCornerPlateSpec, svgContourPath, totals, type Hole, type Point } from './geometry'
+import { contourPoints, engravingLines, fabricationError, layoutParts, legCornerPlateSpec, ribAccessHoleSpec, svgContourPath, totals, type Hole, type Point } from './geometry'
 import { downloadFull, downloadZip } from './dxf'
 import { SheetNesting } from './SheetNesting'
 import { Icon, type IconName } from './Icon'
@@ -43,7 +43,7 @@ type BooleanKey = {
 }[keyof Config]
 
 const numericKeys: NumericKey[] = [
-  'holeDiameter', 'pitch', 'margin', 'length', 'width', 'height', 'ribSpacing', 'thickness', 'tabWidth',
+  'holeDiameter', 'pitch', 'margin', 'length', 'width', 'height', 'ribSpacing', 'ribAccessHoleDiameter', 'thickness', 'tabWidth',
   'clearance', 'dogBoneDiameter', 'legBoltDiameter', 'legPatternX', 'legPatternY', 'legCols', 'legRows',
   'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize',
   'legPlateHoleDiameter', 'legPlateHoleSpacing', 'legLength', 'sheetLength', 'sheetWidth', 'sheetEdgeGap', 'sheetPartGap', 'nestingCopies', 'exploded',
@@ -56,6 +56,7 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   width: { min: 400, max: 200 * mmPerInch },
   height: { min: 50, max: 20 * mmPerInch },
   ribSpacing: { min: 200, max: 24 * mmPerInch },
+  ribAccessHoleDiameter: { min: 1, max: 1000 },
   thickness: { min: 1, max: 40 },
   tabWidth: { min: 0, max: Math.floor((20 * mmPerInch - 1) / 2) - 5 },
   clearance: { min: 0, max: 2.5 },
@@ -80,7 +81,7 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   exploded: { min: 0, max: 100 },
 }
 const booleanKeys: BooleanKey[] = [
-  'skirtHoles', 'engraving', 'nameMarking', 'ribs', 'dogBones', 'legMounts', 'liftingHoles',
+  'skirtHoles', 'engraving', 'nameMarking', 'ribs', 'ribAccessHoles', 'dogBones', 'legMounts', 'liftingHoles',
   'showDimensions', 'renderHoles', 'highlighting',
 ]
 const inchRanges: Partial<Record<NumericKey, { min: number; max: number; step: number }>> = {
@@ -238,6 +239,8 @@ export default function App() {
   const summary = useMemo(() => totals(config), [config])
   const layout = useMemo(() => layoutParts(config), [config])
   const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
+  const ribAccess = useMemo(() => ribAccessHoleSpec(config), [config])
+  const geometryError = useMemo(() => fabricationError(config), [config])
   const snapPoints = useMemo(() => layout.instances.flatMap(item => [
     ...item.part.contours.flatMap(contour => contourPoints(contour, 1)),
     ...item.part.holes.flatMap(hole => [hole,
@@ -526,7 +529,14 @@ export default function App() {
             {slider('height', 'Table Height (H)', 50, 500, 10)}
           </section>
           <section className="internal-frame"><h3><Icon name="frame" size={14} />Internal Frame</h3>{toggle('ribs', 'Generate Support Ribs')}
-            {config.ribs && <div className="indented">{slider('ribSpacing', `Rib Spacing (${unitLabel})`, 200, 600, 50)}</div>}
+            {config.ribs && <div className="indented">
+              {slider('ribSpacing', `Rib Spacing (${unitLabel})`, 200, 600, 50)}
+              {toggle('ribAccessHoles', 'Rib access holes')}
+              {config.ribAccessHoles && <>
+                <div className="fields">{numericInput('ribAccessHoleDiameter', `Access hole Ø (${unitLabel})`, 1, 1000, 5)}<label className="field"><span>Maximum for this frame</span><output>{numberLabel(ribAccess?.maxDiameter ?? 0, 2)} {unitLabel}</output></label></div>
+                <p>One circular opening in every bay of each long and short rib. At least {numberLabel(ribAccess?.web ?? 0, 2)} {unitLabel} of material remains around the opening, clear of the cross-lap slots. This geometric spacing is not a load rating.</p>
+              </>}
+            </div>}
           </section>
           <section><h3><Icon name="frame" size={14} />Tabs & Slots (Joints)</h3>
             <div className="joint-fields">
@@ -552,9 +562,10 @@ export default function App() {
                 <div className="fields">{numericInput('legPlateSize', 'Plate size', 80, 400, 5)}<label className="field"><span>Plate & jumper thickness</span><output>{numberLabel(config.thickness, 2)} {unitLabel} — table stock</output></label></div>
                 <div className="fields"><label className="field"><span>Jumper length (auto)</span><output>{numberLabel(config.height - config.thickness, 2)} {unitLabel}</output></label><label className="field"><span>Jumper width (auto)</span><output>{numberLabel(config.height * 0.3, 2)} {unitLabel}</output></label></div>
                 <div className="fields">{numericInput('legPlateHoleDiameter', 'Mounting hole Ø', 1, 40, 1)}{numericInput('legPlateHoleSpacing', 'Hole pattern', 20, 350, 5)}</div>
-                <div className="fields">{numericInput('legProfileSize', 'Square tube', 20, 200, 5)}{numericInput('legLength', 'Leg below frame', 100, 1500, 25)}</div>
-                {cornerPlate ? <p>4 horizontal corner plates {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with four Ø{numberLabel(cornerPlate.holeDiameter, 2)} holes on a {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel} pattern. Four support jumpers: {numberLabel(cornerPlate.jumperLength, 2)} × {numberLabel(cornerPlate.jumperWidth, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with a {numberLabel(cornerPlate.jumperTabWidth, 2)} {unitLabel} partial-width tab.</p> : <p className="socket-error">The corner plate, jumper, tabs, slots or hole pattern do not fit the current table and internal frame. Increase the table or plate size, or reduce the conflicting inputs.</p>}
-                <p>The plate underside and the uninterrupted skirt lower edge share the finished frame-bottom plane. Only the corner seat steps up by one stock thickness. At each skirt joint, a partial tab mechanically locates the plate while the adjacent open edge provides an internal corner for a fillet weld; the physical plate corner remains intact. Each jumper supports the inner free corner and rises to the tabletop underside: length is H − stock thickness and width is 0.3 × H. Plates and jumpers use the selected table stock; H100 / T6 produces the 94 × 30 mm reference blank.</p>
+                <div className="fields">{numericInput('legProfileSize', 'Square tube', 20, 200, 5)}{numericInput('legLength', 'Leg assembly below frame', 100, 1500, 25)}</div>
+                {cornerPlate ? <p>4 fixed corner plates and 4 removable leg mounting plates {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with four Ø{numberLabel(cornerPlate.holeDiameter, 2)} holes on a {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel} pattern. Four support jumpers: {numberLabel(cornerPlate.jumperLength, 2)} × {numberLabel(cornerPlate.jumperWidth, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with a {numberLabel(cornerPlate.jumperTabWidth, 2)} {unitLabel} partial-width tab.</p> : <p className="socket-error">The corner plate, jumper, tabs, slots or hole pattern do not fit the current table and internal frame. Increase the table or plate size, or reduce the conflicting inputs.</p>}
+                <p>The upper corner plate underside and the uninterrupted skirt lower edge share the finished frame-bottom plane. Only the corner seat steps up by one stock thickness. At each skirt joint, a partial tab mechanically locates the plate while the adjacent open edge provides an internal corner for a fillet weld; the physical plate corner remains intact. Each jumper supports the inner free corner and rises to the tabletop underside: length is H − stock thickness and width is 0.3 × H. Plates and jumpers use the selected table stock; H100 / T6 produces the 94 × 30 mm reference blank.</p>
+                <p>Each plain lower mounting plate bolts to its corner plate through the matching holes. The tube is welded to the lower plate, not the table. Lower plates have no tabs or slots; bolts are not shown in 3D. Tube cut length is {numberLabel(cornerPlate?.legTubeLength ?? config.legLength - config.thickness, 2)} {unitLabel}; the plate plus tube preserve the specified distance below the frame. Finish the mating faces flush before bolting.</p>
               </>}
             </div>}
             {toggle('liftingHoles', 'Lifting Holes')}
@@ -575,15 +586,15 @@ export default function App() {
           <section className="visualization"><h3><Icon name="eye" size={14} />3D Visualization</h3>{slider('exploded', 'Exploded View', 0, 100, 1, true)}{toggle('showDimensions', 'Show Dimensions')}</section>
         </div>
         <section className="production-card"><h3><Icon name="scale" size={16} />Production Estimate</h3>
-          <div className="estimate"><div><span>Estimated Weight</span><strong>{productionLabel(summary.kg, 2.20462)}<small>{config.units === 'mm' ? 'kg' : 'lb'}</small></strong></div><div><span>Cut Length</span><strong>{productionLabel(summary.cut, 3.28084)}<small>{config.units === 'mm' ? 'm' : 'ft'}</small></strong></div></div>
+          {geometryError ? <p className="socket-error">Estimates unavailable until the fabrication geometry is valid.</p> : <><div className="estimate"><div><span>Estimated Weight</span><strong>{productionLabel(summary.kg, 2.20462)}<small>{config.units === 'mm' ? 'kg' : 'lb'}</small></strong></div><div><span>Cut Length</span><strong>{productionLabel(summary.cut, 3.28084)}<small>{config.units === 'mm' ? 'm' : 'ft'}</small></strong></div></div>
           <div className="estimate-extra"><span>Holes: <b>{summary.holes}</b></span>{summary.engraving > 0 && <span>Engraving: <b>{productionLabel(summary.engraving, 3.28084)}{config.units === 'mm' ? 'm' : 'ft'}</b></span>}</div>
-          <div className="sheet-size"><div><span>Sheet size ({unitLabel})</span><div className="sheet-inputs"><NumberInput aria-label="Sheet length" value={numberLabel(config.sheetLength, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetLength', readDisplay(value, config.units))} /><span>×</span><NumberInput aria-label="Sheet width" value={numberLabel(config.sheetWidth, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetWidth', readDisplay(value, config.units))} /></div></div><p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? 'Each part fits individually; combined sheet layout is not checked.' : 'Some parts do not fit the sheet individually.'}</p></div>
+          <div className="sheet-size"><div><span>Sheet size ({unitLabel})</span><div className="sheet-inputs"><NumberInput aria-label="Sheet length" value={numberLabel(config.sheetLength, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetLength', readDisplay(value, config.units))} /><span>×</span><NumberInput aria-label="Sheet width" value={numberLabel(config.sheetWidth, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetWidth', readDisplay(value, config.units))} /></div></div><p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? 'Each part fits individually; combined sheet layout is not checked.' : 'Some parts do not fit the sheet individually.'}</p></div></>}
         </section>
-        <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" title="Open Project (.json)" onClick={() => fileInput.current?.click()}><Icon name="folder" size={14} />Open</button><button className="secondary" title="Save Project (.json)" onClick={save}><Icon name="save" size={14} />Save</button></div><button className="secondary full share" onClick={() => void share()}><Icon name="share" size={14} />Share Link</button><button className="zip" onClick={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))}><Icon name="archive" size={18} />Download ZIP (Parts)</button><button className="dxf" onClick={() => downloadFull(config)}><Icon name="download" size={16} />Parts Strip DXF (not nested)</button></section>
+        <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" title="Open Project (.json)" onClick={() => fileInput.current?.click()}><Icon name="folder" size={14} />Open</button><button className="secondary" title="Save Project (.json)" onClick={save}><Icon name="save" size={14} />Save</button></div><button className="secondary full share" onClick={() => void share()}><Icon name="share" size={14} />Share Link</button><button className="zip" disabled={Boolean(geometryError)} onClick={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))}><Icon name="archive" size={18} />Download ZIP (Parts)</button><button className="dxf" disabled={Boolean(geometryError)} onClick={() => downloadFull(config)}><Icon name="download" size={16} />Parts Strip DXF (not nested)</button></section>
       </aside>
       <section className="work-area" data-view={view}>
         <div className="mode"><button className={view === '2d' ? 'active' : ''} onClick={() => setView('2d')}><Icon name="frame" />2D Layout</button><button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}><Icon name="box" />3D Assembly</button><button className={view === 'sheet' ? 'active' : ''} onClick={() => setView('sheet')}><Icon name="layers" />Sheet nesting</button></div>
-        {view === '2d' ? <>
+        {geometryError ? <div className="three-loading socket-error" role="alert">{geometryError}</div> : view === '2d' ? <>
           <div className="drawing-frame" data-tool={tool ?? 'pan'}>
             <div className="drawing-grid" style={{ backgroundSize: `${50 * zoom}px ${50 * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }} />
             <svg
@@ -647,7 +658,7 @@ export default function App() {
         <div className="legal-disclosure">{about && <article id="about-panel" className="legal-panel" aria-labelledby="about-title"><header><h3 id="about-title">About & Legal Info</h3><button ref={closeButton} className="icon" aria-label="Close About and Legal Info" onClick={() => setAbout(false)}><Icon name="close" /></button></header><small>VERSION 1.0.0</small><p>This independent clean-room implementation preserves the public generator's workflow. It is not affiliated with or endorsed by the original author.</p><p>Models, layouts and DXF files are informational only. Confirm dimensions, kerf tolerances and structural integrity with a qualified professional before CNC or laser cutting.</p><a href="https://welding-table-generator.com/" target="_blank" rel="noopener noreferrer">Original project ↗</a></article>}<button className="legal-link" aria-expanded={about} aria-controls="about-panel" onClick={() => setAbout(value => !value)}>About & Legal Info<Icon name="chevron" size={14} style={{ transform: about ? 'rotate(180deg)' : undefined }} /></button></div>
         {notice && <output className="notice" aria-live="polite" onClick={() => setNotice('')}>{notice}</output>}
       </section>
-      <article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose a 16 mm or 28 mm fixture grid, or set a custom hole diameter, pitch and margin. Square and staggered patterns, skirt holes and grid engraving share one metric geometry model.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts for removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>
+      <article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose a 16 mm or 28 mm fixture grid, or set a custom hole diameter, pitch and margin. Square and staggered patterns, skirt holes and grid engraving share one metric geometry model.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>
     </main>
   )
 }

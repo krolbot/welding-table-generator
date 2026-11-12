@@ -1,9 +1,12 @@
-import { makeParts } from './geometry'
+import { assertFabricationReady, makeParts } from './geometry'
 import { projectConfig, type Config } from './model'
 import type { NestingOptions, NestingResult } from './nesting'
 
 export const nestingKey = (config: Config) => JSON.stringify(projectConfig(config))
-export const nestingParts = (config: Config) => makeParts(config).map(part => ({ ...part, count: part.count * config.nestingCopies }))
+export const nestingParts = (config: Config) => {
+  assertFabricationReady(config)
+  return makeParts(config).map(part => ({ ...part, count: part.count * config.nestingCopies }))
+}
 export const nestingOptions = (config: Config): NestingOptions => {
   const step = { fixed: 360, half: 180, quarter: 90, eighth: 45, fine: 15 }[config.nestingRotations]
   return {

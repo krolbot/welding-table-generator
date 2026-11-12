@@ -57,13 +57,15 @@ The export audit uses `dxf-parser` to parse the actual archive, compares every n
 
 `benchmarks/nesting-baseline.json` records the exact inputs and measured sheet counts from commit `640b7e96565ae6b2d42431621a1fd3da10a0b879` (12 orders). The upgraded benchmark uses 96 orders, so this is a quality comparison with a larger computation budget, not an equal-time speed claim.
 
-Measured comparison:
+Measured comparison at the contour-nesting release, before the four plain leg mounting plates were added:
 
 - Six standard fixtures retain their previous sheet count; the search can still improve clear strips or compactness.
 - 1450×1150×150 table, corner plates, lifting openings, **2520×1500 sheet**: previous **2 sheets**, contour search **1** for all 18 parts.
 - 1250×750×150 table, corner plates, lifting openings, **1820×1500 sheet**: previous **2 sheets**, contour search **1** for all 18 parts.
 - 1450×1150×200 table, no corner mounts, lifting openings, **2970×1500 sheet**: previous **2 sheets**, contour search **1** for all 10 parts.
 - All comparisons use 10 mm nominal edge and 5 mm nominal part gaps, plus the 0.002 mm export reserve. Full fixtures are the authority for remaining parameters.
+
+The benchmark command deliberately excludes the new `legMountPlate` parts to replay that historical inventory; it does not claim that an 18-part result includes the new 22-part kit. Normal UI, exports and the current-kit regression include all four mounting plates. Rib access holes do not change external silhouettes and are never treated as nesting space.
 
 A small synthetic U/L interlocking test also improves from two sheets to one; it isolates contour placement from table-specific geometry. Other regression tests cover containment, tangent and sub-chord arc gaps, diagonal-only fit, zero-gap crossing rejection, invalid inputs, deterministic monotone progress, batch counts, stale exports and all native entity transforms at non-quarter-turn angles.
 

@@ -1,5 +1,5 @@
 import JSZip from 'jszip'
-import { contourPoints, engravingLines, layoutParts, makeParts, type Contour, type Part, type Point } from './geometry'
+import { assertFabricationReady, fabricationError, contourPoints, engravingLines, layoutParts, makeParts, type Contour, type Part, type Point } from './geometry'
 import { projectConfig, type Config } from './model'
 import { nestingOptions, nestingParts } from './nestingSettings'
 import { nativeContourBounds } from './nestingNative'
@@ -43,17 +43,20 @@ const partEntities = (part: Part, c: Config, offset: Point = point(0, 0)) => {
 }
 
 export const dxfForPart = (part: Part, c: Config) => {
+  assertFabricationReady(c)
   const offset = point(0, 0)
   return header(boundsFor([{ part, offset }])) + partEntities(part, c, offset) + footer
 }
 
 export const fullDxf = (c: Config) => {
+  assertFabricationReady(c)
   const layout = layoutParts(c)
   const parts = layout.instances.map(item => ({ part: item.part, offset: item.position }))
   return header(boundsFor(parts)) + parts.map(item => partEntities(item.part, c, item.offset)).join('') + footer
 }
 
 export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlacement[]) => {
+  assertFabricationReady(c)
   if (!placements.length) throw new Error('Cannot export an empty sheet')
   const boxes = placements.map(p => nativeContourBounds(transformNestingContour(p.part.contours[0], p)))
   const bounds = { minX: Math.min(...boxes.map(b => b.minX)), minY: Math.min(...boxes.map(b => b.minY)), maxX: Math.max(...boxes.map(b => b.maxX)), maxY: Math.max(...boxes.map(b => b.maxY)) }
@@ -72,6 +75,7 @@ export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlaceme
 }
 
 export const validateNestedExport = (c: Config, result: NestingResult) => {
+  if (fabricationError(c)) return false
   const parts = nestingParts(c)
   const expected = new Map(parts.map(part => [part.name, part]))
   const keys = new Set<string>()
@@ -127,6 +131,7 @@ export const downloadFull = (c: Config) =>
   download(new Blob([fullDxf(c)], { type: 'application/dxf' }), `WeldingTable_Assembly_${c.length}x${c.width}.dxf`)
 
 export const downloadZip = async (c: Config) => {
+  assertFabricationReady(c)
   const zip = new JSZip()
   makeParts(c).forEach((part, index) => {
     zip.file(`${index + 1}_${part.label.replaceAll(' ', '_')}_${part.count}pcs.dxf`, dxfForPart(part, c))

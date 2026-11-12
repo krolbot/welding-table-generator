@@ -17,10 +17,12 @@ try {
   assert.ok(cases.length, 'unknown benchmark case')
   for (const fixture of cases) {
     const config = { ...defaults, ...fixture.config }
+    // Replay the pinned pre-mounting-plate inventory, not a different current table kit.
+    const parts = nestingParts(config).filter(part => part.name !== 'legMountPlate')
     const started = performance.now()
-    const result = nestParts(nestingParts(config), { ...nestingOptions(config), attempts })
+    const result = nestParts(parts, { ...nestingOptions(config), attempts })
     const report = {
-      case: fixture.name, baselineCommit: reference.sourceCommit, baselineSheets: fixture.baselineSheets,
+      case: fixture.name, inventory: 'historical-without-leg-mounting-plates', baselineCommit: reference.sourceCommit, baselineSheets: fixture.baselineSheets,
       sheets: result.sheets.length, parts: result.placements.length, unplaced: result.unplaced.length,
       valid: result.validation.valid, milliseconds: Math.round(performance.now() - started), attempts,
       outlineArea: result.outlineArea, metrics: result.metrics, search: result.stats,
