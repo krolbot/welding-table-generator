@@ -39,6 +39,28 @@ const arcPoint = (center: Point, radius: number, angle: number) => point(
 const line = (from: Point, to: Point): LineSegment => ({ type: 'line', from, to })
 const distance = (a: Point, b: Point) => Math.hypot(b.x - a.x, b.y - a.y)
 
+const clipEngravingAroundHole = (mark: EngravingLine, hole: Hole): EngravingLine[] => {
+  const dx = mark.to.x - mark.from.x
+  const dy = mark.to.y - mark.from.y
+  const lengthSquared = dx * dx + dy * dy
+  const radius = hole.d / 2 + minimumHoleWeb
+  const fx = mark.from.x - hole.x
+  const fy = mark.from.y - hole.y
+  if (lengthSquared < epsilon) return fx * fx + fy * fy >= radius * radius ? [mark] : []
+  const projection = 2 * (fx * dx + fy * dy)
+  const discriminant = projection * projection - 4 * lengthSquared * (fx * fx + fy * fy - radius * radius)
+  if (discriminant <= epsilon) return [mark]
+  const root = Math.sqrt(discriminant)
+  const entry = Math.max(0, Math.min((-projection - root) / (2 * lengthSquared), (-projection + root) / (2 * lengthSquared)))
+  const exit = Math.min(1, Math.max((-projection - root) / (2 * lengthSquared), (-projection + root) / (2 * lengthSquared)))
+  if (entry >= exit) return [mark]
+  const at = (t: number) => point(mark.from.x + dx * t, mark.from.y + dy * t)
+  return [
+    ...(entry > epsilon ? [{ from: mark.from, to: at(entry) }] : []),
+    ...(exit < 1 - epsilon ? [{ from: at(exit), to: mark.to }] : []),
+  ]
+}
+
 const pointsAlong = (start: number, end: number, count: number) => count < 2
   ? [(start + end) / 2]
   : Array.from({ length: count }, (_, index) => start + (end - start) * index / (count - 1))
@@ -456,15 +478,29 @@ const ribOutline = (width: number, c: Config, long: boolean): Contour => {
   return relievedPolygon(vertices, c, vertex => Math.abs(vertex.y) < epsilon ? crossLapReliefRadius : Infinity)
 }
 
-const liftingCutout = (c: Config): Contour => {
+const liftingCutout = (c: Config) => {
   const radius = Math.min(25, (c.height - c.thickness) / 5)
+  const halfWidth = 80
   const halfStraight = 80 - radius
-  return [
-    line(point(-halfStraight, radius), point(halfStraight, radius)),
-    { type: 'arc', center: point(halfStraight, 0), radius, start: 90, end: -90, clockwise: true },
-    line(point(halfStraight, -radius), point(-halfStraight, -radius)),
-    { type: 'arc', center: point(-halfStraight, 0), radius, start: -90, end: 90, clockwise: true },
-  ]
+  const ribSlots = skirtSlots('longSkirt', c)
+  const boundaries = [-c.length / 2, ...ribSlots.map(item => item.x), c.length / 2]
+  const candidates = [0, ...boundaries.slice(1).map((value, index) => (boundaries[index] + value) / 2)]
+    .sort((a, b) => Math.abs(a) - Math.abs(b) || b - a)
+  const reliefRadius = c.dogBones ? c.dogBoneDiameter / 2 : 0
+  const x = candidates.find(candidate =>
+    Math.abs(candidate) + halfWidth + minimumHoleWeb <= c.length / 2
+    && ribSlots.every(item => Math.abs(candidate - item.x) >= halfWidth + item.width / 2 + reliefRadius + minimumHoleWeb),
+  )
+  if (x === undefined) return undefined
+  return {
+    x, radius, halfStraight,
+    contour: [
+      line(point(x - halfStraight, radius), point(x + halfStraight, radius)),
+      { type: 'arc' as const, center: point(x + halfStraight, 0), radius, start: 90, end: -90, clockwise: true },
+      line(point(x + halfStraight, -radius), point(x - halfStraight, -radius)),
+      { type: 'arc' as const, center: point(x - halfStraight, 0), radius, start: -90, end: 90, clockwise: true },
+    ],
+  }
 }
 
 const cornerPlateOutline = (c: Config, spec: LegCornerPlateSpec): Contour => {
@@ -543,10 +579,12 @@ export const makeParts = (c: Config): Part[] => {
           const inset = (hole.d + mount.d) / 2 + mountHoleWeb
           return Math.abs(hole.x - mount.x) < inset && Math.abs(hole.y - mount.y) < inset
         })) return false
-        return !(lifting && item.name === 'longSkirt' && Math.abs(hole.x) <= 100 && Math.abs(hole.y) < Math.min(25, (c.height - c.thickness) / 5) + hole.d / 2)
+        if (!lifting || item.name !== 'longSkirt') return true
+        const dx = Math.max(Math.abs(hole.x - lifting.x) - lifting.halfStraight, 0)
+        return Math.hypot(dx, hole.y) >= lifting.radius + hole.d / 2 + minimumHoleWeb
       }),
       slots: slots.map(({ x, y, width, height }) => ({ x, y, width, height })),
-      contours: [item.outline, ...slots.map(itemSlot => itemSlot.contour), ...(lifting && item.name === 'longSkirt' ? [lifting] : [])],
+      contours: [item.outline, ...slots.map(itemSlot => itemSlot.contour), ...(lifting && item.name === 'longSkirt' ? [lifting.contour] : [])],
     }
   })
 }
@@ -590,6 +628,7 @@ export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
     for (let y = -halfH; y <= halfH + epsilon; y += step) lines.push({ from: point(-halfW, y), to: point(halfW, y) })
   }
   if (c.nameMarking) {
+    const nameLines: EngravingLine[] = []
     const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate', 'legJumper']
     const value = `${order.indexOf(part.name) + 1} ${part.label}`
     const skirt = part.name.endsWith('Skirt')
@@ -617,11 +656,12 @@ export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
         : topAlignedLongRib || skirt && c.legMounts ? halfH - inset - height : -halfH + inset,
     )
     for (let index = 0; index < value.length; index += 1) {
-      for (const [x1, y1, x2, y2] of strokeGlyphs[value[index]] ?? []) lines.push({
+      for (const [x1, y1, x2, y2] of strokeGlyphs[value[index]] ?? []) nameLines.push({
         from: point(origin.x + index * height + x1 * unit, origin.y + y1 * unit),
         to: point(origin.x + index * height + x2 * unit, origin.y + y2 * unit),
       })
     }
+    lines.push(...part.holes.reduce((marks, hole) => marks.flatMap(mark => clipEngravingAroundHole(mark, hole)), nameLines))
   }
   return lines
 }

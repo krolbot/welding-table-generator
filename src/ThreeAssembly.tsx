@@ -201,7 +201,8 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
   const skirtY = config.legMounts && config.legMountStyle === 'cornerPlate' ? -config.height / 2 : -config.height / 2 - config.thickness / 2
   if (longSkirt) {
     for (const side of [1, -1]) {
-      plate(runtime, longSkirt, config, new THREE.Vector3(0, skirtY, side * (config.width / 2 - config.thickness / 2)), new THREE.Euler(), new THREE.Vector3(0, 0, side * config.width * 0.3))
+      const rotation = config.liftingHoles && side < 0 ? new THREE.Euler(0, Math.PI, 0) : new THREE.Euler()
+      plate(runtime, longSkirt, config, new THREE.Vector3(0, skirtY, side * (config.width / 2 - config.thickness / 2)), rotation, new THREE.Vector3(0, 0, side * config.width * 0.3))
     }
   }
   const shortSkirt = find('shortSkirt')
