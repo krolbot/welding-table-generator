@@ -377,7 +377,8 @@ const skirtSlots = (name: PartName, c: Config) => {
   if (!c.ribs || (name !== 'longSkirt' && name !== 'shortSkirt')) return []
   const positions = framePositions(c)
   const centers = name === 'longSkirt' ? positions.short : positions.long
-  return centers.map(x => slot(x, c.thickness / 2, c.thickness + c.clearance, c.tabWidth + c.clearance, c))
+  const centerY = c.legMounts && c.legMountStyle === 'cornerPlate' ? 0 : c.thickness / 2
+  return centers.map(x => slot(x, centerY, c.thickness + c.clearance, c.tabWidth + c.clearance, c))
 }
 
 const skirtOutline = (width: number, c: Config, short: boolean): Contour => {
