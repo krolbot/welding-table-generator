@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "scope": "welding-table tooling catalog, mixed production basket, grouped nesting and export",
+  "sourceBase": "728f56bd1ddc7f276fdcee5e24bc70e85d2a0f5e",
+  "catalog": {
+    "count": 34,
+    "ids": [
+      "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11", "A12", "A13",
+      "B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10", "B11", "B12", "B13", "B14",
+      "C01", "C02", "C03", "C04", "C05", "C06", "C07"
+    ],
+    "browserCoverage": {
+      "count": 34,
+      "unique": 34,
+      "exactSet": true,
+      "parts2dRenderedForEveryId": true,
+      "assembly3dCanvasRenderedForEveryId": true,
+      "geometryErrors": []
+    },
+    "purchasedBoundary": {
+      "hybridIdsWithSeparatePurchasedSpecification": ["C01", "C02", "C03", "C04", "C05", "C06", "C07"],
+      "excludedFromSheetNesting": true
+    }
+  },
+  "mixedBrowserFlow": {
+    "basket": [
+      { "id": "A01", "quantity": 1, "material": "S235JR" },
+      { "id": "B01", "quantity": 2, "material": "AISI304" },
+      { "id": "C06", "quantity": 1, "material": "S235JR" }
+    ],
+    "tableIncluded": true,
+    "jsonSaveOpenRoundTrip": true,
+    "shareLinkRoundTrip": true,
+    "mobileViewport": { "width": 390, "horizontalOverflow": false },
+    "legCornerPlateFlow": true,
+    "ribAccessHoleFlow": true
+  },
+  "downloadedArchiveAudit": {
+    "files": 28,
+    "dxfFiles": 21,
+    "materialThicknessGroups": ["AISI304:6", "S235JR:6", "S235JR:8", "S235JR:10"],
+    "placements": 37,
+    "uniquePartSources": 16,
+    "assemblyTransformSets": 3,
+    "allGroupsValid": true,
+    "unplaced": 0,
+    "entityTypes": ["ARC", "CIRCLE", "LINE"],
+    "polylineEntities": false,
+    "containsProject": true,
+    "containsSheetAndPurchasedBom": true,
+    "containsAssemblyTransforms": true,
+    "containsPlacementManifest": true,
+    "containsValidationReport": true
+  },
+  "automatedChecks": {
+    "catalogDefaultGeometry": "all 34 validated",
+    "strictProjectBoundary": true,
+    "materialThicknessGrouping": true,
+    "matingPairs": ["A10/B08", "A13/B14"],
+    "staleIncompleteExportBlocked": true,
+    "sanitizedFilenameCollisionRegression": true,
+    "nativeDxfParsedIndependently": true
+  },
+  "review": {
+    "boundedBlockerReview": true,
+    "confirmedFinding": "sanitized basket IDs could overwrite part DXFs in ZIP",
+    "findingFixed": true,
+    "regressionTestAdded": true,
+    "openBlockers": []
+  },
+  "physicalLimits": [
+    "No load rating, accuracy class or global nesting optimality is claimed.",
+    "Kerf, lead-ins, clamps, cutting order and machine-specific minimum webs require CAM and fabrication verification.",
+    "Force-bearing equipment requires independent stability, guarding, weld-procedure and proof testing.",
+    "Purchased component fits use user-specified interfaces rather than inferred supplier tolerances."
+  ]
+}

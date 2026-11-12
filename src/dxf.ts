@@ -1,5 +1,5 @@
 import JSZip from 'jszip'
-import { assertFabricationReady, fabricationError, contourPoints, engravingLines, layoutParts, makeParts, type Contour, type Part, type Point } from './geometry'
+import { assertFabricationReady, fabricationError, contourPoints, engravingLines, layoutParts, makeParts, type Contour, type FabricationPart, type Part, type Point } from './geometry'
 import { projectConfig, type Config } from './model'
 import { nestingOptions, nestingParts } from './nestingSettings'
 import { nativeContourBounds } from './nestingNative'
@@ -15,7 +15,7 @@ const arc = (center: Point, radius: number, start: number, end: number, layer = 
 const shifted = (value: Point, offset: Point): Point => point(value.x + offset.x, value.y + offset.y)
 const point = (x: number, y: number): Point => ({ x, y })
 
-const boundsFor = (parts: Array<{ part: Part; offset: Point }>) => {
+const boundsFor = (parts: Array<{ part: FabricationPart; offset: Point }>) => {
   const values = parts.flatMap(({ part, offset }) => part.contours.flatMap(contour => contourPoints(contour, 72).map(value => shifted(value, offset))))
   const xs = values.map(value => value.x)
   const ys = values.map(value => value.y)
@@ -42,6 +42,31 @@ const partEntities = (part: Part, c: Config, offset: Point = point(0, 0)) => {
   return result
 }
 
+const nativePartEntities = (part: FabricationPart, offset: Point = point(0, 0)) =>
+  part.contours.map(contour => contourEntities(contour, offset)).join('')
+  + part.holes.map(hole => circle(shifted(hole, offset), hole.d / 2)).join('')
+
+export const nativeDxfForPart = (part: FabricationPart) => {
+  if (!part.contours.length) throw new Error('Cannot export a part without a contour')
+  const offset = point(0, 0)
+  return header(boundsFor([{ part, offset }])) + nativePartEntities(part, offset) + footer
+}
+
+export const nativeDxfForNestedSheet = (placements: readonly NestingPlacement[]) => {
+  if (!placements.length) throw new Error('Cannot export an empty sheet')
+  const boxes = placements.map(value => nativeContourBounds(transformNestingContour(value.part.contours[0], value)))
+  const bounds = { minX: Math.min(...boxes.map(value => value.minX)), minY: Math.min(...boxes.map(value => value.minY)), maxX: Math.max(...boxes.map(value => value.maxX)), maxY: Math.max(...boxes.map(value => value.maxY)) }
+  const entities = placements.map(placement => {
+    const transform = (value: Point) => transformNestingPoint(value, placement)
+    const normalize = (angle: number) => ((angle + placement.rotation) % 360 + 360) % 360
+    return placement.part.contours.map(contour => contour.map(segment => segment.type === 'line'
+      ? line(transform(segment.from), transform(segment.to))
+      : arc(transform(segment.center), segment.radius, normalize(segment.clockwise ? segment.end : segment.start), normalize(segment.clockwise ? segment.start : segment.end)),
+    ).join('')).join('') + placement.part.holes.map(hole => circle(transform(hole), hole.d / 2)).join('')
+  }).join('')
+  return header(bounds) + entities + footer
+}
+
 export const dxfForPart = (part: Part, c: Config) => {
   assertFabricationReady(c)
   const offset = point(0, 0)
@@ -58,6 +83,7 @@ export const fullDxf = (c: Config) => {
 export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlacement[]) => {
   assertFabricationReady(c)
   if (!placements.length) throw new Error('Cannot export an empty sheet')
+  const sourceParts = nestingParts(c)
   const boxes = placements.map(p => nativeContourBounds(transformNestingContour(p.part.contours[0], p)))
   const bounds = { minX: Math.min(...boxes.map(b => b.minX)), minY: Math.min(...boxes.map(b => b.minY)), maxX: Math.max(...boxes.map(b => b.maxX)), maxY: Math.max(...boxes.map(b => b.maxY)) }
   const entities = placements.map(placement => {
@@ -68,7 +94,9 @@ export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlaceme
       : arc(transform(segment.center), segment.radius, normalize(segment.clockwise ? segment.end : segment.start), normalize(segment.clockwise ? segment.start : segment.end)),
     ).join('')).join('')
     result += placement.part.holes.map(hole => circle(transform(hole), hole.d / 2)).join('')
-    result += engravingLines(placement.part, c).map(mark => line(transform(mark.from), transform(mark.to), 'ENGRAVE')).join('')
+    const sourcePart = sourceParts.find(part => part.name === placement.part.name)
+    if (!sourcePart) throw new Error(`Stale nesting part: ${placement.part.name}`)
+    result += engravingLines(sourcePart, c).map(mark => line(transform(mark.from), transform(mark.to), 'ENGRAVE')).join('')
     return result
   }).join('')
   return header(bounds) + entities + footer
@@ -77,12 +105,11 @@ export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlaceme
 export const validateNestedExport = (c: Config, result: NestingResult) => {
   if (fabricationError(c)) return false
   const parts = nestingParts(c)
-  const expected = new Map(parts.map(part => [part.name, part]))
   const keys = new Set<string>()
   const options = nestingOptions(c)
   if (result.unplaced.length || result.placements.length !== parts.reduce((sum, part) => sum + part.count, 0)) return false
   for (const placement of result.placements) {
-    const part = expected.get(placement.part.name)
+    const part = parts.find(candidate => candidate.name === placement.part.name)
     const key = `${placement.part.name}:${placement.instance}`
     if (!part || JSON.stringify(placement.part) !== JSON.stringify(part) || !Number.isInteger(placement.instance) || placement.instance < 0 || placement.instance >= part.count || keys.has(key)) return false
     keys.add(key)

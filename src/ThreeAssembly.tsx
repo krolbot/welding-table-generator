@@ -2,15 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { display, type Config } from './model'
-import { framePositions, legCornerPlateSpec, makeParts, partWeight, type Contour, type Part } from './geometry'
+import { framePositions, legCornerPlateSpec, makeParts, partWeight, type Contour, type FabricationPart } from './geometry'
 import type { NestingResult } from './nesting'
 
 type Props = { config: Config; resetToken: number; mountFocusToken: number; dark: boolean; nesting?: NestingResult }
-type PartInfo = { part: Part['name']; isPart: true; name: string; dims: string; weight: string | number; weightUnit: string; holesCount: number; basePos: THREE.Vector3; explodeDir: THREE.Vector3; currentFactor: number }
+type Part = FabricationPart
+type PartInfo = { part: string; isPart: true; name: string; dims: string; weight: string | number; weightUnit: string; holesCount: number; basePos: THREE.Vector3; explodeDir: THREE.Vector3; currentFactor: number }
 type PartMesh = THREE.Mesh<THREE.ExtrudeGeometry, THREE.MeshStandardMaterial> & { userData: PartInfo }
 const holeCurveSegments = 24
 const colorsFor = (dark: boolean) => ({ part: dark ? 0x64748b : 0x9aa7b8, edge: dark ? 0x020617 : 0x1e293b, dim: dark ? 0x60a5fa : 0x1d4ed8 })
-const partTitles: Record<Part['name'], string> = {
+const partTitles: Record<string, string> = {
   top: 'Main Top Plate', longSkirt: 'Longitudinal Skirt', shortSkirt: 'Transverse Skirt',
   longRib: 'Longitudinal Support Rib', shortRib: 'Transverse Support Rib',
   legCornerPlate: 'Leg Corner Plate',
@@ -114,7 +115,7 @@ const plate = (
   const metricWeight = Number(partWeight(part, config).toFixed(1))
   const unit = config.units === 'mm' ? 'mm' : 'in'
   const mesh: PartMesh = Object.assign(new THREE.Mesh(geometry, runtime.metal), { userData: {
-    part: part.name, isPart: true as const, name: partTitles[part.name], basePos: position, explodeDir, currentFactor: runtime.factor,
+    part: part.name, isPart: true as const, name: partTitles[part.name] ?? part.label, basePos: position, explodeDir, currentFactor: runtime.factor,
     dims: `${display(width, config.units, 0)} × ${display(height, config.units, 0)} ${unit}`,
     weight: config.units === 'mm' ? metricWeight : (metricWeight * 2.20462).toFixed(1),
     weightUnit: config.units === 'mm' ? 'kg' : 'lb', holesCount: part.holes.length,

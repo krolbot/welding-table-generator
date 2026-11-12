@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { svgContourPath, engravingLines } from './geometry'
 import { display, readDisplay, type Config } from './model'
 import { downloadNestedZip } from './dxf'
-import { nestingKey, type NestingRequest, type NestingResponse } from './nestingSettings'
+import { nestingKey, nestingParts, type NestingRequest, type NestingResponse } from './nestingSettings'
 import type { NestingResult } from './nesting'
 import { NumberInput } from './NumberInput'
 import { Icon } from './Icon'
@@ -12,6 +12,7 @@ type Props = { config: Config; dark: boolean; onChange: (patch: Partial<Config>)
 
 export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
   const key = nestingKey(config)
+  const sourceParts = useMemo(() => nestingParts(config), [key])
   const [snapshot, setSnapshot] = useState<{ key: string; result: NestingResult } | null>(null)
   const [stats, setStats] = useState<{ attempts: number; elapsedMs: number; search: NestingResult['stats'] | null }>({ attempts: 0, elapsedMs: 0, search: null })
   const [status, setStatus] = useState<'running' | 'pausing' | 'paused' | 'done' | 'error'>('running')
@@ -95,7 +96,7 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
               <title>{p.part.label} · {p.instance + 1} · {p.rotation}°</title>
               <path d={p.part.contours.map(svgContourPath).join(' ')} fillRule="evenodd" />
               {p.part.holes.map(hole => <circle key={hole.id} cx={hole.x} cy={hole.y} r={hole.d / 2} />)}
-              {engravings(p.part, config)}
+              {engravings(sourceParts.find(part => part.name === p.part.name), config)}
             </g>)}
           </g>
         </svg>
@@ -139,4 +140,4 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
   </div>
 }
 
-const engravings = (part: Parameters<typeof engravingLines>[0], config: Config) => engravingLines(part, config).map((line, i) => <line key={i} className="nested-engraving" x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y} />)
+const engravings = (part: Parameters<typeof engravingLines>[0] | undefined, config: Config) => part ? engravingLines(part, config).map((line, i) => <line key={i} className="nested-engraving" x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y} />) : null

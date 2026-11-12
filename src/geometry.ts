@@ -9,8 +9,8 @@ export type LineSegment = { type: 'line'; from: Point; to: Point }
 export type ArcSegment = { type: 'arc'; center: Point; radius: number; start: number; end: number; clockwise?: boolean }
 export type ContourSegment = LineSegment | ArcSegment
 export type Contour = ContourSegment[]
-export type Part = {
-  name: PartName
+export type FabricationPart<Name extends string = string> = {
+  name: Name
   width: number
   height: number
   thickness: number
@@ -20,6 +20,7 @@ export type Part = {
   contours: Contour[]
   label: string
 }
+export type Part = FabricationPart<PartName>
 export type PlacedPart = { part: Part; instance: number; position: Point }
 export type Layout = { instances: PlacedPart[]; width: number; height: number }
 
@@ -731,7 +732,7 @@ export const contourLength = (contour: Contour) => contour.reduce((sum, segment)
   return sum + segment.radius * Math.abs(radians(arcSweep(segment)))
 }, 0)
 
-export const partWeight = (part: Part, _c: Config) => {
+export const partWeight = (part: FabricationPart, _c: Config) => {
   const contourArea = Math.abs(signedContourArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedContourArea(contour)), 0)
   const holeArea = part.holes.reduce((area, hole) => area + Math.PI * (hole.d / 2) ** 2, 0)
   return (contourArea - holeArea) * part.thickness * densityKgPerMm3
