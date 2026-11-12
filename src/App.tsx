@@ -29,8 +29,6 @@ import { downloadFull, downloadZip } from './dxf'
 import { SheetNesting } from './SheetNesting'
 import { Icon, type IconName } from './Icon'
 import { NumberInput } from './NumberInput'
-import { ToolingWorkspace } from './tooling/ToolingWorkspace'
-import { decodeCombinedProject } from './tooling/project'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 
@@ -173,11 +171,6 @@ function loadedConfig(): Config {
   const preferences = { units: ui.units, exploded: ui.explodeFactor, showDimensions: ui.showDims, renderHoles: ui.renderHoles3D, highlighting: ui.enableHoverEffect }
   const stored = { ...readStorage('tableGenParams'), ...preferences }
   const params = new URLSearchParams(location.search)
-  const combined = params.get('project')
-  if (combined) {
-    try { return normalizeConfig(decodeCombinedProject(combined).table) }
-    catch { return normalizeConfig(stored) }
-  }
   const legacy = params.get('state')
   if (legacy) {
     try {
@@ -186,6 +179,8 @@ function loadedConfig(): Config {
       return { ...defaults }
     }
   }
+  // Unknown project links do not override the saved table configuration.
+  if (params.has('project')) return normalizeConfig(stored)
   if (!params.size) return normalizeConfig(stored)
   const candidate: Record<string, unknown> = {}
   for (const [key, value] of params) {
@@ -222,7 +217,6 @@ const copyText = async (value: string) => {
 
 export default function App() {
   const [config, setConfig] = useState<Config>(loadedConfig)
-  const [workspace, setWorkspace] = useState<'table' | 'tooling'>(() => new URLSearchParams(location.search).has('project') ? 'tooling' : 'table')
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
   const [view, setView] = useState<View>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
   const [tool, setTool] = useState<Tool>(null)
@@ -509,14 +503,6 @@ export default function App() {
   const displayedLayoutWidth = display(layout.width, config.units, 0)
   const displayedLayoutHeight = display(layout.height, config.units, 0)
 
-  if (workspace === 'tooling') return <ToolingWorkspace
-    table={config}
-    dark={dark}
-    onBack={() => setWorkspace('table')}
-    onToggleTheme={() => setDark(value => !value)}
-    onLoadTable={value => setConfig(normalizeConfig(value))}
-  />
-
   return (
     <main className="app-shell">
       <aside className="settings">
@@ -524,7 +510,6 @@ export default function App() {
           <div className="brand"><Icon name="settings" size={24} /><h2>Welding Table Free Generator</h2></div>
           <button className="icon" title={`Switch to ${dark ? 'light' : 'dark'} theme`} aria-label="Toggle color theme" onClick={() => setDark(value => !value)}><Icon name={dark ? 'sun' : 'moon'} /></button>
         </header>
-        <div className="workspace-switch"><button className="active">Table</button><button onClick={() => setWorkspace('tooling')}>Tooling</button></div>
         <div className="units"><h3>Units</h3><div className="segment">{(['mm', 'inch'] as const).map(unit => <button key={unit} className={config.units === unit ? 'active' : ''} onClick={() => patch('units', unit)}>{unit}</button>)}</div></div>
         <div className="settings-scroll">
           <section className="fixture-card">
