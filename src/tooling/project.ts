@@ -1,3 +1,4 @@
+import type { NestingSettings } from './production.js'
 import { createToolingConfig, TOOLING_IDS } from './catalog.js'
 import { materialDensityKgPerMm3, type ParameterValue, type SheetMaterial, type ToolingConfig, type ToolingId } from './model.js'
 
@@ -16,6 +17,7 @@ export type CombinedProject = {
   table: Record<string, unknown>
   includeTable: boolean
   tooling: ToolingBasketItem[]
+  nesting?: NestingSettings
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -40,7 +42,7 @@ export const parseCombinedProject = (input: unknown): CombinedProject => {
     if ('length' in input && 'width' in input) return { version: PROJECT_VERSION, table: input, includeTable: true, tooling: [] }
     throw new Error(`Unsupported project version: ${String(input.version ?? 'missing')}`)
   }
-  exactKeys(input, ['version', 'table', 'includeTable', 'tooling'], 'project')
+  exactKeys(input, ['version', 'table', 'includeTable', 'tooling', 'nesting'], 'project')
   if (!isRecord(input.table)) throw new Error('project.table must be an object')
   if (typeof input.includeTable !== 'boolean') throw new Error('project.includeTable must be boolean')
   if (!Array.isArray(input.tooling)) throw new Error('project.tooling must be an array')
@@ -65,7 +67,22 @@ export const parseCombinedProject = (input: unknown): CombinedProject => {
     }))
     return { instanceId: raw.instanceId, config: createToolingConfig(raw.config.id, values), quantity: raw.quantity as number, material: raw.material }
   })
-  return { version: PROJECT_VERSION, table: input.table, includeTable: input.includeTable, tooling }
+  const nesting = input.nesting === undefined ? undefined : parseNestingSettings(input.nesting)
+  return { version: PROJECT_VERSION, table: input.table, includeTable: input.includeTable, tooling, ...(nesting ? { nesting } : {}) }
+}
+
+export const parseNestingSettings = (value: unknown): NestingSettings => {
+  if (!isRecord(value)) throw new Error('project.nesting must be an object')
+  exactKeys(value, ['sheetLength', 'sheetWidth', 'edgeGap', 'partGap', 'rotations'], 'project.nesting')
+  const number = (key: string, min: number, max: number) => {
+    const n = value[key]
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error(`project.nesting.${key} must be between ${min} and ${max}`)
+    return n
+  }
+  const sheetLength = number('sheetLength', 100, 20000), sheetWidth = number('sheetWidth', 100, 20000)
+  const edgeGap = number('edgeGap', 0, Math.min(sheetLength, sheetWidth) / 2 - .001), partGap = number('partGap', 0, 1000)
+  if (!Array.isArray(value.rotations) || !value.rotations.length || value.rotations.some(r => typeof r !== 'number' || ![0, 90, 180, 270].includes(r)) || new Set(value.rotations).size !== value.rotations.length) throw new Error('project.nesting.rotations must contain unique quarter turns')
+  return { sheetLength, sheetWidth, edgeGap, partGap, rotations: value.rotations }
 }
 
 export const encodeCombinedProject = (project: CombinedProject) => {

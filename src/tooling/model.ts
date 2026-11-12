@@ -77,7 +77,7 @@ export type AssemblyTransform = {
 
 export type MatingInterface = {
   id: string
-  kind: 'tab' | 'slot' | 'bolt' | 'pivot' | 'replaceable' | 'weld-edge' | 'bearing-seat' | 'purchased-mount'
+  kind: 'tab' | 'slot' | 'bolt' | 'pivot' | 'replaceable' | 'weld-edge' | 'bearing-seat' | 'purchased-mount' | 'linear-guide'
   localOrigin: { x: number; y: number; z: number }
   localAxis: { x: number; y: number; z: number }
   size: { width: number; depth: number; diameter?: number }
@@ -106,6 +106,8 @@ export type PurchasedComponent = {
   quantity: number
   interfaceParameters: Readonly<Record<string, number | string>>
   excludedFromSheetNesting: true
+  mounts?: Array<{ instanceId: string; holeId: string }>
+  envelopes?: Array<{ start: Point3; end: Point3; diameter: number; representationOnly: true }>
 }
 
 export type SheetBomItem = {
@@ -152,7 +154,7 @@ export type PartInput = {
   slots?: Slot[]
   contours: Contour[]
   label?: string
-  interfaces?: string[]
+  interfaces?: readonly string[]
 }
 
 export type Point3 = { x: number; y: number; z: number }

@@ -56,6 +56,18 @@ class AssemblyBuilder {
     this.purchased.push({ id, description, quantity, interfaceParameters, excludedFromSheetNesting: true })
   }
 
+  mountPurchased(id: string, instance: AssemblyInstance, holeId: string): void {
+    const component = this.purchased.find(item => item.id === id)
+    if (!component) throw new Error(`Unknown purchased component ${id}`)
+    ;(component.mounts ??= []).push({ instanceId: instance.id, holeId })
+  }
+
+  purchasedEnvelope(id: string, start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }, diameter: number): void {
+    const component = this.purchased.find(item => item.id === id)
+    if (!component) throw new Error(`Unknown purchased component ${id}`)
+    ;(component.envelopes ??= []).push({ start, end, diameter, representationOnly: true })
+  }
+
   warn(message: string): void { this.warnings.push(message) }
 
   mate(kind: MatingInterface['kind'], first: AssemblyInstance, second: AssemblyInstance, at: JointAt, description: string, tolerance = 0.05): void {
@@ -86,6 +98,20 @@ class AssemblyBuilder {
     })
   }
 
+  axialMate(kind: 'pivot' | 'bolt' | 'bearing-seat' | 'linear-guide', first: AssemblyInstance, second: AssemblyInstance, a: { x: number; y: number }, b: { x: number; y: number }, diameter: number, description: string): void {
+    const index = ++this.interfaceIndex
+    const faces = [first, second].map((instance, i) => {
+      const part = this.parts.find(p => p.name === instance.partName)!
+      const localOrigin = { ...(i ? b : a), z: 0 }
+      const featureEvidence = classifyMatingPoint(part, localOrigin, 0.01)
+      if (!featureEvidence) throw new Error(`${instance.id}: missing axial interface`)
+      const face: MatingInterface = { id: `if-${index}-${i}`, kind, localOrigin, localAxis: { x: 0, y: 0, z: 1 }, size: { width: diameter, depth: part.thickness, diameter }, featureEvidence }
+      instance.interfaces.push(face)
+      return face
+    })
+    this.joints.push({ id: `joint-${index}`, kind, first: { instanceId: first.id, interfaceId: faces[0].id }, second: { instanceId: second.id, interfaceId: faces[1].id }, tolerance: 0.05, description })
+  }
+
   finish(): ToolingAssembly {
     const entry = getToolingEntry(this.config.id)
     const assembly: ToolingAssembly = {
@@ -114,6 +140,14 @@ const rectangularPart = (builder: AssemblyBuilder, name: string, role: string, w
   name, role, width, height, thickness, count: options.count, material: options.material ?? defaultMaterial,
   holes: options.holes, contours: [rectangle(width, height), ...(options.cuts ?? [])],
 })
+
+const topTabbedRectangle = (width: number, bodyHeight: number, depth: number, centers: readonly number[], tabWidth: number, bottom = false) => {
+  if (centers.some(x => Math.abs(x) + tabWidth / 2 >= width / 2)) throw new Error('Tab does not fit the wall width')
+  const points = [pt(-width / 2, -bodyHeight / 2), pt(width / 2, -bodyHeight / 2), pt(width / 2, bodyHeight / 2)]
+  for (const x of [...centers].sort((a, b) => b - a)) points.push(pt(x + tabWidth / 2, bodyHeight / 2), pt(x + tabWidth / 2, bodyHeight / 2 + depth), pt(x - tabWidth / 2, bodyHeight / 2 + depth), pt(x - tabWidth / 2, bodyHeight / 2))
+  points.push(pt(-width / 2, bodyHeight / 2))
+  return polygon(bottom ? points.map(p => pt(p.x, -p.y)) : points)
+}
 
 const boltPair = (diameter: number, spacing: number, axis: 'x' | 'y' = 'x', prefix = 'mount') => [-1, 1].map(sign =>
   circleHole(`${prefix}-${sign > 0 ? 'p' : 'n'}`, axis === 'x' ? sign * spacing / 2 : 0, axis === 'y' ? sign * spacing / 2 : 0, diameter))
@@ -184,7 +218,7 @@ const addFlatItems = (builder: AssemblyBuilder, config: ToolingConfig): boolean 
     }
     case 'A06': {
       const length = nv(config, 'length'); const width = nv(config, 'width'); const d = nv(config, 'mountDiameter'); const pitch = nv(config, 'mountPitch'); const offset = nv(config, 'gridOffset'); const rows = nv(config, 'rowSpacing')
-      const holes = [-1, 1].flatMap(side => [-1, 1].map(row => circleHole(`grid-${side}-${row}`, side * pitch / 2 + offset / 2, row * rows / 2, d)))
+      const holes = [-1, 1].flatMap(side => [-1, 1].map(row => circleHole(`grid-${side}-${row}`, side * pitch / 2 + (side > 0 ? offset : 0), row * rows / 2, d)))
       const part = rectangularPart(builder, 'A06-strap', 'offset-grid joining strap', length, width, t, { holes })
       builder.instance(part); addFastenerSet(builder, 'join', 4, d, 'module joining')
       return true
@@ -192,8 +226,17 @@ const addFlatItems = (builder: AssemblyBuilder, config: ToolingConfig): boolean 
     case 'A07': {
       const length = nv(config, 'length'); const width = nv(config, 'width'); const stud = nv(config, 'studDiameter'); const slotLength = nv(config, 'slotLength'); const support = nv(config, 'supportHeight')
       const strap = builder.part({ name: 'A07-strap', role: 'clamping beam', width: length, height: width, thickness: t, slots: [slotBox(0, 0, slotLength, stud + 2)], contours: [rectangle(length, width), capsule(slotLength, stud + 2)] })
-      const shim = rectangularPart(builder, 'A07-support', 'stackable fulcrum support', width, width, Math.min(t, support), { count: Math.max(1, Math.ceil(support / t)), holes: [circleHole('support-bolt', 0, 0, stud)] })
-      builder.instance(strap); for (let index = 0; index < shim.count; index += 1) builder.instance(shim, identityTransform(length / 2 - width / 2, 0, index * shim.thickness))
+      builder.instance(strap, identityTransform(0, 0, support + t / 2))
+      const fullCount = Math.floor(support / t)
+      const remainder = support - fullCount * t
+      if (fullCount) {
+        const shim = rectangularPart(builder, 'A07-support', 'fulcrum stack plate', width, width, t, { count: fullCount })
+        for (let index = 0; index < fullCount; index += 1) builder.instance(shim, identityTransform(length / 2 - width / 2, 0, (index + .5) * t))
+      }
+      if (remainder > 1e-6) {
+        const shim = rectangularPart(builder, 'A07-support-adjustment', 'exact-height fulcrum shim', width, width, remainder)
+        builder.instance(shim, identityTransform(length / 2 - width / 2, 0, fullCount * t + remainder / 2))
+      }
       builder.buy('clamp-stud', 'Threaded clamping stud', 1, { nominalDiameter: stud }); builder.buy('clamp-nut', 'Clamping nut', 1, { nominalDiameter: stud }); builder.buy('clamp-washer', 'Clamping washer', 1, { nominalDiameter: stud })
       builder.warn('Clamp force is not rated; verify strap bending, support stability and stud alignment by calculation and test.')
       return true
@@ -215,9 +258,10 @@ const addFlatItems = (builder: AssemblyBuilder, config: ToolingConfig): boolean 
     case 'A10': {
       const length = nv(config, 'length'); const width = nv(config, 'width'); const pitch = nv(config, 'holderPitch'); const d = nv(config, 'holderDiameter'); const size = nv(config, 'profileSize'); const profile = stringValue(config, 'profile')
       const half = length / 2
+      const veeDepth = size / (2 * Math.tan(nv(config, 'veeAngle') * Math.PI / 360))
       if (size > length - 2 * MIN_WEB || size / 2 > width - MIN_WEB) throw new Error(`A10.profileSize: ${size} does not fit ${length} x ${width} insert envelope with ${MIN_WEB} mm web`)
       const notch = profile === 'vee'
-        ? polygon([pt(-size / 2, width / 2), pt(0, width / 2 - size / 2), pt(size / 2, width / 2), pt(half, width / 2), pt(half, -width / 2), pt(-half, -width / 2)])
+        ? polygon([pt(-half, width / 2), pt(-size / 2, width / 2), pt(0, width / 2 - veeDepth), pt(size / 2, width / 2), pt(half, width / 2), pt(half, -width / 2), pt(-half, -width / 2)])
         : [
             line(pt(-half, -width / 2), pt(half, -width / 2)),
             line(pt(half, -width / 2), pt(half, width / 2)),
@@ -246,9 +290,12 @@ const addFlatItems = (builder: AssemblyBuilder, config: ToolingConfig): boolean 
     }
     case 'A12': {
       const length = nv(config, 'length'); const width = nv(config, 'width'); const opening = nv(config, 'forkDiameter'); const neck = nv(config, 'neckWidth'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
-      const xRight = length / 2; const throat = xRight - opening
-      const outline = polygon([pt(-length / 2, -width / 2), pt(xRight, -width / 2), pt(xRight, -neck / 2), pt(throat, -neck / 2), pt(throat - opening / 2, 0), pt(throat, neck / 2), pt(xRight, neck / 2), pt(xRight, width / 2), pt(-length / 2, width / 2)])
-      const part = builder.part({ name: 'A12-torch-fork', role: 'open torch handle fork', width: length, height: width, thickness: t, holes: boltPair(md, mp), contours: [outline] })
+      if (neck >= opening || opening + 2 * MIN_WEB > width) throw new Error('A12: fork neck must be narrower than its circular pocket, with edge material remaining')
+      const radius = opening / 2; const center = pt(length / 2 - radius - MIN_WEB, 0)
+      const angle = Math.asin(neck / opening) * 180 / Math.PI
+      const x = center.x + Math.sqrt(radius * radius - neck * neck / 4)
+      const outline = [line(pt(-length / 2, -width / 2), pt(length / 2, -width / 2)), line(pt(length / 2, -width / 2), pt(length / 2, -neck / 2)), line(pt(length / 2, -neck / 2), pt(x, -neck / 2)), arc(center, radius, -angle, angle, true), line(pt(x, neck / 2), pt(length / 2, neck / 2)), line(pt(length / 2, neck / 2), pt(length / 2, width / 2)), line(pt(length / 2, width / 2), pt(-length / 2, width / 2)), line(pt(-length / 2, width / 2), pt(-length / 2, -width / 2))]
+      const part = builder.part({ name: 'A12-torch-fork', role: 'circular open torch handle fork', width: length, height: width, thickness: t, holes: boltPair(md, mp), contours: [outline] })
       builder.instance(part); addFastenerSet(builder, 'table', 2, md, 'table mounting')
       return true
     }
@@ -263,40 +310,41 @@ const addFlatItems = (builder: AssemblyBuilder, config: ToolingConfig): boolean 
   }
 }
 
-const tabSlots = (span: number, thickness: number, clearance: number, countValue = 2) => Array.from({ length: countValue }, (_, index) => {
-  const x = (index - (countValue - 1) / 2) * Math.min(span / countValue, 120)
-  return { box: slotBox(x, 0, 30 + clearance, thickness + clearance), contour: rectangle(30 + clearance, thickness + clearance, pt(x, 0)) }
-})
-
 const addWeldedItems = (builder: AssemblyBuilder, config: ToolingConfig): boolean => {
-  const t = nv(config, 'thickness'); const clearance = nv(config, 'clearance')
+  const t = nv(config, 'thickness'); const clearance = typeof config.values.clearance === 'number' ? config.values.clearance : 0
   const weldSize = { width: 30, depth: t }
   switch (config.id) {
     case 'B01': {
       const length = nv(config, 'length'); const width = nv(config, 'width'); const height = nv(config, 'height')
       const hd = nv(config, 'holeDiameter'); const hp = nv(config, 'holePitch'); const margin = nv(config, 'gridMargin')
-      const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch'); const tabWidth = nv(config, 'tabWidth')
+      const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch'); const tw = nv(config, 'tabWidth')
       const rr = nv(config, 'radialRadius'); const rw = nv(config, 'radialWidth'); const rs = nv(config, 'radialStart'); const re = nv(config, 'radialEnd')
-      const sideSlotY = (width - t - clearance) / 2
-      const endSlotX = -(length - t - clearance) / 2
-      const sideSlots = [-sideSlotY, sideSlotY].flatMap(y => [-length / 4, length / 4].map(x => rectangle(tabWidth + clearance, t + clearance, pt(x, y))))
-      const endSlots = [-width / 4, width / 4].map(y => rectangle(t + clearance, tabWidth + clearance, pt(endSlotX, y)))
+      const sideY = (width - t - clearance) / 2 - MIN_WEB
+      const endX = -(length - t - clearance) / 2 + MIN_WEB
+      const wallHeight = height - t
+      const sideLength = length / 2 - endX - t / 2
+      const sideX = (length / 2 + endX + t / 2) / 2
+      const endWidth = 2 * sideY - t
+      const sideXs = [-length / 4, length / 4]
+      const endYs = [-width / 4, width / 4]
+      const slots = [...[-sideY, sideY].flatMap(y => sideXs.map(x => slotBox(x, y, tw + clearance, t + clearance))), ...endYs.map(y => slotBox(endX, y, t + clearance, tw + clearance))]
       const top = builder.part({ name: 'B01-top', role: 'perforated top shelf', width: length, height: width, thickness: t,
-        holes: gridHoles(length, width, hd, hp, margin, 'top'), slots: [...sideSlots.map((_, i) => slotBox(i % 2 ? length / 4 : -length / 4, i < 2 ? -sideSlotY : sideSlotY, tabWidth + clearance, t + clearance)), ...endSlots.map((_, i) => slotBox(endSlotX, i ? width / 4 : -width / 4, t + clearance, tabWidth + clearance))], contours: [rectangle(length, width), ...sideSlots, ...endSlots] })
-      const sideOutline = polygon([pt(-length / 2, -height / 2), pt(length / 2, -height / 2), pt(length / 2, height / 2), pt(length / 4 + tabWidth / 2, height / 2), pt(length / 4 + tabWidth / 2, height / 2 + t), pt(length / 4 - tabWidth / 2, height / 2 + t), pt(length / 4 - tabWidth / 2, height / 2), pt(-length / 4 + tabWidth / 2, height / 2), pt(-length / 4 + tabWidth / 2, height / 2 + t), pt(-length / 4 - tabWidth / 2, height / 2 + t), pt(-length / 4 - tabWidth / 2, height / 2), pt(-length / 2, height / 2)])
-      const side = builder.part({ name: 'B01-side', role: 'open-bottom side wall', width: length, height: height + t, thickness: t, count: 2, contours: [sideOutline] })
-      const end = builder.part({ name: 'B01-mount-end', role: 'single table mounting end', width, height, thickness: t,
-        holes: boltPair(md, mp), contours: [rectangle(width, height), radialSlot(pt(0, 0), rr, rw, rs, re)] })
-      const it = builder.instance(top, identityTransform(0, 0, height)); const isl = builder.instance(side, transform({ x: 0, y: -width / 2, z: height / 2 }, { x: 90, y: 0, z: 0 }), 'B01-side-left'); const isr = builder.instance(side, transform({ x: 0, y: width / 2, z: height / 2 }, { x: 90, y: 0, z: 0 }), 'B01-side-right'); const ie = builder.instance(end, transform({ x: -length / 2, y: 0, z: height / 2 }, { x: 90, y: 0, z: 90 }))
-      for (const x of [-length / 4, length / 4]) {
-        builder.mate('tab', it, isl, { world: { x, y: -width / 2, z: height }, axis: { x: 0, y: 1, z: 0 }, size: { width: tabWidth, depth: t } }, 'side tab through top slot')
-        builder.mate('tab', it, isr, { world: { x, y: width / 2, z: height }, axis: { x: 0, y: 1, z: 0 }, size: { width: tabWidth, depth: t } }, 'side tab through top slot')
+        holes: gridHoles(length, width, hd, hp, margin, 'top'), slots, contours: [rectangle(length, width), ...slots.map(s => rectangle(s.width, s.height, pt(s.x, s.y)))] })
+      const side = builder.part({ name: 'B01-side', role: 'tabbed open-bottom side wall', width: sideLength, height, thickness: t, count: 2,
+        contours: [topTabbedRectangle(sideLength, wallHeight, t, sideXs.map(x => x - sideX), tw)] })
+      const end = builder.part({ name: 'B01-mount-end', role: 'tabbed single table mounting end', width: endWidth, height, thickness: t,
+        holes: boltPair(md, mp), contours: [topTabbedRectangle(endWidth, wallHeight, t, endYs, tw), radialSlot(pt(0, 0), rr, rw, rs, re)] })
+      const it = builder.instance(top, identityTransform(0, 0, height - t / 2))
+      const sides = [-1, 1].map(sign => builder.instance(side, transform({ x: sideX, y: sign * sideY, z: wallHeight / 2 }, { x: 90, y: 0, z: 0 }), `B01-side-${sign < 0 ? 'left' : 'right'}`))
+      const ie = builder.instance(end, transform({ x: endX, y: 0, z: wallHeight / 2 }, { x: 90, y: 0, z: 90 }))
+      for (const [index, instance] of sides.entries()) {
+        const y = index ? sideY : -sideY
+        for (const x of sideXs) builder.mate('tab', it, instance, { world: { x, y, z: height - t / 2 }, axis: { x: 0, y: 0, z: 1 }, size: { width: tw, depth: t } }, 'side tab through top slot')
+        builder.mate('weld-edge', instance, ie, { world: { x: endX + t / 2, y: y - Math.sign(y) * t / 2, z: wallHeight / 2 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'side edge to mounting end weld')
       }
-      for (const y of [-width / 4, width / 4]) builder.mate('tab', it, ie, { world: { x: -length / 2, y, z: height }, axis: { x: 1, y: 0, z: 0 }, size: { width: tabWidth, depth: t } }, 'mount-end tab through top slot')
-      builder.mate('weld-edge', isl, ie, { world: { x: -length / 2, y: -width / 2, z: height / 2 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'left side to mounting end weld')
-      builder.mate('weld-edge', isr, ie, { world: { x: -length / 2, y: width / 2, z: height / 2 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'right side to mounting end weld')
+      for (const y of endYs) builder.mate('tab', it, ie, { world: { x: endX, y, z: height - t / 2 }, axis: { x: 0, y: 0, z: 1 }, size: { width: tw, depth: t } }, 'mount-end tab through top slot')
       addFastenerSet(builder, 'mount', 2, md, 'table mounting')
-      builder.warn('Mount compatibility is only established when mountDiameter/mountPitch, table wall access and rib clearance match the actual table.')
+      builder.warn('Match mounting pitch, diameter and wall access to the actual table; slot travel is not a load rating.')
       return true
     }
     case 'B02': {
@@ -324,23 +372,29 @@ const addWeldedItems = (builder: AssemblyBuilder, config: ToolingConfig): boolea
     }
     case 'B04': {
       const length = nv(config, 'length'); const h = nv(config, 'height'); const baseWidth = nv(config, 'baseWidth'); const gussets = count(config, 'gussetCount'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
-      const slots = tabSlots(length, t, clearance, gussets)
-      const base = builder.part({ name: 'B04-base', role: 'mounting base', width: length, height: baseWidth, thickness: t, holes: boltPair(md, mp), slots: slots.map(s => s.box), contours: [rectangle(length, baseWidth), ...slots.map(s => s.contour)] })
+      const xs = Array.from({ length: gussets }, (_, i) => (i - (gussets - 1) / 2) * length / gussets)
+      const slots = xs.map(x => slotBox(x, t / 2, t + clearance, 30 + clearance))
+      const base = builder.part({ name: 'B04-base', role: 'mounting base with gusset slots', width: length, height: baseWidth, thickness: t, holes: boltPair(md, mp).map(hole => ({ ...hole, y: baseWidth / 2 - md / 2 - MIN_WEB })), slots, contours: [rectangle(length, baseWidth), ...slots.map(s => rectangle(s.width, s.height, pt(s.x, s.y)))] })
       const wall = rectangularPart(builder, 'B04-wall', 'vertical working face', length, h, t, { holes: gridHoles(length, h, md, mp, mp / 2) })
-      const gussetOutline = polygon([pt(-baseWidth / 2, -h / 2), pt(baseWidth / 2, -h / 2), pt(-baseWidth / 2, h / 2)])
-      const gusset = builder.part({ name: 'B04-gusset', role: 'triangular brace with locating tab', width: baseWidth, height: h, thickness: t, count: gussets, contours: [gussetOutline] })
-      const ib = builder.instance(base); const iw = builder.instance(wall, transform({ x: 0, y: -baseWidth / 2, z: h / 2 }, { x: 90, y: 0, z: 0 }))
-      builder.mate('weld-edge', ib, iw, { world: { x: 0, y: -baseWidth / 2, z: t / 2 }, axis: { x: 1, y: 0, z: 0 }, size: { width: length, depth: t } }, 'working wall to base')
-      for (let index = 0; index < gussets; index += 1) { const x = (index - (gussets - 1) / 2) * Math.min(length / gussets, 120); const ig = builder.instance(gusset, transform({ x, y: 0, z: h / 2 }, { x: 90, y: 0, z: 90 }), `B04-gusset-${index + 1}`); builder.mate('slot', ib, ig, { world: { x, y: 0, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'gusset tab into base slot'); builder.mate('weld-edge', iw, ig, { world: { x, y: -baseWidth / 2, z: h / 2 }, axis: { x: 0, y: 0, z: 1 }, size: { width: h, depth: t } }, 'gusset to working wall') }
+      const w = baseWidth - t
+      const gusset = builder.part({ name: 'B04-gusset', role: 'triangular brace with through-base tab', width: w, height: h + t, thickness: t, count: gussets,
+        contours: [polygon([pt(-w / 2, -h / 2), pt(-15, -h / 2), pt(-15, -h / 2 - t), pt(15, -h / 2 - t), pt(15, -h / 2), pt(w / 2, -h / 2), pt(-w / 2, h / 2)])] })
+      const ib = builder.instance(base); const iw = builder.instance(wall, transform({ x: 0, y: -(baseWidth - t) / 2, z: (h + t) / 2 }, { x: 90, y: 0, z: 0 }))
+      builder.mate('weld-edge', ib, iw, { world: { x: 0, y: -(baseWidth - t) / 2, z: t / 2 }, axis: { x: 1, y: 0, z: 0 }, size: { width: length, depth: t } }, 'working wall to base')
+      for (const [index, x] of xs.entries()) {
+        const ig = builder.instance(gusset, transform({ x, y: t / 2, z: (h + t) / 2 }, { x: 90, y: 0, z: 90 }), `B04-gusset-${index + 1}`)
+        builder.mate('tab', ib, ig, { world: { x, y: t / 2, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: { width: 30, depth: t } }, 'gusset tab through base slot')
+        builder.mate('weld-edge', iw, ig, { world: { x, y: -baseWidth / 2 + t, z: (h + t) / 2 }, axis: { x: 0, y: 0, z: 1 }, size: { width: h, depth: t } }, 'gusset back edge to working wall')
+      }
       addFastenerSet(builder, 'mount', 2, md, 'table mounting'); return true
     }
     case 'B05': {
       const ax = nv(config, 'armX'); const ay = nv(config, 'armY'); const bw = nv(config, 'bodyWidth'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
       const cheekOutline = polygon([pt(-ax / 2, -ay / 2), pt(ax / 2, -ay / 2), pt(ax / 2, -ay / 2 + bw), pt(-ax / 2 + bw, -ay / 2 + bw), pt(-ax / 2 + bw, ay / 2), pt(-ax / 2, ay / 2)])
       const cheek = builder.part({ name: 'B05-cheek', role: 'L-profile box cheek', width: ax, height: ay, thickness: t, count: 2, holes: [-1, 1].map((sign, index) => circleHole(`mount-${index + 1}`, sign * mp / 2, -ay / 2 + bw / 2, md)), contours: [cheekOutline] })
-      const tie = rectangularPart(builder, 'B05-tie', 'transverse box tie', bw, bw, t, { count: 3 })
+      const tie = rectangularPart(builder, 'B05-tie', 'transverse welded box tie', bw, bw - t, t, { count: 3 })
       const c1 = builder.instance(cheek, identityTransform(0, 0, 0), 'B05-cheek-front'); const c2 = builder.instance(cheek, identityTransform(0, 0, bw), 'B05-cheek-back')
-      for (let index = 0; index < 3; index += 1) { const world = { x: -ax / 2 + bw / 2 + index * (ax - bw) / 2, y: -ay / 2 + bw / 2, z: bw / 2 }; const itie = builder.instance(tie, transform(world, { x: 90, y: 0, z: 0 }), `B05-tie-${index + 1}`); builder.mate('tab', c1, itie, { world: { ...world, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'front cheek tab'); builder.mate('tab', c2, itie, { world: { ...world, z: bw }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'back cheek tab') }
+      for (let index = 0; index < 3; index += 1) { const world = { x: -ax / 2 + bw / 2 + index * (ax - bw) / 2, y: -ay / 2 + bw / 2, z: bw / 2 }; const itie = builder.instance(tie, transform(world, { x: 90, y: 0, z: 0 }), `B05-tie-${index + 1}`); builder.mate('weld-edge', c1, itie, { world: { ...world, z: t / 2 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'front cheek inner face to tie edge'); builder.mate('weld-edge', c2, itie, { world: { ...world, z: bw - t / 2 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'back cheek inner face to tie edge') }
       addFastenerSet(builder, 'mount', 4, md, 'table mounting'); return true
     }
     case 'B06': {
@@ -364,43 +418,116 @@ const addWeldedItems = (builder: AssemblyBuilder, config: ToolingConfig): boolea
     }
     case 'B08': {
       const length = nv(config, 'length'); const width = nv(config, 'width'); const ah = nv(config, 'axisHeight'); const spacing = nv(config, 'cheekSpacing'); const ip = nv(config, 'insertPitch'); const id = nv(config, 'insertDiameter'); const angle = nv(config, 'veeAngle'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
-      const base = rectangularPart(builder, 'B08-base', 'table mounting base', length, width, t, { holes: boltPair(md, mp) })
-      const cheekHeight = ah + width / (2 * Math.tan(angle * Math.PI / 360)); const cheek = rectangularPart(builder, 'B08-cheek', 'insert holder cheek', width, cheekHeight, t, { count: 2, holes: boltPair(id, ip) })
-      const bridge = rectangularPart(builder, 'B08-bridge', 'cheek spacing bridge', spacing, 50, t, { count: 2 })
-      const ib = builder.instance(base); const c1 = builder.instance(cheek, transform({ x: -spacing / 2, y: 0, z: cheekHeight / 2 }, { x: 90, y: 0, z: 90 }), 'B08-cheek-left'); const c2 = builder.instance(cheek, transform({ x: spacing / 2, y: 0, z: cheekHeight / 2 }, { x: 90, y: 0, z: 90 }), 'B08-cheek-right')
-      builder.mate('slot', ib, c1, { world: { x: -spacing / 2, y: 0, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'left cheek base tab'); builder.mate('slot', ib, c2, { world: { x: spacing / 2, y: 0, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'right cheek base tab')
-      for (const y of [-width / 4, width / 4]) { const br = builder.instance(bridge, transform({ x: 0, y, z: cheekHeight / 3 }, { x: 90, y: 0, z: 0 }), `B08-bridge-${y < 0 ? 'front' : 'rear'}`); builder.mate('tab', c1, br, { world: { x: -spacing / 2, y, z: cheekHeight / 3 }, axis: { x: 1, y: 0, z: 0 }, size: weldSize }, 'bridge to left cheek'); builder.mate('tab', c2, br, { world: { x: spacing / 2, y, z: cheekHeight / 3 }, axis: { x: 1, y: 0, z: 0 }, size: weldSize }, 'bridge to right cheek') }
-      builder.buy('A10-insert-set', 'Replaceable A10 insert set', 2, { holderPitch: ip, holderDiameter: id, requiredInterface: 'A10' }); addFastenerSet(builder, 'insert', 4, id, 'A10 insert mounting'); addFastenerSet(builder, 'table', 2, md, 'table mounting')
+      const tube = nv(config, 'profileSize'); const insertThickness = nv(config, 'insertThickness')
+      const insertLength = Math.min(width - 2 * MIN_WEB, 140); const insertHeight = 100
+      const notchDepth = tube / (2 * Math.tan(angle * Math.PI / 360))
+      const boltZ = ah - insertHeight / 2 + notchDepth - tube / (2 * Math.sin(angle * Math.PI / 360))
+      const cheekHeight = boltZ + insertHeight / 2 - notchDepth - MIN_WEB - t / 2
+      if (cheekHeight < 40 || spacing + t + 2 * insertThickness + 2 * clearance > length) throw new Error('B08: holder height or cheek spacing cannot contain the selected inserts')
+      const slots = [-1, 1].map(sign => slotBox(sign * spacing / 2, 0, t + clearance, 30 + clearance))
+      const base = builder.part({ name: 'B08-base', role: 'slotted table mounting base', width: length, height: width, thickness: t, holes: boltPair(md, mp), slots, contours: [rectangle(length, width), ...slots.map(s => rectangle(s.width, s.height, pt(s.x, s.y)))] })
+      const cheekZ = (cheekHeight + t) / 2
+      const cheek = builder.part({ name: 'B08-cheek', role: 'tabbed insert holder below tube contact', width, height: cheekHeight + t, thickness: t, count: 2, holes: boltPair(id, ip).map(h => ({ ...h, y: boltZ - cheekZ })), contours: [topTabbedRectangle(width, cheekHeight, t, [0], 30, true)] })
+      const bridge = rectangularPart(builder, 'B08-bridge', 'cheek spacing bridge', spacing - t, 30, t, { count: 2 })
+      const insertConfig = createToolingConfig('A10', { length: insertLength, width: insertHeight, thickness: insertThickness, holderPitch: ip, holderDiameter: id, profileSize: tube, veeAngle: angle })
+      const insertGeometry = buildToolingAssembly(insertConfig).parts[0]
+      const insert = builder.part({ ...insertGeometry, name: 'A10-compatible-insert', count: 2 })
+      const ib = builder.instance(base)
+      const cheeks = [-1, 1].map(sign => {
+        const ic = builder.instance(cheek, transform({ x: sign * spacing / 2, y: 0, z: cheekZ }, { x: 90, y: 0, z: 90 }), `B08-cheek-${sign}`)
+        const ii = builder.instance(insert, transform({ x: sign * (spacing / 2 + (t + insertThickness) / 2), y: 0, z: boltZ }, { x: 90, y: 0, z: 90 }), `B08-insert-${sign}`)
+        builder.mate('tab', ib, ic, { world: { x: sign * spacing / 2, y: 0, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: { width: 30, depth: t } }, 'cheek tab through base slot')
+        for (const x of [-ip / 2, ip / 2]) builder.axialMate('bolt', ic, ii, pt(x, boltZ - cheekZ), pt(x, 0), id, 'replaceable A10 insert mounting bolt')
+        return ic
+      })
+      for (const sign of [-1, 1]) {
+        const y = sign * (width - t) / 2; const z = t / 2 + 15
+        const br = builder.instance(bridge, transform({ x: 0, y, z }, { x: 90, y: 0, z: 0 }), `B08-bridge-${sign}`)
+        for (const [index, ic] of cheeks.entries()) builder.mate('weld-edge', ic, br, { world: { x: (index ? 1 : -1) * (spacing - t) / 2, y, z }, axis: { x: 0, y: 0, z: 1 }, size: { width: 30, depth: t } }, 'bridge edge to cheek inner face')
+      }
+      addFastenerSet(builder, 'insert', 4, id, 'A10 insert mounting'); addFastenerSet(builder, 'table', 2, md, 'table mounting')
       return true
     }
     case 'B09': {
-      const pl = nv(config, 'platformLength'); const pw = nv(config, 'platformWidth'); const ph = nv(config, 'pivotHeight'); const radius = nv(config, 'slotRadius'); const amin = nv(config, 'angleMin'); const amax = nv(config, 'angleMax')
-      const base = rectangularPart(builder, 'B09-base', 'tilt fixture base', pl, pw, t)
-      const platform = rectangularPart(builder, 'B09-platform', 'tilting work platform', pl, pw, t, { holes: gridHoles(pl, pw, 16, 50, 25) })
-      const cheek = builder.part({ name: 'B09-cheek', role: 'pivot and radial-lock side cheek', width: pl, height: ph * 2, thickness: t, count: 2, holes: [circleHole('pivot', 0, 0, 16)], contours: [rectangle(pl, ph * 2), radialSlot(pt(0, 0), radius, 18, amin, amax)] })
-      const ib = builder.instance(base); const ipf = builder.instance(platform, identityTransform(0, 0, ph)); const cl = builder.instance(cheek, transform({ x: 0, y: -pw / 2, z: ph }, { x: 90, y: 0, z: 0 }), 'B09-cheek-left'); const cr = builder.instance(cheek, transform({ x: 0, y: pw / 2, z: ph }, { x: 90, y: 0, z: 0 }), 'B09-cheek-right')
-      builder.mate('pivot', ipf, cl, { world: { x: 0, y: -pw / 2, z: ph }, axis: { x: 0, y: 1, z: 0 }, size: { width: 16, depth: t, diameter: 16 } }, 'left platform pivot'); builder.mate('pivot', ipf, cr, { world: { x: 0, y: pw / 2, z: ph }, axis: { x: 0, y: 1, z: 0 }, size: { width: 16, depth: t, diameter: 16 } }, 'right platform pivot'); builder.mate('weld-edge', ib, cl, { world: { x: 0, y: -pw / 2, z: 0 }, axis: { x: 1, y: 0, z: 0 }, size: { width: pl, depth: t } }, 'left cheek to base'); builder.mate('weld-edge', ib, cr, { world: { x: 0, y: pw / 2, z: 0 }, axis: { x: 1, y: 0, z: 0 }, size: { width: pl, depth: t } }, 'right cheek to base')
-      addFastenerSet(builder, 'pivot', 2, 16, 'platform pivot'); addFastenerSet(builder, 'lock', 2, 16, 'radial lock'); builder.warn('Locking moment and full swept-volume clearance require physical verification.'); return true
+      const pl = nv(config, 'platformLength'); const pw = nv(config, 'platformWidth'); const ph = nv(config, 'pivotHeight'); const radius = nv(config, 'slotRadius'); const amin = nv(config, 'angleMin'); const amax = nv(config, 'angleMax'); const angle = nv(config, 'angle')
+      if (amin >= amax || angle < amin || angle > amax) throw new Error('B09: platform angle must be inside the locking slot range')
+      const maxTilt = Math.max(Math.abs(amin), Math.abs(amax)) * Math.PI / 180
+      const lugHeight = 44
+      if (ph <= pl / 2 * Math.sin(maxTilt) + lugHeight / 2 + MIN_WEB) throw new Error('B09: increase pivot height to clear the base through the full tilt range')
+      const platformWidth = pw - 4 * t - 2 * clearance
+      const pivotZ = ph + t / 2
+      const radians = angle * Math.PI / 180
+      const offset = (lugHeight + t) / 2
+      const base = rectangularPart(builder, 'B09-base', 'tilt fixture base', pl, pw, t, { holes: fourHoles(16, pl - 50, pw - 50) })
+      const platform = rectangularPart(builder, 'B09-platform', 'tilting work platform', pl, platformWidth, t, { holes: gridHoles(pl, platformWidth, 16, 50, 25) })
+      const cheek = builder.part({ name: 'B09-cheek', role: 'stationary pivot and radial lock cheek', width: pl, height: 2 * ph, thickness: t, count: 2, holes: [circleHole('pivot', 0, 0, 16)], contours: [rectangle(pl, 2 * ph), radialSlot(pt(0, 0), radius, 18, amin, amax)] })
+      const lug = rectangularPart(builder, 'B09-platform-lug', 'moving pivot and locking lug', pl, lugHeight, t, { count: 2, holes: [circleHole('pivot', 0, 0, 16), circleHole('lock', radius, 0, 18)] })
+      const ib = builder.instance(base)
+      const ip = builder.instance(platform, transform({ x: -offset * Math.sin(radians), y: 0, z: pivotZ + offset * Math.cos(radians) }, { x: 0, y: -angle, z: 0 }))
+      for (const sign of [-1, 1]) {
+        const y = sign * (pw - t) / 2
+        const movingY = sign * (platformWidth - t) / 2
+        const ic = builder.instance(cheek, transform({ x: 0, y, z: pivotZ }, { x: 90, y: 0, z: 0 }), `B09-cheek-${sign}`)
+        const il = builder.instance(lug, transform({ x: 0, y: movingY, z: pivotZ }, { x: 90, y: -angle, z: 0 }), `B09-lug-${sign}`)
+        builder.mate('weld-edge', ib, ic, { world: { x: 0, y, z: t / 2 }, axis: { x: 1, y: 0, z: 0 }, size: { width: pl, depth: t } }, 'stationary cheek to base')
+        builder.mate('weld-edge', ip, il, { world: { x: -lugHeight / 2 * Math.sin(radians), y: movingY, z: pivotZ + lugHeight / 2 * Math.cos(radians) }, axis: { x: Math.cos(radians), y: 0, z: Math.sin(radians) }, size: { width: pl, depth: t } }, 'platform underside to moving lug')
+        builder.axialMate('pivot', ic, il, pt(0, 0), pt(0, 0), 16, 'coaxial platform pivot with spacer')
+        builder.axialMate('bolt', ic, il, pt(radius * Math.cos(radians), radius * Math.sin(radians)), pt(radius, 0), 16, 'lock bolt through radial slot')
+      }
+      addFastenerSet(builder, 'pivot', 2, 16, 'platform pivot'); addFastenerSet(builder, 'lock', 2, 16, 'radial lock')
+      builder.buy('pivot-spacer', 'Pivot and locking spacers', 4, { boreDiameter: 16, length: t + clearance })
+      builder.warn('Nominal motion clears the base; select bolts, locking preload and welds for the actual moment.')
+      return true
     }
     case 'B10': {
       const span = nv(config, 'span'); const ch = nv(config, 'clearHeight'); const bd = nv(config, 'beamDepth'); const clamps = count(config, 'clampCount'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
-      const foot = rectangularPart(builder, 'B10-foot', 'gantry mounting foot', bd * 1.5, bd, t, { count: 2, holes: boltPair(md, mp) })
-      const upright = rectangularPart(builder, 'B10-upright', 'gantry upright', ch, bd, t, { count: 2 }); const beam = rectangularPart(builder, 'B10-beam', 'clamp carrying crossbeam', span, bd, t, { count: 2, holes: Array.from({ length: clamps }, (_, i) => circleHole(`clamp-${i + 1}`, (i - (clamps - 1) / 2) * span / Math.max(clamps, 2), 0, 12)) })
-      const fl = builder.instance(foot, identityTransform(-span / 2, 0, 0), 'B10-foot-left'); const fr = builder.instance(foot, identityTransform(span / 2, 0, 0), 'B10-foot-right'); const ul = builder.instance(upright, transform({ x: -span / 2, y: 0, z: ch / 2 }, { x: 0, y: -90, z: 0 }), 'B10-upright-left'); const ur = builder.instance(upright, transform({ x: span / 2, y: 0, z: ch / 2 }, { x: 0, y: -90, z: 0 }), 'B10-upright-right')
-      const bf = builder.instance(beam, transform({ x: 0, y: -bd / 2, z: ch }, { x: 90, y: 0, z: 0 }), 'B10-beam-front'); const br = builder.instance(beam, transform({ x: 0, y: bd / 2, z: ch }, { x: 90, y: 0, z: 0 }), 'B10-beam-rear')
-      builder.mate('tab', fl, ul, { world: { x: -span / 2, y: 0, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'left upright foot'); builder.mate('tab', fr, ur, { world: { x: span / 2, y: 0, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'right upright foot'); builder.mate('tab', ul, bf, { world: { x: -span / 2, y: -bd / 2, z: ch }, axis: { x: 1, y: 0, z: 0 }, size: weldSize }, 'left upright to front beam'); builder.mate('tab', ul, br, { world: { x: -span / 2, y: bd / 2, z: ch }, axis: { x: 1, y: 0, z: 0 }, size: weldSize }, 'left upright to rear beam'); builder.mate('tab', ur, bf, { world: { x: span / 2, y: -bd / 2, z: ch }, axis: { x: 1, y: 0, z: 0 }, size: weldSize }, 'right upright to front beam'); builder.mate('tab', ur, br, { world: { x: span / 2, y: bd / 2, z: ch }, axis: { x: 1, y: 0, z: 0 }, size: weldSize }, 'right upright to rear beam')
-      builder.buy('toggle-clamp', 'Purchased clamping mechanism', clamps, { mountingDiameter: 12 }); addFastenerSet(builder, 'table', 4, md, 'gantry table mounting'); builder.warn('No clamp-force rating is assigned; check frame bending and table overturning for the selected mechanisms.'); return true
+      const footSlot = slotBox(0, 0, t + clearance, bd / 2 + clearance)
+      const foot = builder.part({ name: 'B10-foot', role: 'slotted gantry mounting foot', width: bd * 1.5, height: bd, thickness: t, count: 2, holes: boltPair(md, mp), slots: [footSlot], contours: [rectangle(bd * 1.5, bd), rectangle(footSlot.width, footSlot.height)] })
+      const uprightHeight = ch + bd
+      const upright = builder.part({ name: 'B10-upright', role: 'gantry upright with foot tab', width: bd, height: uprightHeight + t, thickness: t, count: 2, contours: [topTabbedRectangle(bd, uprightHeight, t, [0], bd / 2, true)] })
+      const beamLength = span - t
+      const beam = rectangularPart(builder, 'B10-beam', 'box crossbeam side wall', beamLength, bd, t, { count: 2 })
+      const cap = rectangularPart(builder, 'B10-beam-cap', 'box crossbeam clamp mounting face', beamLength, bd - 2 * t, t, { count: 2, holes: Array.from({ length: clamps }, (_, i) => circleHole(`clamp-${i + 1}`, (i - (clamps - 1) / 2) * beamLength / Math.max(clamps, 2), 0, 12)) })
+      const uprights = [-1, 1].map(sign => {
+        const footInstance = builder.instance(foot, identityTransform(sign * span / 2, 0, 0), `B10-foot-${sign}`)
+        const instance = builder.instance(upright, transform({ x: sign * span / 2, y: 0, z: (uprightHeight + t) / 2 }, { x: 90, y: 0, z: 90 }), `B10-upright-${sign}`)
+        builder.mate('tab', footInstance, instance, { world: { x: sign * span / 2, y: 0, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: { width: bd / 2, depth: t } }, 'upright tab through mounting foot')
+        return instance
+      })
+      const beamZ = t / 2 + ch + bd / 2
+      for (const sign of [-1, 1]) {
+        const y = sign * (bd - t) / 2
+        const wall = builder.instance(beam, transform({ x: 0, y, z: beamZ }, { x: 90, y: 0, z: 0 }), `B10-beam-${sign}`)
+        for (const [index, uprightInstance] of uprights.entries()) builder.mate('weld-edge', uprightInstance, wall, { world: { x: (index ? 1 : -1) * beamLength / 2, y, z: beamZ }, axis: { x: 0, y: 0, z: 1 }, size: { width: bd, depth: t } }, 'box wall end to upright inner face')
+      }
+      for (const sign of [-1, 1]) {
+        const z = beamZ + sign * (bd - t) / 2
+        const face = builder.instance(cap, identityTransform(0, 0, z), `B10-cap-${sign}`)
+        for (const [index, uprightInstance] of uprights.entries()) builder.mate('weld-edge', uprightInstance, face, { world: { x: (index ? 1 : -1) * beamLength / 2, y: 0, z }, axis: { x: 0, y: 1, z: 0 }, size: { width: bd - 2 * t, depth: t } }, 'box face end to upright inner face')
+      }
+      builder.buy('screw-clamp', 'Purchased through-bolt screw clamp with retained nut', clamps, { mountingDiameter: 12, mountingGrip: bd })
+      addFastenerSet(builder, 'table', 4, md, 'gantry table mounting')
+      builder.warn('No clamp-force rating is assigned; check frame bending and table overturning for the selected mechanisms.')
+      return true
     }
     case 'B11': {
       const projection = nv(config, 'projection'); const pw = nv(config, 'platformWidth'); const h = nv(config, 'height'); const dp = nv(config, 'devicePitch'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
-      const deviceSlotLength = Math.min(projection * 0.5, pw - dp - 2 * MIN_WEB)
-      const slots = [-1, 1].map(sign => capsule(deviceSlotLength, 14, pt(0, sign * dp / 2), 90))
-      const platform = builder.part({ name: 'B11-platform', role: 'slotted vise/tool platform', width: projection, height: pw, thickness: t, slots: slots.map((_, i) => slotBox(0, i ? dp / 2 : -dp / 2, 14, deviceSlotLength)), contours: [rectangle(projection, pw), ...slots] })
-      const end = rectangularPart(builder, 'B11-mount-end', 'table mounting end', pw, h, t, { holes: boltPair(md, mp) }); const gusset = builder.part({ name: 'B11-gusset', role: 'cantilever side gusset', width: projection, height: h, thickness: t, count: 2, contours: [polygon([pt(-projection / 2, -h / 2), pt(projection / 2, -h / 2), pt(-projection / 2, h / 2)])] })
-      const ip = builder.instance(platform, identityTransform(projection / 2, 0, h)); const ie = builder.instance(end, transform({ x: 0, y: 0, z: h / 2 }, { x: 90, y: 0, z: 90 }))
-      builder.mate('weld-edge', ip, ie, { world: { x: 0, y: 0, z: h }, axis: { x: 0, y: 1, z: 0 }, size: { width: pw, depth: t } }, 'platform to mounting end')
-      for (const sy of [-1, 1]) { const ig = builder.instance(gusset, transform({ x: projection / 2, y: sy * pw / 2, z: h / 2 }, { x: 90, y: 0, z: 0 }), `B11-gusset-${sy}`); builder.mate('weld-edge', ip, ig, { world: { x: 0, y: sy * pw / 2, z: h }, axis: { x: 1, y: 0, z: 0 }, size: { width: projection, depth: t } }, 'platform side gusset') }
-      addFastenerSet(builder, 'table', 2, md, 'console mounting'); builder.buy('bench-tool', 'Vise or bench tool selected by user', 1, { slotSpacing: dp }); builder.warn('Tool mass, operating moment and handle envelope are not rated by this geometry.'); return true
+      const slotLength = projection * .5
+      const slots = [-1, 1].map(sign => slotBox(0, sign * dp / 2, slotLength, 14))
+      const platform = builder.part({ name: 'B11-platform', role: 'slotted vise/tool platform', width: projection, height: pw, thickness: t, slots, contours: [rectangle(projection, pw), ...slots.map(s => capsule(s.width, s.height, pt(s.x, s.y)))] })
+      const wallHeight = h - t; const gussetLength = projection - t / 2
+      const end = rectangularPart(builder, 'B11-mount-end', 'table mounting end', pw, wallHeight, t, { holes: boltPair(md, mp) })
+      const gusset = builder.part({ name: 'B11-gusset', role: 'full-length platform support gusset', width: gussetLength, height: wallHeight, thickness: t, count: 2, contours: [polygon([pt(-gussetLength / 2, -wallHeight / 2), pt(gussetLength / 2, wallHeight / 2), pt(-gussetLength / 2, wallHeight / 2)])] })
+      const ip = builder.instance(platform, identityTransform(projection / 2, 0, h - t / 2))
+      const ie = builder.instance(end, transform({ x: 0, y: 0, z: wallHeight / 2 }, { x: 90, y: 0, z: 90 }))
+      builder.mate('weld-edge', ip, ie, { world: { x: 0, y: 0, z: wallHeight }, axis: { x: 0, y: 1, z: 0 }, size: { width: pw, depth: t } }, 'platform underside to mounting end')
+      for (const sign of [-1, 1]) {
+        const y = sign * (pw - t) / 2; const x = t / 2 + gussetLength / 2
+        const ig = builder.instance(gusset, transform({ x, y, z: wallHeight / 2 }, { x: 90, y: 0, z: 0 }), `B11-gusset-${sign}`)
+        builder.mate('weld-edge', ip, ig, { world: { x, y, z: wallHeight }, axis: { x: 1, y: 0, z: 0 }, size: { width: gussetLength, depth: t } }, 'full gusset upper edge to platform underside')
+        builder.mate('weld-edge', ie, ig, { world: { x: t / 2, y, z: wallHeight / 2 }, axis: { x: 0, y: 0, z: 1 }, size: { width: wallHeight, depth: t } }, 'gusset rear edge to mounting end')
+      }
+      addFastenerSet(builder, 'table', 2, md, 'console mounting'); builder.buy('bench-tool', 'Vise or bench tool selected by user', 1, { slotSpacing: dp, slotWidth: 14 }); builder.warn('Tool mass, operating moment and handle envelope are not rated by this geometry.'); return true
     }
     case 'B12': {
       const length = nv(config, 'length'); const depth = nv(config, 'depth'); const h = nv(config, 'height'); const stations = count(config, 'stationCount'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
@@ -417,10 +544,11 @@ const addWeldedItems = (builder: AssemblyBuilder, config: ToolingConfig): boolea
       const opening = nv(config, 'opening'); const reach = nv(config, 'reach'); const bw = nv(config, 'bodyWidth'); const screw = nv(config, 'screwDiameter')
       const outerW = reach + bw; const outerH = opening + 2 * bw
       const cheekOutline = polygon([pt(-outerW / 2, -outerH / 2), pt(outerW / 2, -outerH / 2), pt(outerW / 2, -outerH / 2 + bw), pt(-outerW / 2 + bw, -outerH / 2 + bw), pt(-outerW / 2 + bw, outerH / 2 - bw), pt(outerW / 2, outerH / 2 - bw), pt(outerW / 2, outerH / 2), pt(-outerW / 2, outerH / 2)])
-      const cheek = builder.part({ name: 'B13-cheek', role: 'C-profile force cheek', width: outerW, height: outerH, thickness: t, count: 2, contours: [cheekOutline] }); const bridge = rectangularPart(builder, 'B13-bridge', 'cheek tie bridge', bw, bw, t, { count: 3 }); const nutPlate = rectangularPart(builder, 'B13-nut-plate', 'purchased nut mounting plate', bw * 2, bw, t, { holes: [circleHole('screw', 0, 0, screw)] })
+      const cheek = builder.part({ name: 'B13-cheek', role: 'C-profile force cheek', width: outerW, height: outerH, thickness: t, count: 2, contours: [cheekOutline] }); const bridge = rectangularPart(builder, 'B13-bridge', 'cheek tie bridge', bw, bw - t, t, { count: 3 }); const nutPlate = rectangularPart(builder, 'B13-nut-plate', 'purchased nut mounting plate', bw, bw - t, t, { holes: [circleHole('screw', 0, 0, screw)] })
       const c1 = builder.instance(cheek, identityTransform(0, 0, 0), 'B13-cheek-front'); const c2 = builder.instance(cheek, identityTransform(0, 0, bw), 'B13-cheek-rear'); const np = builder.instance(nutPlate, transform({ x: outerW / 2 - bw / 2, y: outerH / 2 - bw / 2, z: bw / 2 }, { x: 90, y: 0, z: 0 }))
-      for (let i = 0; i < 3; i += 1) { const world = { x: -outerW / 2 + bw / 2 + i * (outerW - bw) / 2, y: -outerH / 2 + bw / 2, z: bw / 2 }; const br = builder.instance(bridge, transform(world, { x: 90, y: 0, z: 0 }), `B13-bridge-${i + 1}`); builder.mate('tab', c1, br, { world: { ...world, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'front cheek tie'); builder.mate('tab', c2, br, { world: { ...world, z: bw }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'rear cheek tie') }
-      builder.mate('purchased-mount', c1, np, { world: { x: outerW / 2 - bw / 2, y: outerH / 2 - bw / 2, z: 0 }, axis: { x: 0, y: 0, z: 1 }, size: { width: bw, depth: t, diameter: screw } }, 'nut plate location')
+      for (let i = 0; i < 3; i += 1) { const world = { x: -outerW / 2 + bw / 2 + i * (outerW - bw) / 2, y: -outerH / 2 + bw / 2, z: bw / 2 }; const br = builder.instance(bridge, transform(world, { x: 90, y: 0, z: 0 }), `B13-bridge-${i + 1}`); builder.mate('weld-edge', c1, br, { world: { ...world, z: t / 2 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'front cheek tie'); builder.mate('weld-edge', c2, br, { world: { ...world, z: bw - t / 2 }, axis: { x: 0, y: 0, z: 1 }, size: weldSize }, 'rear cheek tie') }
+      builder.mate('weld-edge', c1, np, { world: { x: outerW / 2 - bw / 2, y: outerH / 2 - bw / 2, z: t / 2 }, axis: { x: 0, y: 0, z: 1 }, size: { width: bw, depth: t, diameter: screw } }, 'nut plate edge welded to force cheek')
+      builder.mate('weld-edge', c2, np, { world: { x: outerW / 2 - bw / 2, y: outerH / 2 - bw / 2, z: bw - t / 2 }, axis: { x: 1, y: 0, z: 0 }, size: { width: bw, depth: t } }, 'opposite nut plate edge to force cheek')
       builder.buy('screw-assembly', 'Purchased screw with swivel foot and matching nut', 1, { nominalDiameter: screw, requiredTravel: opening }); builder.warn('This clamp body has no assigned force rating; calculate cheeks, ties, welds and thread interface and proof-test the assembly.'); return true
     }
     case 'B14': {
@@ -438,7 +566,7 @@ const addWeldedItems = (builder: AssemblyBuilder, config: ToolingConfig): boolea
 }
 
 const addHybridItems = (builder: AssemblyBuilder, config: ToolingConfig): boolean => {
-  const t = nv(config, 'thickness'); const clearance = nv(config, 'clearance')
+  const t = nv(config, 'thickness'); const clearance = typeof config.values.clearance === 'number' ? config.values.clearance : 0
   switch (config.id) {
     case 'C01': {
       const pin = nv(config, 'pinDiameter'); const grip = nv(config, 'gripLength')
@@ -457,24 +585,60 @@ const addHybridItems = (builder: AssemblyBuilder, config: ToolingConfig): boolea
     }
     case 'C03': {
       const stroke = nv(config, 'stroke'); const gs = nv(config, 'guideSpacing'); const gd = nv(config, 'guideDiameter'); const sd = nv(config, 'screwDiameter'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
-      const length = stroke + 140; const width = gs + 80
+      const bush = nv(config, 'bushDiameter'); const nut = nv(config, 'nutDiameter'); const position = nv(config, 'position')
+      if (position > stroke || bush <= gd || nut <= sd) throw new Error('C03: position must fit stroke and bush/nut outside diameters must exceed their bores')
+      const length = stroke + 140; const width = gs + 80; const axisZ = 50 + t / 2; const carriageX = position - stroke / 2
       const base = rectangularPart(builder, 'C03-base', 'guided stop mounting base', length, width, t, { holes: boltPair(md, mp) })
-      const end = rectangularPart(builder, 'C03-end', 'guide and screw bearing end', width, 100, t, { count: 2, holes: [circleHole('screw', 0, 0, sd + clearance), ...boltPair(gd + clearance, gs)] })
-      const ib = builder.instance(base); const front = builder.instance(end, transform({ x: -length / 2, y: 0, z: 50 }, { x: 90, y: 0, z: 90 }), 'C03-end-front'); const rear = builder.instance(end, transform({ x: length / 2, y: 0, z: 50 }, { x: 90, y: 0, z: 90 }), 'C03-end-rear')
-      builder.mate('weld-edge', ib, front, { world: { x: -length / 2, y: 0, z: 0 }, axis: { x: 0, y: 1, z: 0 }, size: { width, depth: t } }, 'front end to base'); builder.mate('weld-edge', ib, rear, { world: { x: length / 2, y: 0, z: 0 }, axis: { x: 0, y: 1, z: 0 }, size: { width, depth: t } }, 'rear end to base')
-      builder.buy('guide-shaft', 'Precision guide shaft', 2, { diameter: gd, workingLength: stroke + 100 }); builder.buy('guide-bush', 'Matched guide bush', 4, { boreDiameter: gd }); builder.buy('screw-assembly', 'Screw, nut and thrust support', 1, { nominalDiameter: sd, workingStroke: stroke }); addFastenerSet(builder, 'table', 2, md, 'table mounting'); builder.warn('Backlash, guide alignment and repeatability depend on the selected purchased interfaces and assembly machining.'); return true
+      const end = rectangularPart(builder, 'C03-end', 'guide and thrust bearing end', width, 100, t, { count: 2, holes: [circleHole('screw', 0, 0, sd + clearance), ...boltPair(gd + clearance, gs)] })
+      const carriage = rectangularPart(builder, 'C03-carriage', 'moving stop with bush and nut seats', width, 80, t, { count: 2, holes: [circleHole('nut', 0, 0, nut + clearance), ...boltPair(bush + clearance, gs)] })
+      const tie = rectangularPart(builder, 'C03-carriage-tie', 'moving carriage side tie', 40 - t, 80, t, { count: 2 })
+      const ib = builder.instance(base)
+      const ends = [-1, 1].map(sign => {
+        const x = sign * (length - t) / 2
+        const instance = builder.instance(end, transform({ x, y: 0, z: axisZ }, { x: 90, y: 0, z: 90 }), `C03-end-${sign}`)
+        builder.mate('weld-edge', ib, instance, { world: { x, y: 0, z: t / 2 }, axis: { x: 0, y: 1, z: 0 }, size: { width, depth: t } }, 'bearing end to base')
+        return instance
+      })
+      const cheeks = [-1, 1].map(sign => builder.instance(carriage, transform({ x: carriageX + sign * 20, y: 0, z: axisZ }, { x: 90, y: 0, z: 90 }), `C03-carriage-${sign}`))
+      for (const moving of cheeks) for (const x of [-gs / 2, gs / 2]) builder.axialMate('linear-guide', ends[0], moving, pt(x, 0), pt(x, 0), gd, 'guide shaft through carriage bush')
+      for (const x of [-gs / 2, gs / 2]) builder.axialMate('linear-guide', ends[0], ends[1], pt(x, 0), pt(x, 0), gd, 'shaft supported at both stationary ends')
+      for (const sign of [-1, 1]) {
+        const y = sign * (width - t) / 2
+        const itie = builder.instance(tie, transform({ x: carriageX, y, z: axisZ }, { x: 90, y: 0, z: 0 }), `C03-tie-${sign}`)
+        for (const [index, cheek] of cheeks.entries()) builder.mate('weld-edge', cheek, itie, { world: { x: carriageX + (index ? 1 : -1) * (20 - t / 2), y, z: axisZ }, axis: { x: 0, y: 0, z: 1 }, size: { width: 80, depth: t } }, 'carriage cheek to side tie')
+      }
+      builder.buy('guide-shaft', 'Precision guide shaft with end retainers', 2, { diameter: gd, workingLength: length })
+      builder.buy('guide-bush', 'Flanged retained guide bush', 4, { boreDiameter: gd, outsideDiameter: bush, seatDiameter: bush + clearance })
+      builder.buy('screw-assembly', 'Screw, retained flanged nut and thrust supports', 1, { nominalDiameter: sd, nutOutsideDiameter: nut, workingStroke: stroke, supportDistance: length - t })
+      for (const y of [-gs / 2, gs / 2]) builder.purchasedEnvelope('guide-shaft', { x: -length / 2, y, z: axisZ }, { x: length / 2, y, z: axisZ }, gd)
+      builder.purchasedEnvelope('screw-assembly', { x: -length / 2, y: 0, z: axisZ }, { x: length / 2, y: 0, z: axisZ }, sd)
+      for (const instance of ends) {
+        for (const hole of end.holes.filter(h => h.id !== 'screw')) builder.mountPurchased('guide-shaft', instance, hole.id)
+        builder.mountPurchased('screw-assembly', instance, 'screw')
+      }
+      for (const instance of cheeks) {
+        for (const hole of carriage.holes.filter(h => h.id !== 'nut')) builder.mountPurchased('guide-bush', instance, hole.id)
+        builder.mountPurchased('screw-assembly', instance, 'nut')
+      }
+      addFastenerSet(builder, 'table', 2, md, 'table mounting')
+      builder.warn('Bush and nut seats require the selected retention system and finish machining; nominal sheet holes are not precision bearing fits.')
+      return true
     }
     case 'C04': {
       const length = nv(config, 'baseLength'); const width = nv(config, 'baseWidth'); const spacing = nv(config, 'axisSpacing'); const ah = nv(config, 'axisHeight'); const axle = nv(config, 'axleDiameter'); const roller = nv(config, 'rollerDiameter'); const md = nv(config, 'mountDiameter'); const mp = nv(config, 'mountPitch')
       const base = rectangularPart(builder, 'C04-base', 'roller-stand base', length, width, t, { holes: boltPair(md, mp) })
-      const cheek = rectangularPart(builder, 'C04-cheek', 'roller axle cheek', length, ah + roller / 2, t, { count: 2, holes: boltPair(axle + clearance, spacing) })
-      const ib = builder.instance(base); const cl = builder.instance(cheek, transform({ x: 0, y: -width / 2, z: (ah + roller / 2) / 2 }, { x: 90, y: 0, z: 0 }), 'C04-cheek-left'); const cr = builder.instance(cheek, transform({ x: 0, y: width / 2, z: (ah + roller / 2) / 2 }, { x: 90, y: 0, z: 0 }), 'C04-cheek-right')
-      builder.mate('weld-edge', ib, cl, { world: { x: 0, y: -width / 2, z: 0 }, axis: { x: 1, y: 0, z: 0 }, size: { width: length, depth: t } }, 'left cheek to base'); builder.mate('weld-edge', ib, cr, { world: { x: 0, y: width / 2, z: 0 }, axis: { x: 1, y: 0, z: 0 }, size: { width: length, depth: t } }, 'right cheek to base')
-      builder.buy('roller', 'User-selected roller', 2, { outerDiameter: roller, axleDiameter: axle, faceWidth: width }); builder.buy('bearing', 'Matched roller bearing', 4, { boreDiameter: axle }); builder.buy('axle', 'Roller axle', 2, { diameter: axle, length: width + 2 * t }); addFastenerSet(builder, 'table', 2, md, 'table mounting'); builder.warn('Provide a welding-current return path that bypasses the roller bearings.'); return true
+      if (spacing < roller + clearance || ah < roller / 2 + t + MIN_WEB) throw new Error('C04: rollers overlap or intersect the base')
+      const cheekHeight = ah + roller / 2 - t / 2
+      const cheekZ = (cheekHeight + t) / 2
+      const cheek = rectangularPart(builder, 'C04-cheek', 'roller axle cheek', length, cheekHeight, t, { count: 2, holes: boltPair(axle + clearance, spacing).map(h => ({ ...h, y: ah - cheekZ })) })
+      const ib = builder.instance(base); const cl = builder.instance(cheek, transform({ x: 0, y: -width / 2, z: cheekZ }, { x: 90, y: 0, z: 0 }), 'C04-cheek-left'); const cr = builder.instance(cheek, transform({ x: 0, y: width / 2, z: cheekZ }, { x: 90, y: 0, z: 0 }), 'C04-cheek-right')
+      builder.mate('weld-edge', ib, cl, { world: { x: 0, y: -width / 2, z: t / 2 }, axis: { x: 1, y: 0, z: 0 }, size: { width: length, depth: t } }, 'left cheek to base'); builder.mate('weld-edge', ib, cr, { world: { x: 0, y: width / 2, z: t / 2 }, axis: { x: 1, y: 0, z: 0 }, size: { width: length, depth: t } }, 'right cheek to base')
+      builder.buy('roller', 'User-selected roller', 2, { outerDiameter: roller, axleDiameter: axle, faceWidth: width - 2 * t - 2 * clearance }); builder.buy('bearing', 'Matched roller bearing', 4, { boreDiameter: axle }); builder.buy('axle', 'Roller axle', 2, { diameter: axle, length: width + 2 * t }); addFastenerSet(builder, 'table', 2, md, 'table mounting'); builder.warn('Provide a welding-current return path that bypasses the roller bearings.'); return true
     }
     case 'C05': {
       const length = nv(config, 'length'); const width = nv(config, 'width'); const angle = nv(config, 'veeAngle'); const magnetD = nv(config, 'magnetDiameter'); const magnets = count(config, 'magnetCount')
-      const sideHeight = width / (2 * Math.sin(angle * Math.PI / 360)); const side = rectangularPart(builder, 'C05-v-side', 'magnetic V contact side', length, sideHeight, t, { count: 2, holes: Array.from({ length: Math.ceil(magnets / 2) }, (_, i) => circleHole(`magnet-${i + 1}`, (i - (Math.ceil(magnets / 2) - 1) / 2) * length / Math.max(Math.ceil(magnets / 2), 1), 0, magnetD + clearance)) })
+      const sideHeight = width / (2 * Math.cos(angle * Math.PI / 360)); const side = rectangularPart(builder, 'C05-v-side', 'magnetic V contact side', length, sideHeight, t, { count: 2, holes: Array.from({ length: Math.ceil(magnets / 2) }, (_, i) => circleHole(`magnet-${i + 1}`, (i - (Math.ceil(magnets / 2) - 1) / 2) * length / Math.max(Math.ceil(magnets / 2), 1), 0, magnetD + clearance)) })
+      if (magnets % 2) throw new Error('C05: paired V sides require an even magnet count')
       const back = rectangularPart(builder, 'C05-back', 'magnet retention back', length, width, t)
       const halfAngle = angle * Math.PI / 360
       const apexZ = sideHeight / 2 + sideHeight / 2 * Math.sin(halfAngle)
@@ -485,27 +649,93 @@ const addHybridItems = (builder: AssemblyBuilder, config: ToolingConfig): boolea
     }
     case 'C06': {
       const bl = nv(config, 'baseLength'); const bw = nv(config, 'baseWidth'); const ah = nv(config, 'axisHeight'); const fp = nv(config, 'faceplateDiameter'); const shaft = nv(config, 'shaftDiameter'); const bearing = nv(config, 'bearingOuterDiameter'); const motorPattern = nv(config, 'motorPattern')
+      if (bearing <= shaft || ah <= fp / 2 + t / 2 + MIN_WEB) throw new Error('C06: bearing must fit shaft and rotating faceplate must clear the base')
+      const headHeight = ah + bearing / 2 + MIN_WEB - t / 2
+      const headZ = t / 2 + headHeight / 2
+      const bearingY = ah - headZ
       const base = rectangularPart(builder, 'C06-base', 'positioner chassis base', bl, bw, t, { holes: fourHoles(14, bl - 60, bw - 60, 'bench') })
-      const head = rectangularPart(builder, 'C06-headstock', 'bearing headstock wall', bw, ah * 1.4, t, { count: 2, holes: [circleHole('bearing-seat', 0, ah * .2, bearing)] })
-      const faceOutline = [{ type: 'arc' as const, center: pt(0, 0), radius: fp / 2, start: 0, end: 180 }, { type: 'arc' as const, center: pt(0, 0), radius: fp / 2, start: 180, end: 360 }]
+      const head = rectangularPart(builder, 'C06-headstock', 'bearing headstock wall', bw, headHeight, t, { count: 2, holes: [circleHole('bearing-seat', 0, bearingY, bearing)] })
       const faceThickness = Math.max(t, 10)
-      const face = builder.part({ name: 'C06-faceplate', role: 'rotating welding faceplate blank', width: fp, height: fp, thickness: faceThickness, holes: [circleHole('shaft', 0, 0, shaft + clearance), ...fourHoles(12, fp * .55, fp * .55, 'work')], contours: [faceOutline] })
-      const motorPlate = rectangularPart(builder, 'C06-motor-plate', 'drive motor adapter', bw * .7, bw * .7, t, { holes: fourHoles(10, motorPattern, motorPattern, 'motor') })
-      const bearingContactX = -bl / 4 - t / 2
-      const ib = builder.instance(base); const h1 = builder.instance(head, transform({ x: -bl / 4, y: 0, z: ah * .7 }, { x: 90, y: 0, z: 90 }), 'C06-headstock-front'); const h2 = builder.instance(head, transform({ x: bl / 4, y: 0, z: ah * .7 }, { x: 90, y: 0, z: 90 }), 'C06-headstock-rear'); const iff = builder.instance(face, transform({ x: bearingContactX - faceThickness / 2, y: 0, z: ah }, { x: 0, y: 90, z: 0 })); const im = builder.instance(motorPlate, transform({ x: bl / 2 - t, y: 0, z: bw * .35 }, { x: 90, y: 0, z: 90 }))
-      builder.mate('weld-edge', ib, h1, { world: { x: -bl / 4, y: 0, z: 0 }, axis: { x: 0, y: 1, z: 0 }, size: { width: bw, depth: t } }, 'front headstock to base'); builder.mate('weld-edge', ib, h2, { world: { x: bl / 4, y: 0, z: 0 }, axis: { x: 0, y: 1, z: 0 }, size: { width: bw, depth: t } }, 'rear headstock to base'); builder.mate('bearing-seat', h1, iff, { world: { x: bearingContactX, y: 0, z: ah }, axis: { x: 1, y: 0, z: 0 }, size: { width: bearing, depth: t, diameter: bearing } }, 'faceplate shaft/bearing axis'); builder.mate('purchased-mount', ib, im, { world: { x: bl / 2 - t, y: 0, z: 0 }, axis: { x: 1, y: 0, z: 0 }, size: { width: motorPattern, depth: t } }, 'motor adapter support')
-      builder.buy('shaft', 'Machined positioner shaft', 1, { diameter: shaft, faceplateInterface: 'user-specified' }); builder.buy('bearing', 'Matched spindle bearing', 2, { outerDiameter: bearing, boreDiameter: shaft }); builder.buy('drive', 'Gear/belt reduction selected for duty', 1, { shaftDiameter: shaft }); builder.buy('motor', 'Motor and controller', 1, { mountingPattern: motorPattern }); builder.warn('Torque, speed, stability, guarding and a welding-current path isolated from bearings require a separate machine design and test.'); return true
+      const face = builder.part({ name: 'C06-faceplate', role: 'rotating welding faceplate blank', width: fp, height: fp, thickness: faceThickness,
+        holes: [circleHole('shaft', 0, 0, shaft + clearance), ...fourHoles(12, fp * .55, fp * .55, 'work')], contours: [[arc(pt(0, 0), fp / 2, 0, 180), arc(pt(0, 0), fp / 2, 180, 360)]] })
+      const motorHeight = 2 * ah - t
+      const motorPlate = rectangularPart(builder, 'C06-motor-plate', 'coaxial geared-motor adapter', bw * .7, motorHeight, t, { holes: [circleHole('drive-shaft', 0, 0, shaft + clearance), ...fourHoles(10, motorPattern, motorPattern, 'motor')] })
+      const ib = builder.instance(base)
+      const heads = [-1, 1].map(sign => {
+        const instance = builder.instance(head, transform({ x: sign * bl / 4, y: 0, z: headZ }, { x: 90, y: 0, z: 90 }), `C06-headstock-${sign}`)
+        builder.mate('weld-edge', ib, instance, { world: { x: sign * bl / 4, y: 0, z: t / 2 }, axis: { x: 0, y: 1, z: 0 }, size: { width: bw, depth: t } }, 'headstock bottom edge to base')
+        return instance
+      })
+      const iff = builder.instance(face, transform({ x: -bl / 4 - t / 2 - clearance - faceThickness / 2, y: 0, z: ah }, { x: 0, y: 90, z: 0 }))
+      const im = builder.instance(motorPlate, transform({ x: (bl - t) / 2, y: 0, z: ah }, { x: 90, y: 0, z: 90 }))
+      builder.mate('weld-edge', ib, im, { world: { x: (bl - t) / 2, y: 0, z: t / 2 }, axis: { x: 0, y: 1, z: 0 }, size: { width: bw * .7, depth: t } }, 'motor adapter bottom edge to base')
+      builder.axialMate('bearing-seat', heads[0], heads[1], pt(0, bearingY), pt(0, bearingY), shaft, 'two coaxial spindle bearing seats')
+      builder.axialMate('bearing-seat', heads[0], iff, pt(0, bearingY), pt(0, 0), shaft, 'faceplate hub on spindle axis')
+      builder.axialMate('bearing-seat', heads[1], im, pt(0, bearingY), pt(0, 0), shaft, 'coaxial reduction output coupling')
+      builder.buy('shaft', 'Machined shaft with faceplate hub and axial retainers', 1, { diameter: shaft, bearingSpacing: bl / 2, faceplateInterface: shaft + clearance })
+      builder.buy('bearing', 'Retained spindle bearing and mounting cartridge', 2, { outerDiameter: bearing, boreDiameter: shaft, housingThickness: t })
+      builder.buy('drive', 'Coaxial reduction and flexible shaft coupling', 1, { shaftDiameter: shaft, availableLength: bl / 4 - t })
+      builder.buy('motor', 'Flange motor and controller', 1, { mountingPattern: motorPattern, mountingDiameter: 10, outputAxisHeight: ah })
+      for (const instance of heads) builder.mountPurchased('bearing', instance, 'bearing-seat')
+      builder.mountPurchased('shaft', iff, 'shaft')
+      builder.mountPurchased('drive', im, 'drive-shaft')
+      for (const hole of motorPlate.holes.filter(h => h.id.startsWith('motor'))) builder.mountPurchased('motor', im, hole.id)
+      builder.purchasedEnvelope('shaft', { x: iff.transform.translation.x - faceThickness / 2, y: 0, z: ah }, { x: im.transform.translation.x, y: 0, z: ah }, shaft)
+      builder.purchasedEnvelope('drive', { x: bl / 4 + t / 2, y: 0, z: ah }, { x: im.transform.translation.x - t / 2, y: 0, z: ah }, shaft * 1.8)
+      builder.warn('Bearing seats require finish machining and axial retention. Select coaxial drive, guarding and an isolated welding-current return; no torque rating is assigned.')
+      return true
     }
     case 'C07': {
       const ww = nv(config, 'workingWidth'); const daylight = nv(config, 'daylight'); const depth = nv(config, 'frameDepth'); const jackSeat = nv(config, 'jackSeatDiameter'); const stroke = nv(config, 'stroke'); const pin = nv(config, 'pinDiameter')
-      const sideHeight = daylight + stroke + 2 * depth
-      const side = builder.part({ name: 'C07-side-frame', role: 'press side frame plate', width: depth, height: sideHeight, thickness: t, count: 2, holes: Array.from({ length: 5 }, (_, i) => circleHole(`bed-pin-${i + 1}`, 0, -daylight / 2 + i * daylight / 4, pin + clearance)), contours: [rectangle(depth, sideHeight)] })
-      const crown = rectangularPart(builder, 'C07-crown', 'press crown tie', ww + 2 * t, depth, t, { count: 2, holes: [circleHole('jack-seat', 0, 0, jackSeat)] }); const bed = rectangularPart(builder, 'C07-bed', 'adjustable press bed cheek', ww, depth / 2, t, { count: 2, holes: boltPair(pin + clearance, ww - 2 * pin) }); const toolThickness = Math.max(t, 20); const tool = rectangularPart(builder, 'C07-tool-plate', 'replaceable press/brake tool plate', ww, depth / 2, toolThickness)
-      const sl = builder.instance(side, transform({ x: -ww / 2 - t / 2, y: 0, z: sideHeight / 2 }, { x: 90, y: 0, z: 90 }), 'C07-side-left'); const sr = builder.instance(side, transform({ x: ww / 2 + t / 2, y: 0, z: sideHeight / 2 }, { x: 90, y: 0, z: 90 }), 'C07-side-right'); const cf = builder.instance(crown, identityTransform(0, -depth / 2, sideHeight)); const cr = builder.instance(crown, identityTransform(0, depth / 2, sideHeight)); const b1 = builder.instance(bed, identityTransform(0, -depth / 4, depth), 'C07-bed-front'); const b2 = builder.instance(bed, identityTransform(0, depth / 4, depth), 'C07-bed-rear'); const toolContactZ = depth + t / 2; const tp = builder.instance(tool, identityTransform(0, 0, toolContactZ + toolThickness / 2))
-      builder.mate('tab', sl, cf, { world: { x: -ww / 2, y: -depth / 2, z: sideHeight }, axis: { x: 1, y: 0, z: 0 }, size: { width: depth, depth: t } }, 'left front crown joint'); builder.mate('tab', sl, cr, { world: { x: -ww / 2, y: depth / 2, z: sideHeight }, axis: { x: 1, y: 0, z: 0 }, size: { width: depth, depth: t } }, 'left rear crown joint'); builder.mate('tab', sr, cf, { world: { x: ww / 2, y: -depth / 2, z: sideHeight }, axis: { x: 1, y: 0, z: 0 }, size: { width: depth, depth: t } }, 'right front crown joint'); builder.mate('tab', sr, cr, { world: { x: ww / 2, y: depth / 2, z: sideHeight }, axis: { x: 1, y: 0, z: 0 }, size: { width: depth, depth: t } }, 'right rear crown joint');
-      for (const bedInstance of [b1, b2]) { const y = bedInstance === b1 ? -depth / 4 : depth / 4; builder.mate('pivot', sl, bedInstance, { world: { x: -ww / 2, y, z: depth }, axis: { x: 1, y: 0, z: 0 }, size: { width: pin, depth: t, diameter: pin } }, 'left removable bed pin'); builder.mate('pivot', sr, bedInstance, { world: { x: ww / 2, y, z: depth }, axis: { x: 1, y: 0, z: 0 }, size: { width: pin, depth: t, diameter: pin } }, 'right removable bed pin') }
-      builder.mate('replaceable', b1, tp, { world: { x: 0, y: -depth / 4, z: toolContactZ }, axis: { x: 0, y: 0, z: 1 }, size: { width: ww, depth: t } }, 'replaceable lower tool support'); builder.mate('replaceable', b2, tp, { world: { x: 0, y: depth / 4, z: toolContactZ }, axis: { x: 0, y: 0, z: 1 }, size: { width: ww, depth: t } }, 'replaceable lower tool support')
-      builder.buy('actuator', 'User-selected jack or actuator', 1, { seatDiameter: jackSeat, workingStroke: stroke, ratedForce: 'must be selected and verified separately' }); builder.buy('return-system', 'Purchased return springs or cylinders', 2, { travel: stroke }); builder.buy('bed-pin', 'Heat-treated removable bed pin', 2, { diameter: pin, supportedSpan: ww + 2 * t }); builder.warn('No press force rating is assigned. Frame, pins, welds, tool, stability and guarding require a separate force-path calculation and proof test.'); return true
+      const row = count(config, 'bedRow'); const position = nv(config, 'position')
+      if (position > stroke || stroke >= daylight - 2 * t) throw new Error('C07: actuator travel must fit the available daylight')
+      const rowPitch = pin + 2 * MIN_WEB
+      const bedZ = depth / 2 + row * rowPitch
+      const bedHeight = depth / 2
+      const toolThickness = Math.max(t, 20)
+      const bedTopZ = bedZ + bedHeight / 2 + t / 2
+      const lowerTopZ = bedTopZ + t / 2 + toolThickness
+      const crownZ = depth / 2 + 4 * rowPitch + bedHeight / 2 + t + toolThickness + daylight + 2 * t
+      const sideHeight = crownZ - t / 2
+      const insideWidth = ww - 2 * t - 2 * clearance
+      const pinYs = [-depth / 4, depth / 4]
+      const side = builder.part({ name: 'C07-side-frame', role: 'press side frame with paired bed pin rows', width: depth, height: sideHeight, thickness: t, count: 2,
+        holes: Array.from({ length: 5 }, (_, i) => pinYs.map((y, j) => circleHole(`bed-pin-${i}-${j}`, y, depth / 2 + i * rowPitch - sideHeight / 2, pin + clearance))).flat(), contours: [rectangle(depth, sideHeight)] })
+      const crown = rectangularPart(builder, 'C07-crown', 'actuator mounting crown', ww + 2 * t, depth, t, { holes: [circleHole('actuator-seat', 0, 0, jackSeat + clearance), ...fourHoles(12, jackSeat + 40, jackSeat + 40, 'actuator')] })
+      const bed = rectangularPart(builder, 'C07-bed', 'adjustable bed end cheek', depth, bedHeight, t, { count: 2, holes: pinYs.map((y, i) => circleHole(`bed-pin-${i}`, y, 0, pin + clearance)) })
+      const top = rectangularPart(builder, 'C07-bed-top', 'bed cross plate', insideWidth, depth, t, { holes: fourHoles(12, insideWidth / 2, depth / 2, 'tool') })
+      const tool = rectangularPart(builder, 'C07-tool-plate', 'bolted lower tooling adapter', insideWidth, depth, toolThickness, { holes: fourHoles(12, insideWidth / 2, depth / 2, 'tool') })
+      const ram = rectangularPart(builder, 'C07-ram', 'moving actuator and upper tooling adapter', insideWidth, depth, t, { holes: [circleHole('ram-seat', 0, 0, jackSeat + clearance), ...fourHoles(12, insideWidth / 2, depth / 2, 'upper-tool')] })
+      const ic = builder.instance(crown, identityTransform(0, 0, crownZ))
+      const itop = builder.instance(top, identityTransform(0, 0, bedTopZ))
+      const itool = builder.instance(tool, identityTransform(0, 0, bedTopZ + (t + toolThickness) / 2))
+      const ramZ = lowerTopZ + daylight - position + t / 2
+      const iram = builder.instance(ram, identityTransform(0, 0, ramZ))
+      for (const sign of [-1, 1]) {
+        const x = sign * (ww + t) / 2
+        const iside = builder.instance(side, transform({ x, y: 0, z: sideHeight / 2 }, { x: 90, y: 0, z: 90 }), `C07-side-${sign}`)
+        const ibed = builder.instance(bed, transform({ x: sign * (ww - t - 2 * clearance) / 2, y: 0, z: bedZ }, { x: 90, y: 0, z: 90 }), `C07-bed-${sign}`)
+        builder.mate('weld-edge', ic, iside, { world: { x, y: 0, z: crownZ - t / 2 }, axis: { x: 0, y: 1, z: 0 }, size: { width: depth, depth: t } }, 'side top edge to crown underside')
+        for (const y of pinYs) builder.axialMate('pivot', iside, ibed, pt(y, bedZ - sideHeight / 2), pt(y, 0), pin, 'removable bed pin through aligned row')
+        builder.mate('weld-edge', itop, ibed, { world: { x: sign * insideWidth / 2, y: 0, z: bedZ + bedHeight / 2 }, axis: { x: 0, y: 1, z: 0 }, size: { width: depth, depth: t } }, 'bed cheek to cross plate edge')
+      }
+      for (const hole of top.holes) builder.axialMate('bolt', itop, itool, hole, hole, 12, 'removable lower tooling adapter bolt')
+      builder.axialMate('linear-guide', ic, iram, pt(0, 0), pt(0, 0), jackSeat, 'guided actuator axis between crown and ram')
+      builder.buy('actuator', 'Flange-mounted guided hydraulic actuator', 1, { seatDiameter: jackSeat, mountingPitch: jackSeat + 40, workingStroke: stroke, closedMountDistance: crownZ - ramZ + position, ratedForce: 'requires independent design' })
+      builder.buy('return-system', 'Actuator-compatible captive return system', 2, { travel: stroke })
+      builder.buy('bed-pin', 'Retained removable bed support pin', 4, { diameter: pin, gripLength: 2 * t + clearance })
+      builder.buy('press-tool', 'Matched upper punch and lower die', 1, { mountingPitchX: insideWidth / 2, mountingPitchY: depth / 2, mountingDiameter: 12 })
+      builder.mountPurchased('actuator', ic, 'actuator-seat'); builder.mountPurchased('actuator', iram, 'ram-seat')
+      for (const instance of builder.instances.filter(i => i.partName === side.name || i.partName === bed.name)) {
+        const part = instance.partName === side.name ? side : bed
+        for (const hole of part.holes.filter(h => instance.partName === bed.name || h.id.startsWith(`bed-pin-${row}-`))) builder.mountPurchased('bed-pin', instance, hole.id)
+      }
+      for (const hole of tool.holes) builder.mountPurchased('press-tool', itool, hole.id)
+      for (const hole of ram.holes.filter(h => h.id !== 'ram-seat')) builder.mountPurchased('press-tool', iram, hole.id)
+      builder.purchasedEnvelope('actuator', { x: 0, y: 0, z: ramZ }, { x: 0, y: 0, z: crownZ }, jackSeat)
+      addFastenerSet(builder, 'tool', 8, 12, 'replaceable tool mounting')
+      builder.warn('No press force rating is assigned. Frame, crown, bed, pins, actuator retention, guides, tooling and guarding require independent force-path design and proof testing.')
+      return true
     }
     default: return false
   }

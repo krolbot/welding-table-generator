@@ -2,7 +2,17 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Contour } from '../geometry.js'
-import type { ToolingAssembly } from './model.js'
+import type { AssemblyTransform, ToolingAssembly } from './model.js'
+import { applyDirection } from './primitives.js'
+
+// The canonical contract uses fixed-axis X → Y → Z, not Three's intrinsic XYZ.
+export const assemblyRotationMatrix = (placement: AssemblyTransform) => {
+  const vector = (x: number, y: number, z: number) => {
+    const v = applyDirection({ x, y, z }, placement)
+    return new THREE.Vector3(v.x, v.y, v.z)
+  }
+  return new THREE.Matrix4().makeBasis(vector(1, 0, 0), vector(0, 1, 0), vector(0, 0, 1))
+}
 
 const contourPath = (contour: Contour, path: THREE.Path = new THREE.Path()) => {
   contour.forEach((segment, index) => {
@@ -49,6 +59,7 @@ export function ToolingThree({ assembly, exploded, dark, resetToken }: { assembl
     light.position.set(500, 800, 600)
     scene.add(light)
     const material = new THREE.MeshStandardMaterial({ color: dark ? 0x64748b : 0x94a3b8, metalness: 0.55, roughness: 0.42, side: THREE.DoubleSide })
+    const purchasedMaterial = new THREE.MeshStandardMaterial({ color: dark ? 0xeab308 : 0xb45309, metalness: 0.35, roughness: 0.5, transparent: true, opacity: 0.65 })
     const edgeMaterial = new THREE.LineBasicMaterial({ color: dark ? 0x020617 : 0x1e293b })
     const group = new THREE.Group()
     const translations = assembly.instances.map(value => new THREE.Vector3(value.transform.translation.x, value.transform.translation.y, value.transform.translation.z))
@@ -65,13 +76,18 @@ export function ToolingThree({ assembly, exploded, dark, resetToken }: { assembl
       const direction = base.clone().sub(center)
       if (direction.lengthSq() < 1e-6) direction.set(0, 0, 1)
       mesh.position.copy(base).addScaledVector(direction.normalize(), exploded * Math.max(part.thickness, 20) / 25)
-      mesh.rotation.set(
-        THREE.MathUtils.degToRad(instance.transform.rotation.x),
-        THREE.MathUtils.degToRad(instance.transform.rotation.y),
-        THREE.MathUtils.degToRad(instance.transform.rotation.z),
-        instance.transform.rotation.order,
-      )
+      mesh.quaternion.setFromRotationMatrix(assemblyRotationMatrix(instance.transform))
       mesh.name = `${assembly.id} ${instance.id}: ${part.role}`
+      group.add(mesh)
+    }
+    for (const component of assembly.purchased) for (const envelope of component.envelopes ?? []) {
+      const start = new THREE.Vector3(envelope.start.x, envelope.start.y, envelope.start.z)
+      const end = new THREE.Vector3(envelope.end.x, envelope.end.y, envelope.end.z)
+      const direction = end.clone().sub(start)
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(envelope.diameter / 2, envelope.diameter / 2, direction.length(), 20), purchasedMaterial)
+      mesh.position.copy(start).add(end).multiplyScalar(0.5)
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize())
+      mesh.name = `Purchased representation: ${component.description}`
       group.add(mesh)
     }
     scene.add(group)
@@ -99,6 +115,7 @@ export function ToolingThree({ assembly, exploded, dark, resetToken }: { assembl
       controls.dispose()
       group.traverse(object => { if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) object.geometry.dispose() })
       material.dispose()
+      purchasedMaterial.dispose()
       edgeMaterial.dispose()
       renderer.dispose()
       mount.replaceChildren()

@@ -14,6 +14,15 @@ const normalize = (value: { x: number; y: number; z: number }) => {
 const contourPoints = (contour: Contour): Point[] => contourEndpoints(contour).flatMap(item => [item.start, item.end])
 const bbox = (contour: Contour) => {
   const points = contourPoints(contour)
+  for (const segment of contour) {
+    if (segment.type !== 'arc') continue
+    const sweep = segment.clockwise ? -((segment.start - segment.end + 360) % 360 || 360) : ((segment.end - segment.start + 360) % 360 || 360)
+    for (const angle of [0, 90, 180, 270]) {
+      const delta = segment.clockwise ? (segment.start - angle + 3600) % 360 : (angle - segment.start + 3600) % 360
+      if (delta > Math.abs(sweep) + EPS) continue
+      points.push({ x: segment.center.x + segment.radius * Math.cos(angle * Math.PI / 180), y: segment.center.y + segment.radius * Math.sin(angle * Math.PI / 180) })
+    }
+  }
   return {
     minX: Math.min(...points.map(p => p.x)), maxX: Math.max(...points.map(p => p.x)),
     minY: Math.min(...points.map(p => p.y)), maxY: Math.max(...points.map(p => p.y)),
@@ -170,11 +179,22 @@ export const validateToolingAssembly = (assembly: ToolingAssembly): ValidationRe
       if (!evidence) issues.push(issue('joint-feature', 'Joint interface is not supported by part material or a cut feature', `joints.${joint.id}.${endpoint.instance.id}`))
       else if (evidence !== endpoint.face.featureEvidence) issues.push(issue('joint-feature-changed', 'Joint feature evidence no longer matches the part geometry', `joints.${joint.id}.${endpoint.instance.id}`))
     }
+    if (joint.kind === 'tab' || joint.kind === 'slot') {
+      const evidence = [first.face.featureEvidence, second.face.featureEvidence]
+      const cut = evidence.filter(value => value === 'slot' || value === 'internal-cut').length
+      const solid = evidence.filter(value => value === 'material-face').length
+      if (cut !== 1 || solid !== 1) issues.push(issue('joint-feature-kind', 'Tab joints require a real receiving cut and penetrating tab material', `joints.${joint.id}`))
+    }
     const firstWorld = applyTransform(first.face.localOrigin, first.instance.transform); const secondWorld = applyTransform(second.face.localOrigin, second.instance.transform)
-    if (distance3(firstWorld, secondWorld) > joint.tolerance + EPS) issues.push(issue('joint-position', 'Mating origins do not coincide after assembly transforms', `joints.${joint.id}`))
+    const axial = ['bolt', 'pivot', 'bearing-seat', 'linear-guide'].includes(joint.kind)
+    const normal = normalize(applyDirection(first.face.localAxis, first.instance.transform))
+    const delta = { x: secondWorld.x - firstWorld.x, y: secondWorld.y - firstWorld.y, z: secondWorld.z - firstWorld.z }
+    const separation = axial && normal ? Math.hypot(delta.y * normal.z - delta.z * normal.y, delta.z * normal.x - delta.x * normal.z, delta.x * normal.y - delta.y * normal.x) : distance3(firstWorld, secondWorld)
+    if (separation > joint.tolerance + EPS) issues.push(issue('joint-position', 'Mating interfaces do not align after assembly transforms', `joints.${joint.id}`))
+    if (axial && [first, second].some(endpoint => !['hole', 'slot', 'internal-cut'].includes(endpoint.face.featureEvidence))) issues.push(issue('joint-feature-kind', 'Axial joints require real holes or slots on both members', `joints.${joint.id}`))
     const axisA = normalize(applyDirection(first.face.localAxis, first.instance.transform)); const axisB = normalize(applyDirection(second.face.localAxis, second.instance.transform))
     if (!axisA || !axisB || Math.abs(axisA.x * axisB.x + axisA.y * axisB.y + axisA.z * axisB.z) < 1 - 1e-6) issues.push(issue('joint-axis', 'Mating axes are not coaxial after assembly transforms', `joints.${joint.id}`))
-    if (Math.abs(first.face.size.width - second.face.size.width) > joint.tolerance || Math.abs(first.face.size.depth - second.face.size.depth) > joint.tolerance || Math.abs((first.face.size.diameter ?? 0) - (second.face.size.diameter ?? 0)) > joint.tolerance) issues.push(issue('joint-size', 'Mating interface sizes differ', `joints.${joint.id}`))
+    if (Math.abs(first.face.size.width - second.face.size.width) > joint.tolerance || (!axial && Math.abs(first.face.size.depth - second.face.size.depth) > joint.tolerance) || Math.abs((first.face.size.diameter ?? 0) - (second.face.size.diameter ?? 0)) > joint.tolerance) issues.push(issue('joint-size', 'Mating interface sizes differ', `joints.${joint.id}`))
   }
   if (assembly.instances.length > 1 && assembly.joints.length > 0) {
     const connected = new Set<string>([assembly.instances[0].id])
@@ -189,6 +209,14 @@ export const validateToolingAssembly = (assembly: ToolingAssembly): ValidationRe
     for (const instance of assembly.instances) if (!connected.has(instance.id)) issues.push(issue('disconnected-instance', 'Structural instance is not connected to the assembly joint graph', `instances.${instance.id}`))
   }
   for (const item of assembly.purchased) if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.excludedFromSheetNesting !== true) issues.push(issue('purchased-bom', 'Purchased BOM quantity must be positive and item excluded from nesting', `purchased.${item.id}`))
+  for (const component of assembly.purchased) {
+    for (const mount of component.mounts ?? []) {
+      const instance = assembly.instances.find(i => i.id === mount.instanceId)
+      const part = assembly.parts.find(p => p.name === instance?.partName)
+      if (!part?.holes.some(h => h.id === mount.holeId)) issues.push(issue('purchased-mount', 'Purchased component references a missing mounting hole', `purchased.${component.id}`))
+    }
+    for (const envelope of component.envelopes ?? []) if (!finite3(envelope.start) || !finite3(envelope.end) || !Number.isFinite(envelope.diameter) || envelope.diameter <= 0 || distance3(envelope.start, envelope.end) <= EPS || envelope.representationOnly !== true) issues.push(issue('purchased-envelope', 'Invalid purchased component representation', `purchased.${component.id}`))
+  }
   return { valid: issues.length === 0, issues }
 }
 
@@ -207,7 +235,8 @@ export const assertA10B08Compatibility = (insert: ToolingConfig<'A10'>, holder: 
   const errors: string[] = []
   if (Math.abs(configNumber(insert, 'holderPitch') - configNumber(holder, 'insertPitch')) > EPS) errors.push('bolt pitch')
   if (configNumber(insert, 'holderDiameter') + EPS < configNumber(holder, 'insertDiameter')) errors.push('bolt diameter')
-  if (configNumber(insert, 'length') > configNumber(holder, 'width') + EPS) errors.push('insert envelope')
+  if (Math.abs(configNumber(insert, 'length') - Math.min(configNumber(holder, 'width') - 2 * WEB, 140)) > EPS || Math.abs(configNumber(insert, 'width') - 100) > EPS || Math.abs(configNumber(insert, 'thickness') - configNumber(holder, 'insertThickness')) > EPS) errors.push('insert dimensions')
+  if (insert.values.profile !== 'vee' || Math.abs(configNumber(insert, 'veeAngle') - configNumber(holder, 'veeAngle')) > EPS || Math.abs(configNumber(insert, 'profileSize') - configNumber(holder, 'profileSize')) > EPS) errors.push('contact profile')
   if (errors.length) throw new Error(`A10/B08 incompatible: ${errors.join(', ')}`)
 }
 

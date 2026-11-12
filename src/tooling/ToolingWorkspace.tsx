@@ -7,7 +7,7 @@ import { transformNestingContour, transformNestingPoint, type NestingResult } fr
 import { createToolingConfig, getToolingEntry, toolingCatalog } from './catalog.js'
 import type { ParameterValue, SheetMaterial, ToolingAssembly, ToolingRoute } from './model.js'
 import { ToolingThree } from './ToolingThree.js'
-import { decodeCombinedProject, encodeCombinedProject, makeBasketItem, parseCombinedProject, PROJECT_VERSION, sheetMaterials, type CombinedProject, type ToolingBasketItem } from './project.js'
+import { decodeCombinedProject, encodeCombinedProject, makeBasketItem, parseCombinedProject, parseNestingSettings, PROJECT_VERSION, sheetMaterials, type CombinedProject, type ToolingBasketItem } from './project.js'
 import { buildProductionModel, downloadProductionArchive, productionNestingKey, validateProductionNesting, type NestingSettings, type ProductionModel } from './production.js'
 import type { ToolingNestingResponse } from './nesting.worker.js'
 
@@ -78,11 +78,13 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
   const [exploded, setExploded] = useState(0)
   const [reset3d, setReset3d] = useState(0)
   const [notice, setNotice] = useState(initial.error)
-  const [settings, setSettings] = useState<NestingSettings>({ sheetLength: table.sheetLength, sheetWidth: table.sheetWidth, edgeGap: table.sheetEdgeGap, partGap: table.sheetPartGap, rotations: [0, 90, 180, 270] })
+  const [settings, setSettings] = useState<NestingSettings>(initial.project.nesting ?? { sheetLength: table.sheetLength, sheetWidth: table.sheetWidth, edgeGap: table.sheetEdgeGap, partGap: table.sheetPartGap, rotations: [0, 90, 180, 270] })
   const [nesting, setNesting] = useState<{ key: string; results: Record<string, NestingResult> }>({ key: '', results: {} })
   const [nestingState, setNestingState] = useState<'empty' | 'loading' | 'ready' | 'error'>('empty')
   const [nestingError, setNestingError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
+  const loadInitialTable = useRef(onLoadTable)
+  loadInitialTable.current = onLoadTable
   const active = items.find(item => item.instanceId === selected)
   const activeEntry = active ? getToolingEntry(active.config.id) : undefined
   const activeAssembly = useMemo(() => {
@@ -91,10 +93,19 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
     catch (error) { return { value: undefined, error: error instanceof Error ? error.message : 'Invalid tooling geometry' } }
   }, [active, table])
   const production = useMemo(() => modelResult(table, items, includeTable), [table, items, includeTable])
-  const project = useMemo<CombinedProject>(() => ({ version: PROJECT_VERSION, table: projectConfig(table), includeTable, tooling: items }), [table, includeTable, items])
+  const project = useMemo<CombinedProject>(() => ({ version: PROJECT_VERSION, table: projectConfig(table), includeTable, tooling: items, nesting: settings }), [table, includeTable, items, settings])
   const nestingKey = useMemo(() => production.model ? productionNestingKey(production.model, settings) : '', [production.model, settings])
   const nestingValid = Boolean(production.model && nesting.key === nestingKey && validateProductionNesting(production.model, nesting.results, settings))
 
+  useEffect(() => {
+    if (initial.error) return
+    loadInitialTable.current(initial.project.table)
+    const url = new URL(location.href)
+    if (url.searchParams.has('project')) {
+      url.searchParams.delete('project')
+      history.replaceState(null, '', url)
+    }
+  }, [initial])
   useEffect(() => {
     try { localStorage.setItem('weldingToolingProject', JSON.stringify(project)) }
     catch { setNotice('Autosave is unavailable. Save the project JSON manually.') }
@@ -156,6 +167,7 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
         onLoadTable(loaded.table)
         setItems(loaded.tooling)
         setIncludeTable(loaded.includeTable)
+        setSettings(loaded.nesting ?? { sheetLength: table.sheetLength, sheetWidth: table.sheetWidth, edgeGap: table.sheetEdgeGap, partGap: table.sheetPartGap, rotations: [0, 90, 180, 270] })
         setSelected(loaded.tooling[0]?.instanceId ?? '')
         setNotice(loaded.tooling.length ? 'Full project loaded.' : 'Legacy table project loaded; tooling basket is empty.')
       } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not read this project') }
@@ -171,8 +183,8 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
     catch { setNotice('Clipboard access was denied. Save the project JSON instead.') }
   }
   const updateSetting = (key: keyof Omit<NestingSettings, 'rotations'>, value: number) => {
-    if (!Number.isFinite(value) || value < 0) return
-    setSettings(current => ({ ...current, [key]: value }))
+    try { setSettings(parseNestingSettings({ ...settings, [key]: value })) }
+    catch (error) { setNotice(error instanceof Error ? error.message : 'Invalid nesting settings') }
   }
 
   return <main className="app-shell tooling-app">
@@ -204,7 +216,7 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
     <section className="work-area tooling-work" data-view={view}>
       <div className="mode"><button className={view === '2d' ? 'active' : ''} onClick={() => setView('2d')}><Icon name="frame" />Parts 2D</button><button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}><Icon name="box" />Assembly 3D</button><button className={view === 'sheet' ? 'active' : ''} onClick={() => setView('sheet')}><Icon name="layers" />Common nesting</button></div>
       {!activeAssembly.value && view !== 'sheet' ? <div className="three-loading empty-state">Select or add a tooling assembly.</div> : view === '2d' && activeAssembly.value ? <ToolingParts2d assembly={activeAssembly.value} /> : view === '3d' && activeAssembly.value ? <><div className="drawing-frame"><ToolingThree assembly={activeAssembly.value} exploded={exploded} dark={dark} resetToken={reset3d} /></div><div className="three-tools tooling-three-tools"><header><h3>{activeAssembly.value.id} · {activeAssembly.value.name}</h3><button onClick={() => setReset3d(value => value + 1)}><Icon name="maximize" size={12} />Reset view</button></header><label className="slider-field"><span>Exploded view <output>{exploded}%</output></span><input aria-label="Exploded view" type="range" min={0} max={100} value={exploded} onChange={event => setExploded(Number(event.target.value))} /></label></div></> : <ToolingSheets model={production.model} state={nestingState} error={nestingError} results={nesting.results} settings={settings} />}
-      {activeAssembly.value && view !== 'sheet' && <div className="tooling-summary"><b>{activeAssembly.value.id} · {activeAssembly.value.name}</b><span>{activeAssembly.value.parts.length} unique sheet parts · {activeAssembly.value.instances.length} assembly instances · {activeAssembly.value.joints.length} verified joints</span>{activeAssembly.value.purchased.length > 0 && <details><summary>Purchased components ({activeAssembly.value.purchased.length})</summary><ul>{activeAssembly.value.purchased.map(item => <li key={item.id}><b>{item.quantity}× {item.description}</b><code>{JSON.stringify(item.interfaceParameters)}</code></li>)}</ul></details>}{activeAssembly.value.warnings.map(value => <p key={value}>{value}</p>)}</div>}
+      {activeAssembly.value && view !== 'sheet' && <div className="tooling-summary"><b>{activeAssembly.value.id} · {activeAssembly.value.name}</b><span>{activeAssembly.value.parts.length} unique sheet parts · {activeAssembly.value.instances.length} assembly instances · {activeAssembly.value.joints.length} modeled connections</span>{activeAssembly.value.purchased.length > 0 && <details><summary>Purchased components ({activeAssembly.value.purchased.length})</summary><ul>{activeAssembly.value.purchased.map(item => <li key={item.id}><b>{item.quantity}× {item.description}</b><code>{JSON.stringify(item.interfaceParameters)}</code></li>)}</ul></details>}{activeAssembly.value.warnings.map(value => <p key={value}>{value}</p>)}</div>}
       {notice && <output className="notice" aria-live="polite" onClick={() => setNotice('')}>{notice}</output>}
     </section>
   </main>

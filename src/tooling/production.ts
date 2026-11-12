@@ -146,10 +146,10 @@ const csv = (rows: Array<Array<string | number>>) => rows.map(row => row.map(val
 export const productionArchive = (model: ProductionModel, results: Readonly<Record<string, NestingResult>>, settings: NestingSettings) => {
   if (!validateProductionNesting(model, results, settings)) throw new Error('The sheet layout is incomplete, stale or invalid')
   const zip = new JSZip()
-  zip.file('project.json', JSON.stringify(model.project, null, 2))
-  const sheetRows: Array<Array<string | number>> = [['material', 'thickness_mm', 'source', 'tooling_id', 'part', 'quantity', 'mass_kg']]
+  zip.file('project.json', JSON.stringify({ ...model.project, nesting: settings }, null, 2))
+  const sheetRows: Array<Array<string | number>> = [['material', 'thickness_mm', 'source', 'line_id', 'tooling_id', 'part', 'quantity', 'mass_kg']]
   for (const group of model.groups) for (const part of group.parts) {
-    sheetRows.push([part.material, part.thickness, part.source.kind, part.source.toolingId ?? '', part.source.partName, part.count, (estimatePartMassKg(part) * part.count).toFixed(4)])
+    sheetRows.push([part.material, part.thickness, part.source.kind, part.source.lineId, part.source.toolingId ?? '', part.source.partName, part.count, (estimatePartMassKg(part) * part.count).toFixed(4)])
     const lineNumber = part.source.kind === 'table' ? 0 : model.project.tooling.findIndex(line => line.instanceId === part.source.lineId) + 1
     zip.file(`parts/${String(lineNumber).padStart(3, '0')}_${safeName(part.source.partName)}_${part.count}pcs.dxf`, nativeDxfForPart(part))
   }
@@ -173,13 +173,20 @@ export const productionArchive = (model: ProductionModel, results: Readonly<Reco
     }
   }
   zip.file('placement-manifest.json', JSON.stringify(placementManifest, null, 2))
-  zip.file('assembly-transforms.json', JSON.stringify(model.lines.map(({ line, assembly }) => ({ lineId: line.instanceId, toolingId: line.config.id, quantity: line.quantity, instances: assembly.instances, joints: assembly.joints })), null, 2))
+  zip.file('assembly-transforms.json', JSON.stringify(model.lines.map(({ line, assembly }) => ({ lineId: line.instanceId, toolingId: line.config.id, quantity: line.quantity, instances: assembly.instances, joints: assembly.joints, purchased: assembly.purchased })), null, 2))
+  zip.file('assembly-notes.txt', model.lines.map(({ line, assembly }) => [
+    `${assembly.id} ${assembly.name} | line ${line.instanceId} | assemblies: ${line.quantity}`,
+    ...assembly.parts.map(part => `  CUT ${part.name}: ${part.count} per assembly; ${part.role}; ${part.thickness} mm ${line.material}`),
+    ...assembly.joints.map(joint => `  JOIN ${joint.kind}: ${joint.first.instanceId}/${joint.first.interfaceId} ↔ ${joint.second.instanceId}/${joint.second.interfaceId}; ${joint.description}`),
+    ...assembly.purchased.map(item => `  BUY ${item.id}: ${item.quantity} per assembly; ${item.description}; mounts: ${(item.mounts ?? []).map(m => `${m.instanceId}/${m.holeId}`).join(', ') || 'not modelled'}`),
+    ...assembly.warnings.map(warning => `  CAUTION ${warning}`),
+  ].join('\n')).join('\n\n') + '\n')
   zip.file('validation.json', JSON.stringify({ valid: true, groups: model.groups.map(group => ({ key: group.key, validation: results[group.key].validation, unplaced: results[group.key].unplaced.length })), generatedFromProjectVersion: model.project.version }, null, 2))
   zip.file('README.txt', [
     'Welding table and tooling production package',
     'All dimensions are nominal millimetres. DXF entities are native LINE, ARC and CIRCLE.',
     'Sheet groups are separated by material and thickness. Purchased components are excluded from sheets.',
-    'Assembly transforms use XYZ rotations in degrees and translations in millimetres; see assembly-transforms.json.',
+    'Assembly transforms use fixed-axis X then Y then Z rotations in degrees and translations in millimetres; see assembly-transforms.json and assembly-notes.txt.',
     'Match every part and basket line using placement-manifest.json before fabrication.',
     'Kerf, lead-ins, clamps, cutting order, weld procedure and machine-specific minimum webs require independent CAM/fabrication verification.',
     'No load rating, accuracy class or proof of global nesting optimality is claimed.',

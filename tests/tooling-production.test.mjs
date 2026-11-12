@@ -40,6 +40,27 @@ test('combined project parser preserves legacy tables and rejects unknown, dupli
   ]) assert.throws(() => project.parseCombinedProject(invalid))
 })
 
+test('project and archive retain nesting settings and purchased mounting evidence', async () => {
+  const settings = { sheetLength: 3000, sheetWidth: 1500, edgeGap: 10, partGap: 5, rotations: [0, 90, 180, 270] }
+  const saved = { version: 2, table: { length: 1200, width: 800 }, includeTable: false, tooling: [item('C06')], nesting: settings }
+  assert.deepEqual(project.decodeCombinedProject(project.encodeCombinedProject(saved)), saved)
+  const oldFlat = { ...item('A01'), config: { ...item('A01').config, values: { ...item('A01').config.values, clearance: 0.25 } } }
+  assert.equal(project.parseCombinedProject({ ...saved, tooling: [oldFlat] }).tooling[0].config.values.clearance, undefined)
+  for (const invalid of [{ ...settings, rotations: [45] }, { ...settings, edgeGap: 800 }, { ...settings, sheetWidth: NaN }, { ...settings, mystery: true }]) {
+    assert.throws(() => project.parseCombinedProject({ ...saved, nesting: invalid }))
+  }
+  const result = production.buildProductionModel(model.defaults, saved.tooling, false)
+  const layouts = Object.fromEntries(result.groups.map(group => [group.key, nesting.nestParts(group.parts, production.nestingOptionsFor(settings))]))
+  const zip = production.productionArchive(result, layouts, settings)
+  const archived = JSON.parse(await zip.file('project.json').async('string'))
+  assert.deepEqual(archived.nesting, settings)
+  assert.deepEqual(archived.tooling, saved.tooling)
+  assert.deepEqual(archived.table, result.project.table)
+  const assembled = JSON.parse(await zip.file('assembly-transforms.json').async('string'))
+  assert.equal(assembled[0].purchased.find(value => value.id === 'bearing').mounts.length, 2)
+  assert.match(await zip.file('assembly-notes.txt').async('string'), /JOIN bearing-seat/)
+})
+
 test('production model covers exact A01-C07 catalog and groups every real sheet part by material and thickness', () => {
   const items = catalog.TOOLING_IDS.map(item)
   const result = production.buildProductionModel(model.defaults, items, false)
@@ -64,6 +85,10 @@ test('mating basket lines fail closed when A10/B08 or A13/B14 interfaces do not 
   assert.doesNotThrow(() => production.buildProductionModel(model.defaults, [a10, b08], false))
   const badB08 = { ...b08, config: catalog.createToolingConfig('B08', { ...b08.config.values, insertPitch: 90 }) }
   assert.throws(() => production.buildProductionModel(model.defaults, [a10, badB08], false), /A10\/B08/)
+  const radiusInsert = { ...a10, config: catalog.createToolingConfig('A10', { ...a10.config.values, profile: 'radius' }) }
+  assert.throws(() => production.buildProductionModel(model.defaults, [radiusInsert, b08], false), /A10\/B08/)
+  const wrongStock = { ...a10, config: catalog.createToolingConfig('A10', { ...a10.config.values, thickness: 10 }) }
+  assert.throws(() => production.buildProductionModel(model.defaults, [wrongStock, b08], false), /A10\/B08/)
   const a13 = item('A13')
   const b14 = item('B14')
   assert.doesNotThrow(() => production.buildProductionModel(model.defaults, [a13, b14], false))
