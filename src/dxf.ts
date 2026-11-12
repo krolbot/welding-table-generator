@@ -1,6 +1,7 @@
 import JSZip from 'jszip'
 import { contourPoints, engravingLines, layoutParts, makeParts, type Contour, type Part, type Point } from './geometry'
 import type { Config } from './model'
+import { transformNestingPoint, validateNesting, type NestingPlacement, type NestingResult } from './nesting'
 
 const group = (code: number, value: string | number) => `${code}\n${value}\n`
 const line = (from: Point, to: Point, layer = 'OUTLINE') =>
@@ -48,6 +49,50 @@ export const fullDxf = (c: Config) => {
   const layout = layoutParts(c)
   const parts = layout.instances.map(item => ({ part: item.part, offset: item.position }))
   return header(boundsFor(parts)) + parts.map(item => partEntities(item.part, c, item.offset)).join('') + footer
+}
+
+export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlacement[]) => {
+  if (!placements.length) throw new Error('Cannot export an empty sheet')
+  const values = placements.flatMap(placement => placement.part.contours.flatMap(contour =>
+    contourPoints(contour, 72).map(value => transformNestingPoint(value, placement))))
+  const xs = values.map(value => value.x), ys = values.map(value => value.y)
+  const bounds = { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) }
+  const entities = placements.map(placement => {
+    const transform = (value: Point) => transformNestingPoint(value, placement)
+    const normalize = (angle: number) => ((angle + placement.rotation) % 360 + 360) % 360
+    let result = placement.part.contours.map(contour => contour.map(segment => segment.type === 'line'
+      ? line(transform(segment.from), transform(segment.to))
+      : arc(transform(segment.center), segment.radius, normalize(segment.clockwise ? segment.end : segment.start), normalize(segment.clockwise ? segment.start : segment.end)),
+    ).join('')).join('')
+    result += placement.part.holes.map(hole => circle(transform(hole), hole.d / 2)).join('')
+    result += engravingLines(placement.part, c).map(mark => line(transform(mark.from), transform(mark.to), 'ENGRAVE')).join('')
+    return result
+  }).join('')
+  return header(bounds) + entities + footer
+}
+
+export const validateNestedExport = (c: Config, result: NestingResult) => {
+  const parts = makeParts(c)
+  const expected = new Map(parts.map(part => [part.name, part]))
+  const keys = new Set<string>()
+  const options = { sheet: { width: c.sheetLength, height: c.sheetWidth }, edgeClearance: c.sheetEdgeGap + 0.002, partClearance: c.sheetPartGap + 0.002, maxSheets: 32 }
+  if (result.unplaced.length || result.placements.length !== parts.reduce((sum, part) => sum + part.count, 0)) return false
+  for (const placement of result.placements) {
+    const part = expected.get(placement.part.name)
+    const key = `${placement.part.name}:${placement.instance}`
+    if (!part || JSON.stringify(placement.part) !== JSON.stringify(part) || !Number.isInteger(placement.instance) || placement.instance < 0 || placement.instance >= part.count || keys.has(key)) return false
+    keys.add(key)
+  }
+  return result.placements.length > 0 && validateNesting(result.placements, options).valid
+}
+
+export const downloadNestedZip = async (c: Config, result: NestingResult) => {
+  if (!validateNestedExport(c, result)) throw new Error('The sheet layout is incomplete, stale or invalid')
+  const zip = new JSZip()
+  const sheetIndexes = [...new Set(result.placements.map(placement => placement.sheet))].sort((a, b) => a - b)
+  sheetIndexes.forEach(index => zip.file(`Sheet_${index + 1}.dxf`, dxfForNestedSheet(c, result.placements.filter(placement => placement.sheet === index))))
+  zip.file('README.txt', `Sheet size: ${c.sheetLength} x ${c.sheetWidth} mm\nMinimum edge gap: ${c.sheetEdgeGap} mm\nMinimum part gap: ${c.sheetPartGap} mm\nSheet count: ${sheetIndexes.length}\nAll parts placed: ${result.placements.length}\nCoordinates are nominal geometry. Kerf, lead-ins, clamps and cutting order require CAM verification.\n`)
+  download(await zip.generateAsync({ type: 'blob' }), `WeldingTable_Sheets_${c.length}x${c.width}.zip`)
 }
 
 const download = (blob: Blob, name: string) => {

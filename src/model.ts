@@ -49,6 +49,8 @@ export type Config = {
   removedHoles: Array<RemovedHole | string>
   sheetLength: number
   sheetWidth: number
+  sheetEdgeGap: number
+  sheetPartGap: number
   exploded: number
   showDimensions: boolean
   renderHoles: boolean
@@ -96,6 +98,8 @@ export const defaults: Config = {
   removedHoles: [],
   sheetLength: 3000,
   sheetWidth: 1500,
+  sheetEdgeGap: 10,
+  sheetPartGap: 5,
   exploded: 0,
   showDimensions: true,
   renderHoles: true,

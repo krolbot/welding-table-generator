@@ -3,8 +3,9 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { display, type Config } from './model'
 import { framePositions, legCornerPlateSpec, makeParts, partWeight, type Contour, type Part } from './geometry'
+import type { NestingResult } from './nesting'
 
-type Props = { config: Config; resetToken: number; mountFocusToken: number; dark: boolean }
+type Props = { config: Config; resetToken: number; mountFocusToken: number; dark: boolean; nesting?: NestingResult }
 type PartInfo = { part: Part['name']; isPart: true; name: string; dims: string; weight: string | number; weightUnit: string; holesCount: number; basePos: THREE.Vector3; explodeDir: THREE.Vector3; currentFactor: number }
 type PartMesh = THREE.Mesh<THREE.ExtrudeGeometry, THREE.MeshStandardMaterial> & { userData: PartInfo }
 const holeCurveSegments = 24
@@ -256,6 +257,30 @@ const rebuildAssembly = (runtime: Runtime, config: Config) => {
   rebuildDimensions(runtime, config)
 }
 
+const rebuildSheets = (runtime: Runtime, config: Config, nesting: NestingResult) => {
+  dispose(runtime.assembly)
+  runtime.assembly.clear()
+  dispose(runtime.dimensions)
+  runtime.dimensions.clear()
+  runtime.meshes = []
+  runtime.factor = 0
+  runtime.targetFactor = 0
+  runtime.assembly.position.set(0, 0, 0)
+  const spacing = config.sheetLength * 1.08
+  const origin = (nesting.sheets.length - 1) * spacing / 2
+  nesting.sheets.forEach((sheet, index) => {
+    const sheetX = index * spacing - origin
+    const halfX = config.sheetLength / 2, halfY = config.sheetWidth / 2
+    const points = [new THREE.Vector3(-halfX, 0, -halfY), new THREE.Vector3(halfX, 0, -halfY), new THREE.Vector3(halfX, 0, halfY), new THREE.Vector3(-halfX, 0, halfY), new THREE.Vector3(-halfX, 0, -halfY)]
+    const outline = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: runtime.colors.dim }))
+    outline.position.x = sheetX
+    runtime.assembly.add(outline)
+    sheet.placements.forEach(placement => plate(runtime, placement.part, config,
+      new THREE.Vector3(sheetX + placement.translation.x - halfX, config.thickness / 2, halfY - placement.translation.y),
+      new THREE.Euler(-Math.PI / 2, 0, placement.rotation * Math.PI / 180), new THREE.Vector3()))
+  })
+}
+
 const resetCamera = (runtime: Runtime, config: Config) => {
   const extent = Math.max(config.length, config.width)
   runtime.camera.position.set(extent * 1.2, extent * 0.8, extent * 1.2)
@@ -280,7 +305,7 @@ const focusCornerMount = (runtime: Runtime, config: Config) => {
   runtime.controls.update()
 }
 
-export function ThreeAssembly({ config, resetToken, mountFocusToken, dark }: Props) {
+export function ThreeAssembly({ config, resetToken, mountFocusToken, dark, nesting }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const runtime = useRef<Runtime | undefined>(undefined)
   const [error, setError] = useState('')
@@ -386,12 +411,13 @@ export function ThreeAssembly({ config, resetToken, mountFocusToken, dark }: Pro
   useEffect(() => {
     const state = runtime.current
     if (!state) return
-    state.renderHoles = config.renderHoles
+    state.renderHoles = nesting ? true : config.renderHoles
     state.highlighting = config.highlighting
     setHover(null)
 
-    rebuildAssembly(state, config)
-  }, [config])
+    if (nesting) rebuildSheets(state, config, nesting)
+    else rebuildAssembly(state, config)
+  }, [config, nesting])
 
   useEffect(() => {
     const state = runtime.current
@@ -403,14 +429,22 @@ export function ThreeAssembly({ config, resetToken, mountFocusToken, dark }: Pro
     state.assembly.traverse((item: THREE.Object3D) => {
       if (item instanceof THREE.LineSegments) (item.material as THREE.LineBasicMaterial).color.setHex(state.colors.edge)
     })
-    rebuildDimensions(state, config)
+    if (!nesting) rebuildDimensions(state, config)
   }, [dark])
 
   useEffect(() => {
     const state = runtime.current
-    if (state) resetCamera(state, config)
+    if (state && nesting) {
+      const extent = Math.max(config.sheetLength * Math.max(1, nesting.sheets.length) * 1.08, config.sheetWidth)
+      state.camera.far = Math.max(100000, extent * 6)
+      state.camera.updateProjectionMatrix()
+      state.controls.maxDistance = Math.max(18000, extent * 5)
+      state.camera.position.set(extent * 0.6, extent * 1.1, extent * 0.7)
+      state.controls.target.set(0, 0, 0)
+      state.controls.update()
+    } else if (state) resetCamera(state, config)
   // resetToken is the user-facing reset action; config edits preserve an orbit in progress.
-  }, [resetToken])
+  }, [resetToken, nesting])
 
   useEffect(() => {
     const state = runtime.current
@@ -419,7 +453,7 @@ export function ThreeAssembly({ config, resetToken, mountFocusToken, dark }: Pro
   }, [mountFocusToken])
 
   return error ? <div className="three-loading" role="alert">{error}</div> : <>
-    <div className="three-canvas" ref={host} aria-label="Interactive 3D welding table assembly" />
+    <div className="three-canvas" ref={host} aria-label={nesting ? 'Interactive 3D sheet layout' : 'Interactive 3D welding table assembly'} />
     {hover && <div className="part-tooltip" style={{ left: Math.max(8, Math.min(hover.x + 15, (host.current?.clientWidth ?? 280) - 270)), top: Math.max(8, Math.min(hover.y + 15, (host.current?.clientHeight ?? 130) - 125)) }}>
       <strong>{hover.info.name}</strong><dl>
         <dt>Dimensions:</dt><dd>{hover.info.dims}</dd>

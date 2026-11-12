@@ -170,6 +170,9 @@ h3 small { margin-left: 2px; color: var(--faint); font-size: 10px; font-weight: 
 [data-theme="dark"] .part-tooltip strong { color: #60a5fa; }
 [data-theme="dark"] .part-tooltip dt { color: #94a3b8; }
 .three-tools { position: absolute; z-index: 3; top: 80px; left: 16px; background: #ffffffE0; border: 1px solid var(--input-border); border-radius: 12px; padding: 12px; box-shadow: 0 1px 3px #0001; }
+.sheet-tools { width: min(320px, calc(100% - 16px)); max-height: calc(100% - 90px); overflow-y: auto; }
+.sheet-tools p { font-size: 12px; line-height: 1.4; margin: 8px 0; }
+.sheet-tools button:disabled { opacity: .5; cursor: not-allowed; }
 .three-tools > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .three-tools header > div { display: flex; align-items: center; gap: 6px; }
 .three-tools h3 { font-size: 14px; line-height: 20px; margin: 0; color: #4338ca; }
