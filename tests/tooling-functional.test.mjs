@@ -14,7 +14,7 @@ before(async () => {
 after(async () => { await server?.close() })
 const near = (a, b, message = '') => assert.ok(Math.abs(a - b) < 1e-7, `${message}: ${a} != ${b}`)
 const build = (id, values = {}) => tooling.buildDefaultToolingAssembly(id, values)
-const worldHole = (assembly, instance, hole) => primitives.applyTransform({ x: hole.x, y: hole.y, z: 0 }, instance.transform)
+
 
 test('actual Three rotation matches canonical transforms for every catalog instance and compound rotation', () => {
   const transforms = tooling.TOOLING_IDS.flatMap(id => build(id).instances.map(i => i.transform))
@@ -58,25 +58,6 @@ test('B01 rejects an arc whose cardinal extremum exits the mounting blank', () =
   assert.throws(() => build('B01', { width: 150, height: 500, thickness: 20, clearance: 1.5, tabWidth: 15, radialRadius: 150, radialWidth: 40, radialStart: -80, radialEnd: 80 }), /Internal contour extends outside declared part bounds/)
 })
 
-test('B09 pivots and lock holes remain coaxial throughout the stated angle range', () => {
-  for (const angle of [-30, 0, 30, 60]) {
-    const assembly = build('B09', { angleMin: -30, angle, pivotHeight: 200 })
-    assert.equal(assembly.joints.filter(j => j.kind === 'pivot').length, 2)
-    assert.equal(assembly.joints.filter(j => j.kind === 'bolt').length, 2)
-    const platform = assembly.instances.find(i => i.partName === 'B09-platform')
-    near(platform.transform.rotation.y, -angle)
-    for (const joint of assembly.joints.filter(j => ['pivot', 'bolt'].includes(j.kind))) {
-      const endpoints = [joint.first, joint.second].map(ref => {
-        const instance = assembly.instances.find(i => i.id === ref.instanceId)
-        const face = instance.interfaces.find(i => i.id === ref.interfaceId)
-        return primitives.applyTransform(face.localOrigin, instance.transform)
-      })
-      near(endpoints[0].x, endpoints[1].x); near(endpoints[0].z, endpoints[1].z)
-    }
-  }
-  assert.throws(() => build('B09', { pivotHeight: 80 }), /full tilt range/)
-  assert.throws(() => build('B09', { angle: 70 }), /slot range/)
-})
 
 test('C03 carriage travels the requested stroke on real bush holes and preserves cut geometry', () => {
   const start = build('C03', { position: 0 }), end = build('C03', { position: 100 })
@@ -88,39 +69,7 @@ test('C03 carriage travels the requested stroke on real bush holes and preserves
   assert.throws(() => build('C03', { position: 101 }), /position/)
 })
 
-test('C06 both bearing seats, faceplate and drive have the declared common spindle axis', () => {
-  const assembly = build('C06')
-  for (const name of ['C06-headstock', 'C06-faceplate', 'C06-motor-plate']) {
-    const part = assembly.parts.find(p => p.name === name)
-    const hole = part.holes.find(h => ['bearing-seat', 'shaft', 'drive-shaft'].includes(h.id))
-    for (const instance of assembly.instances.filter(i => i.partName === name)) {
-      const world = worldHole(assembly, instance, hole)
-      near(world.y, 0); near(world.z, assembly.config.values.axisHeight)
-    }
-  }
-  assert.equal(assembly.purchased.find(p => p.id === 'bearing').mounts.length, 2)
-  assert.equal(assembly.purchased.find(p => p.id === 'motor').mounts.length, 4)
-})
 
-test('C07 bed positions use real aligned pin holes and actuator extension moves the ram', () => {
-  for (const bedRow of [0, 2, 4]) {
-    const assembly = build('C07', { bedRow })
-    assert.equal(assembly.joints.filter(j => j.kind === 'pivot').length, 4)
-    for (const joint of assembly.joints.filter(j => j.kind === 'pivot')) {
-      const endpoints = [joint.first, joint.second].map(ref => {
-        const instance = assembly.instances.find(i => i.id === ref.instanceId)
-        const face = instance.interfaces.find(f => f.id === ref.interfaceId)
-        const part = assembly.parts.find(p => p.name === instance.partName)
-        assert.ok(part.holes.some(h => Math.hypot(h.x - face.localOrigin.x, h.y - face.localOrigin.y) < 1e-7))
-        return primitives.applyTransform(face.localOrigin, instance.transform)
-      })
-      near(endpoints[0].y, endpoints[1].y); near(endpoints[0].z, endpoints[1].z)
-    }
-  }
-  const first = build('C07'), last = build('C07', { position: 150 })
-  near(first.instances.find(i => i.partName === 'C07-ram').transform.translation.z - last.instances.find(i => i.partName === 'C07-ram').transform.translation.z, 150)
-  assert.throws(() => build('C07', { position: 151 }), /travel/)
-})
 
 test('support packs achieve exact height and V inserts retain both outside corners', () => {
   const assembly = build('A07', { supportHeight: 20, thickness: 12 })

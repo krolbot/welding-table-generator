@@ -1,5 +1,7 @@
 {
   "schemaVersion": 1,
+  "historicalOnly": true,
+  "note": "This audit applies only to sourceBase before the welding-table catalog scope correction; the 34 candidates include plasma and press equipment and are not the current catalog. See docs/tooling-geometry.md for active IDs.",
   "scope": "welding-table tooling catalog, mixed production basket, grouped nesting and export",
   "sourceBase": "728f56bd1ddc7f276fdcee5e24bc70e85d2a0f5e",
   "catalog": {

@@ -20,17 +20,20 @@ type Props = {
   onLoadTable: (value: unknown) => void
 }
 
-const initialProject = (table: Config): { project: CombinedProject; error: string } => {
+const initialProject = (table: Config): { project: CombinedProject; error: string; rejectedSave?: string } => {
+  const empty: CombinedProject = { version: PROJECT_VERSION, table: projectConfig(table), includeTable: false, tooling: [] }
   const encoded = new URLSearchParams(location.search).get('project')
   if (encoded) {
     try { return { project: decodeCombinedProject(encoded), error: '' } }
-    catch (error) { return { project: { version: PROJECT_VERSION, table: projectConfig(table), includeTable: false, tooling: [] }, error: error instanceof Error ? `Share Link rejected: ${error.message}` : 'Share Link rejected' } }
+    catch (error) { return { project: empty, error: error instanceof Error ? `Share Link rejected: ${error.message}` : 'Share Link rejected' } }
   }
+  const saved = localStorage.getItem('weldingToolingProject')
+  if (!saved) return { project: empty, error: '' }
   try {
-    const raw: unknown = JSON.parse(localStorage.getItem('weldingToolingProject') ?? 'null')
+    const raw: unknown = JSON.parse(saved)
     return { project: parseCombinedProject(raw), error: '' }
-  } catch {
-    return { project: { version: PROJECT_VERSION, table: projectConfig(table), includeTable: false, tooling: [] }, error: '' }
+  } catch (error) {
+    return { project: empty, error: `Saved project rejected: ${error instanceof Error ? error.message : 'invalid data'}. Download the original JSON below before changing the basket.`, rejectedSave: saved }
   }
 }
 
@@ -48,14 +51,15 @@ const assemblyLayout = (assembly: ToolingAssembly) => {
   return { items, width: maxWidth, height: y + row + gap }
 }
 
-const downloadJson = (project: CombinedProject) => {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }))
+const downloadText = (text: string, name: string) => {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = 'WeldingTable_Tooling_Project.json'
+  anchor.download = name
   anchor.click()
   queueMicrotask(() => URL.revokeObjectURL(url))
 }
+const downloadJson = (project: CombinedProject) => downloadText(JSON.stringify(project, null, 2), 'WeldingTable_Tooling_Project.json')
 
 const copy = async (value: string) => {
   if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable')
@@ -78,6 +82,8 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
   const [exploded, setExploded] = useState(0)
   const [reset3d, setReset3d] = useState(0)
   const [notice, setNotice] = useState(initial.error)
+  const [autosaveEnabled, setAutosaveEnabled] = useState(!initial.error)
+  const [originalSave] = useState(() => initial.rejectedSave ?? localStorage.getItem('weldingToolingProjectBackup') ?? '')
   const [settings, setSettings] = useState<NestingSettings>(initial.project.nesting ?? { sheetLength: table.sheetLength, sheetWidth: table.sheetWidth, edgeGap: table.sheetEdgeGap, partGap: table.sheetPartGap, rotations: [0, 90, 180, 270] })
   const [nesting, setNesting] = useState<{ key: string; results: Record<string, NestingResult> }>({ key: '', results: {} })
   const [nestingState, setNestingState] = useState<'empty' | 'loading' | 'ready' | 'error'>('empty')
@@ -107,14 +113,18 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
     }
   }, [initial])
   useEffect(() => {
-    try { localStorage.setItem('weldingToolingProject', JSON.stringify(project)) }
+    if (!autosaveEnabled) return
+    try {
+      if (initial.rejectedSave) localStorage.setItem('weldingToolingProjectBackup', initial.rejectedSave)
+      localStorage.setItem('weldingToolingProject', JSON.stringify(project))
+    }
     catch { setNotice('Autosave is unavailable. Save the project JSON manually.') }
-  }, [project])
+  }, [project, autosaveEnabled, initial.rejectedSave])
   useEffect(() => {
-    if (!notice) return
+    if (!notice || (!autosaveEnabled && notice === initial.error)) return
     const timer = window.setTimeout(() => setNotice(''), 5000)
     return () => clearTimeout(timer)
-  }, [notice])
+  }, [notice, autosaveEnabled, initial.error])
   useEffect(() => {
     const model = production.model
     if (!model || !model.groups.length) { setNesting({ key: '', results: {} }); setNestingState('empty'); return }
@@ -135,18 +145,23 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
 
   const catalog = toolingCatalog.filter(entry => (route === 'all' || entry.route === route) && `${entry.id} ${entry.name} ${entry.function}`.toLowerCase().includes(query.toLowerCase()))
   const add = (id: (typeof toolingCatalog)[number]['id']) => {
+    setAutosaveEnabled(true)
     const item = makeBasketItem(id)
     setItems(current => [...current, item])
     setSelected(item.instanceId)
   }
-  const replace = (next: ToolingBasketItem) => setItems(current => current.map(item => item.instanceId === next.instanceId ? next : item))
-  const remove = (id: string) => setItems(current => {
-    const index = current.findIndex(item => item.instanceId === id)
-    const next = current.filter(item => item.instanceId !== id)
-    if (selected === id) setSelected(next[Math.min(index, next.length - 1)]?.instanceId ?? '')
-    return next
-  })
+  const replace = (next: ToolingBasketItem) => { setAutosaveEnabled(true); setItems(current => current.map(item => item.instanceId === next.instanceId ? next : item)) }
+  const remove = (id: string) => {
+    setAutosaveEnabled(true)
+    setItems(current => {
+      const index = current.findIndex(item => item.instanceId === id)
+      const next = current.filter(item => item.instanceId !== id)
+      if (selected === id) setSelected(next[Math.min(index, next.length - 1)]?.instanceId ?? '')
+      return next
+    })
+  }
   const duplicate = (item: ToolingBasketItem) => {
+    setAutosaveEnabled(true)
     const copy = { ...item, instanceId: crypto.randomUUID(), config: { ...item.config, values: { ...item.config.values } } }
     setItems(current => [...current, copy])
     setSelected(copy.instanceId)
@@ -169,6 +184,7 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
         setIncludeTable(loaded.includeTable)
         setSettings(loaded.nesting ?? { sheetLength: table.sheetLength, sheetWidth: table.sheetWidth, edgeGap: table.sheetEdgeGap, partGap: table.sheetPartGap, rotations: [0, 90, 180, 270] })
         setSelected(loaded.tooling[0]?.instanceId ?? '')
+        setAutosaveEnabled(true)
         setNotice(loaded.tooling.length ? 'Full project loaded.' : 'Legacy table project loaded; tooling basket is empty.')
       } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not read this project') }
     }
@@ -183,7 +199,7 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
     catch { setNotice('Clipboard access was denied. Save the project JSON instead.') }
   }
   const updateSetting = (key: keyof Omit<NestingSettings, 'rotations'>, value: number) => {
-    try { setSettings(parseNestingSettings({ ...settings, [key]: value })) }
+    try { setSettings(parseNestingSettings({ ...settings, [key]: value })); setAutosaveEnabled(true) }
     catch (error) { setNotice(error instanceof Error ? error.message : 'Invalid nesting settings') }
   }
 
@@ -192,15 +208,15 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
       <header><div className="brand"><Icon name="settings" size={24} /><h2>Welding Tooling</h2></div><button className="icon" aria-label="Toggle color theme" onClick={onToggleTheme}><Icon name={dark ? 'sun' : 'moon'} /></button></header>
       <div className="workspace-switch"><button onClick={onBack}>Table</button><button className="active">Tooling</button></div>
       <div className="settings-scroll">
-        <section className="fixture-card tooling-catalog"><h3>Catalog — 34 items</h3>
+        <section className="fixture-card tooling-catalog"><h3>Catalog — {toolingCatalog.length} items</h3>
           <input aria-label="Search tooling catalog" type="search" placeholder="Search ID, name or function" value={query} onChange={event => setQuery(event.target.value)} />
           <div className="grid-buttons route-filter">{(['all', 'cut', 'welded', 'hybrid'] as const).map(value => <button key={value} className={route === value ? 'active' : ''} onClick={() => setRoute(value)}>{value === 'all' ? 'All' : value}</button>)}</div>
           <div className="catalog-list">{catalog.map(entry => <button key={entry.id} onClick={() => add(entry.id)}><b>{entry.id}</b><span>{entry.name}</span><small>{entry.route}</small></button>)}</div>
           {!catalog.length && <p className="empty-state">No catalog items match this filter.</p>}
         </section>
-        <section><h3>Production basket</h3><label className="checkbox"><input type="checkbox" checked={includeTable} onChange={event => setIncludeTable(event.target.checked)} /><span>Include the current welding table (S235JR)</span></label>
+        <section><h3>Production basket</h3><label className="checkbox"><input type="checkbox" checked={includeTable} onChange={event => { setIncludeTable(event.target.checked); setAutosaveEnabled(true) }} /><span>Include the current welding table (S235JR)</span></label>
           <div className="basket-list">{items.map(item => { const entry = getToolingEntry(item.config.id); return <button key={item.instanceId} className={selected === item.instanceId ? 'active' : ''} onClick={() => setSelected(item.instanceId)}><b>{entry.id}</b><span>{entry.name}</span><small>×{item.quantity} · {item.material}</small></button> })}</div>
-          {!items.length && <p className="empty-state">Basket is empty. Add any of the 34 catalog items above.</p>}
+          {!items.length && <p className="empty-state">Basket is empty. Add an item from the catalog above.</p>}
         </section>
         {active && activeEntry && <section key={active.instanceId} className="tooling-editor"><h3>{activeEntry.id} · {activeEntry.name}</h3><p>{activeEntry.function}</p>
           <div className="fields"><label className="field"><span>Assembly quantity</span><NumberInput min={1} max={20} step={1} value={String(active.quantity)} onValue={value => Number.isInteger(value) && value >= 1 && value <= 20 && replace({ ...active, quantity: value })} /></label><label className="field"><span>Sheet material</span><select value={active.material} onChange={event => replace({ ...active, material: event.target.value as SheetMaterial })}>{sheetMaterials.map(value => <option key={value}>{value}</option>)}</select></label></div>
@@ -211,7 +227,7 @@ export function ToolingWorkspace({ table, dark, onBack, onToggleTheme, onLoadTab
         <section><h3>Sheet nesting (mm)</h3><div className="fields"><label className="field"><span>Length</span><NumberInput min={100} value={String(settings.sheetLength)} onValue={value => updateSetting('sheetLength', value)} /></label><label className="field"><span>Width</span><NumberInput min={100} value={String(settings.sheetWidth)} onValue={value => updateSetting('sheetWidth', value)} /></label></div><div className="fields"><label className="field"><span>Edge gap</span><NumberInput min={0} value={String(settings.edgeGap)} onValue={value => updateSetting('edgeGap', value)} /></label><label className="field"><span>Part gap</span><NumberInput min={0} value={String(settings.partGap)} onValue={value => updateSetting('partGap', value)} /></label></div><p>Every material/thickness pair is nested independently. Internal holes remain occupied and cannot contain other parts.</p></section>
       </div>
       <section className="production-card"><h3>Production estimate</h3>{production.model ? <><div className="estimate"><div><span>Sheet mass</span><strong>{production.model.massKg.toFixed(1)}<small>kg</small></strong></div><div><span>Cut length</span><strong>{production.model.cutLengthM.toFixed(1)}<small>m</small></strong></div></div><div className="estimate-extra"><span>Groups: <b>{production.model.groups.length}</b></span><span>Purchased lines: <b>{production.model.purchased.length}</b></span></div></> : <p className="socket-error">{production.error}</p>}</section>
-      <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" onClick={() => fileInput.current?.click()}><Icon name="folder" size={14} />Open</button><button className="secondary" onClick={() => downloadJson(project)}><Icon name="save" size={14} />Save</button></div><button className="secondary full share" onClick={() => void share()}><Icon name="share" size={14} />Share Link</button><button className="zip" disabled={!nestingValid || !production.model} onClick={() => production.model && void downloadProductionArchive(production.model, nesting.results, settings).catch(error => setNotice(error instanceof Error ? error.message : 'Export failed'))}><Icon name="archive" size={18} />Production ZIP</button></section>
+      <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" onClick={() => fileInput.current?.click()}><Icon name="folder" size={14} />Open</button><button className="secondary" onClick={() => downloadJson(project)}><Icon name="save" size={14} />Save</button></div>{originalSave && <button className="secondary full" onClick={() => downloadText(originalSave, 'WeldingTable_Original_Project_Backup.json')}>Download original project JSON</button>}<button className="secondary full share" onClick={() => void share()}><Icon name="share" size={14} />Share Link</button><button className="zip" disabled={!nestingValid || !production.model} onClick={() => production.model && void downloadProductionArchive(production.model, nesting.results, settings).catch(error => setNotice(error instanceof Error ? error.message : 'Export failed'))}><Icon name="archive" size={18} />Production ZIP</button></section>
     </aside>
     <section className="work-area tooling-work" data-view={view}>
       <div className="mode"><button className={view === '2d' ? 'active' : ''} onClick={() => setView('2d')}><Icon name="frame" />Parts 2D</button><button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}><Icon name="box" />Assembly 3D</button><button className={view === 'sheet' ? 'active' : ''} onClick={() => setView('sheet')}><Icon name="layers" />Common nesting</button></div>

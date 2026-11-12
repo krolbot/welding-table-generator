@@ -239,14 +239,3 @@ export const assertA10B08Compatibility = (insert: ToolingConfig<'A10'>, holder: 
   if (insert.values.profile !== 'vee' || Math.abs(configNumber(insert, 'veeAngle') - configNumber(holder, 'veeAngle')) > EPS || Math.abs(configNumber(insert, 'profileSize') - configNumber(holder, 'profileSize')) > EPS) errors.push('contact profile')
   if (errors.length) throw new Error(`A10/B08 incompatible: ${errors.join(', ')}`)
 }
-
-export const assertA13B14Compatibility = (slat: ToolingConfig<'A13'>, module: ToolingConfig<'B14'>): void => {
-  const errors: string[] = []
-  if (Math.abs(configNumber(slat, 'thickness') - configNumber(module, 'slatThickness')) > EPS) errors.push('slat thickness')
-  if (Math.abs(configNumber(slat, 'height') - configNumber(module, 'slatHeight')) > EPS) errors.push('slat height')
-  if (Math.abs(configNumber(slat, 'seatDepth') - configNumber(module, 'seatDepth')) > EPS) errors.push('seat depth')
-  if (Math.abs(configNumber(slat, 'seatWidth') - configNumber(module, 'seatWidth')) > EPS) errors.push('rail seat width')
-  if (Math.abs(configNumber(slat, 'span') - configNumber(module, 'width')) > EPS) errors.push('slat span')
-  if (configNumber(slat, 'quantity') !== configNumber(module, 'slatCount')) errors.push('slat quantity')
-  if (errors.length) throw new Error(`A13/B14 incompatible: ${errors.join(', ')}`)
-}

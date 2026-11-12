@@ -6,7 +6,7 @@ import { validateNesting, type NestingOptions, type NestingResult } from '../nes
 import { buildToolingAssembly } from './build.js'
 import { createToolingConfig } from './catalog.js'
 import { estimatePartMassKg } from './bom.js'
-import { assertA10B08Compatibility, assertA13B14Compatibility } from './validation.js'
+import { assertA10B08Compatibility } from './validation.js'
 import { materialDensityKgPerMm3, type PurchasedComponent, type SheetMaterial, type SheetPart, type ToolingAssembly } from './model.js'
 import { PROJECT_VERSION, type CombinedProject, type ToolingBasketItem } from './project.js'
 
@@ -58,14 +58,11 @@ export const buildProductionModel = (table: Config, tooling: ToolingBasketItem[]
   })
   const a10 = tooling.filter(line => line.config.id === 'A10').map(line => createToolingConfig('A10', line.config.values))
   const b08 = tooling.filter(line => line.config.id === 'B08').map(line => createToolingConfig('B08', line.config.values))
-  const a13 = tooling.filter(line => line.config.id === 'A13').map(line => createToolingConfig('A13', line.config.values))
-  const b14 = tooling.filter(line => line.config.id === 'B14').map(line => createToolingConfig('B14', line.config.values))
   const everyHasMatch = <A, B>(first: readonly A[], second: readonly B[], check: (a: A, b: B) => void) => !first.length || !second.length || (
     first.every(a => second.some(b => { try { check(a, b); return true } catch { return false } }))
     && second.every(b => first.some(a => { try { check(a, b); return true } catch { return false } }))
   )
   if (!everyHasMatch(a10, b08, assertA10B08Compatibility)) throw new Error('A10/B08 basket lines have no compatible insert/holder counterpart')
-  if (!everyHasMatch(a13, b14, assertA13B14Compatibility)) throw new Error('A13/B14 basket lines have no compatible slat/module counterpart')
   const parts: ProductionPart[] = lines.flatMap(({ line, assembly }) => assembly.parts.map(part => cloneToolingPart(line, part)))
   if (includeTable) {
     assertFabricationReady(table)

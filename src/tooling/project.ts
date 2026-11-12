@@ -59,7 +59,7 @@ export const parseCombinedProject = (input: unknown): CombinedProject => {
     if (!isMaterial(raw.material)) throw new Error(`${path}.material is invalid`)
     if (!isRecord(raw.config)) throw new Error(`${path}.config must be an object`)
     exactKeys(raw.config, ['id', 'values'], `${path}.config`)
-    if (!isToolingId(raw.config.id)) throw new Error(`${path}.config.id is invalid`)
+    if (!isToolingId(raw.config.id)) throw new Error(`${path}.config.id ${String(raw.config.id)} is not in the welding-table tooling catalog; the project was not imported`)
     if (!isRecord(raw.config.values)) throw new Error(`${path}.config.values must be an object`)
     const values = Object.fromEntries(Object.entries(raw.config.values).map(([key, value]) => {
       if (!['number', 'boolean', 'string'].includes(typeof value)) throw new Error(`${path}.config.values.${key} has an invalid type`)
