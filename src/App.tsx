@@ -25,8 +25,8 @@ import {
   type PartName,
 } from './model'
 import { contourPoints, engravingLines, layoutParts, legCornerPlateSpec, svgContourPath, totals, type Hole, type Point } from './geometry'
-import { downloadFull, downloadZip, downloadNestedZip } from './dxf'
-import type { NestingResult } from './nesting'
+import { downloadFull, downloadZip } from './dxf'
+import { SheetNesting } from './SheetNesting'
 import { Icon, type IconName } from './Icon'
 import { NumberInput } from './NumberInput'
 
@@ -46,7 +46,7 @@ const numericKeys: NumericKey[] = [
   'holeDiameter', 'pitch', 'margin', 'length', 'width', 'height', 'ribSpacing', 'thickness', 'tabWidth',
   'clearance', 'dogBoneDiameter', 'legBoltDiameter', 'legPatternX', 'legPatternY', 'legCols', 'legRows',
   'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize',
-  'legPlateHoleDiameter', 'legPlateHoleSpacing', 'legLength', 'sheetLength', 'sheetWidth', 'sheetEdgeGap', 'sheetPartGap', 'exploded',
+  'legPlateHoleDiameter', 'legPlateHoleSpacing', 'legLength', 'sheetLength', 'sheetWidth', 'sheetEdgeGap', 'sheetPartGap', 'nestingCopies', 'exploded',
 ]
 const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   holeDiameter: { min: 1, max: 40 },
@@ -76,6 +76,7 @@ const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   sheetWidth: { min: 0, max: Infinity },
   sheetEdgeGap: { min: 0, max: 1000 },
   sheetPartGap: { min: 0, max: 1000 },
+  nestingCopies: { min: 1, max: 10 },
   exploded: { min: 0, max: 100 },
 }
 const booleanKeys: BooleanKey[] = [
@@ -131,6 +132,8 @@ function normalizeConfig(input: unknown): Config {
   if (value.skirtHoleLayout === 'canonical' || value.skirtHoleLayout === 'compact') result.skirtHoleLayout = value.skirtHoleLayout
   if (value.engravingMode === 'through' || value.engravingMode === 'between') result.engravingMode = value.engravingMode
   if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') result.legMountStyle = value.legMountStyle
+  result.nestingCopies = Math.floor(result.nestingCopies)
+  if (value.nestingRotations === 'fixed' || value.nestingRotations === 'half' || value.nestingRotations === 'quarter' || value.nestingRotations === 'eighth' || value.nestingRotations === 'fine') result.nestingRotations = value.nestingRotations
   if (value.legMountStyle === 'squareSocket') result.legMountStyle = 'cornerPlate'
   result.customHoles = parseCustomHoles(value.customHoles)
   result.removedHoles = Array.isArray(value.removedHoles) ? value.removedHoles.flatMap((item): Array<RemovedHole | string> => {
@@ -213,8 +216,6 @@ export default function App() {
   const [config, setConfig] = useState<Config>(loadedConfig)
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
   const [view, setView] = useState<View>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
-  const [nestingState, setNestingState] = useState<{ config: Config; result: NestingResult } | null>(null)
-  const [nestingStatus, setNestingStatus] = useState<'idle' | 'calculating' | 'ready' | 'error'>('idle')
   const [tool, setTool] = useState<Tool>(null)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -237,17 +238,6 @@ export default function App() {
   const summary = useMemo(() => totals(config), [config])
   const layout = useMemo(() => layoutParts(config), [config])
   const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
-  const nesting = nestingState?.config === config ? nestingState.result : null
-  useEffect(() => {
-    if (view !== 'sheet') return
-    setNestingState(null)
-    setNestingStatus('calculating')
-    const worker = new Worker(new URL('./nesting.worker.ts', import.meta.url), { type: 'module' })
-    worker.onmessage = (event: MessageEvent<NestingResult>) => { setNestingState({ config, result: event.data }); setNestingStatus('ready') }
-    worker.onerror = () => setNestingStatus('error')
-    worker.postMessage(config)
-    return () => worker.terminate()
-  }, [config, view])
   const snapPoints = useMemo(() => layout.instances.flatMap(item => [
     ...item.part.contours.flatMap(contour => contourPoints(contour, 1)),
     ...item.part.holes.flatMap(hole => [hole,
@@ -652,7 +642,7 @@ export default function App() {
           </svg>
           </div>
           <div className="drawing-toolbar"><div className="laser-note"><Icon name="info" /><div><strong>File for Laser Cutting</strong><small>On DXF export, reliefs (dog-bones) are created as native <b>DXF ARC</b>, and grid holes as <b>DXF CIRCLE</b>.</small></div></div><div className="canvas-tools"><button aria-label="Holes" className={tool === 'holes' ? 'active holes-tool' : 'holes-tool'} onClick={() => { setTool(current => current === 'holes' ? null : 'holes'); measuring.current = false }}><Icon name="trash" /><span className="tool-label">Holes{tool === 'holes' ? ' (Active)' : ''}</span></button><button aria-label="Ruler" className={tool === 'ruler' ? 'active ruler-tool' : 'ruler-tool'} onClick={() => { setTool(current => current === 'ruler' ? null : 'ruler'); setMeasure(null); measuring.current = false }}><Icon name="ruler" /><span className="tool-label">Ruler{tool === 'ruler' ? ' (Active)' : ''}</span></button><button title="Reset Zoom (Center)" onClick={reset2d}><Icon name="maximize" />{displayedLayoutWidth} x {displayedLayoutHeight} {unitLabel}</button></div></div>
-        </> : view === 'sheet' ? <><div className="drawing-frame">{nesting && nesting.placements.length ? <Suspense fallback={<div className="three-loading">Loading sheet view…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={0} dark={dark} nesting={nesting} /></Suspense> : <div className="three-loading" role="status">{nestingStatus === 'error' ? 'Sheet layout could not be calculated.' : nesting ? 'No parts could be placed on this sheet.' : 'Calculating sheet layout…'}</div>}</div><div className="three-tools sheet-tools"><header><h3><Icon name="layers" size={16} />Sheet nesting</h3><button onClick={() => setReset3d(value => value + 1)}><Icon name="maximize" size={12} />Reset view</button></header><p role="status">{nesting ? !nesting.validation.valid ? 'Layout validation failed. Export is disabled.' : nesting.unplaced.length ? `No placement found for ${nesting.unplaced.length} parts. Export is disabled.` : `${nesting.placements.length} parts on ${nesting.sheets.length} sheet(s). Approx. ${(100 * nesting.outlineArea / (nesting.sheets.length * config.sheetLength * config.sheetWidth)).toFixed(1)}% blank-outline coverage (holes not deducted).` : nestingStatus === 'error' ? 'Calculation failed.' : 'Calculating…'}</p><details><summary>Sheet spacing and export</summary><div className="fields">{numericInput('sheetEdgeGap', `Sheet edge gap (${unitLabel})`, 0, 1000, 1, 2)}{numericInput('sheetPartGap', `Part gap (${unitLabel})`, 0, 1000, 1, 2)}</div><p>Heuristic layout; not guaranteed optimal. Nominal contours only. Verify kerf, lead-ins, clamps and cutting order in CAM.</p><button className="secondary full" disabled={!nesting || !nesting.validation.valid || nesting.unplaced.length > 0 || nesting.placements.length === 0} onClick={() => { if (nesting) void downloadNestedZip(config, nesting).catch(() => setNotice('Could not export the sheet layout.')) }}><Icon name="download" size={14} />Download sheet DXFs (ZIP)</button></details></div></> : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><div className="three-tools"><header><h3><Icon name="layers" size={16} />Interactive 3D Assembly</h3><div>{cornerPlate && <button title="Focus the camera on the front-right corner mount" onClick={() => setFocusMount3d(value => value + 1)}><Icon name="target" size={12} />Mount detail</button>}<button title="Reset camera to the default view" onClick={() => setReset3d(value => value + 1)}><Icon name="maximize" size={12} />Reset view</button></div></header>{toggle('renderHoles', 'Render Holes (affects FPS)')}{toggle('highlighting', 'Interactive Part Highlighting')}</div></>}
+        </> : view === 'sheet' ? <SheetNesting config={config} dark={dark} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} /> : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><div className="three-tools"><header><h3><Icon name="layers" size={16} />Interactive 3D Assembly</h3><div>{cornerPlate && <button title="Focus the camera on the front-right corner mount" onClick={() => setFocusMount3d(value => value + 1)}><Icon name="target" size={12} />Mount detail</button>}<button title="Reset camera to the default view" onClick={() => setReset3d(value => value + 1)}><Icon name="maximize" size={12} />Reset view</button></div></header>{toggle('renderHoles', 'Render Holes (affects FPS)')}{toggle('highlighting', 'Interactive Part Highlighting')}</div></>}
         <nav className="social" aria-label="Original project links"><strong>DIY WELDING PROJECTS</strong><div>{socialLinks.map(link => <a key={link.name} title={link.name} aria-label={link.name} href={link.url} target="_blank" rel="noopener noreferrer"><Icon name={link.icon} size={18} /></a>)}</div></nav>
         <div className="legal-disclosure">{about && <article id="about-panel" className="legal-panel" aria-labelledby="about-title"><header><h3 id="about-title">About & Legal Info</h3><button ref={closeButton} className="icon" aria-label="Close About and Legal Info" onClick={() => setAbout(false)}><Icon name="close" /></button></header><small>VERSION 1.0.0</small><p>This independent clean-room implementation preserves the public generator's workflow. It is not affiliated with or endorsed by the original author.</p><p>Models, layouts and DXF files are informational only. Confirm dimensions, kerf tolerances and structural integrity with a qualified professional before CNC or laser cutting.</p><a href="https://welding-table-generator.com/" target="_blank" rel="noopener noreferrer">Original project ↗</a></article>}<button className="legal-link" aria-expanded={about} aria-controls="about-panel" onClick={() => setAbout(value => !value)}>About & Legal Info<Icon name="chevron" size={14} style={{ transform: about ? 'rotate(180deg)' : undefined }} /></button></div>
         {notice && <output className="notice" aria-live="polite" onClick={() => setNotice('')}>{notice}</output>}

@@ -666,7 +666,7 @@ export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
   return lines
 }
 
-const signedArea = (contour: Contour) => contour.reduce((sum, segment) => {
+export const signedContourArea = (contour: Contour) => contour.reduce((sum, segment) => {
   if (segment.type === 'line') return sum + (segment.from.x * segment.to.y - segment.to.x * segment.from.y) / 2
   const end = segment.start + arcSweep(segment)
   const startRad = radians(segment.start)
@@ -684,7 +684,7 @@ export const contourLength = (contour: Contour) => contour.reduce((sum, segment)
 }, 0)
 
 export const partWeight = (part: Part, _c: Config) => {
-  const contourArea = Math.abs(signedArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedArea(contour)), 0)
+  const contourArea = Math.abs(signedContourArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedContourArea(contour)), 0)
   const holeArea = part.holes.reduce((area, hole) => area + Math.PI * (hole.d / 2) ** 2, 0)
   return (contourArea - holeArea) * part.thickness * densityKgPerMm3
 }

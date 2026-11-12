@@ -51,6 +51,8 @@ export type Config = {
   sheetWidth: number
   sheetEdgeGap: number
   sheetPartGap: number
+  nestingRotations: 'fixed' | 'half' | 'quarter' | 'eighth' | 'fine'
+  nestingCopies: number
   exploded: number
   showDimensions: boolean
   renderHoles: boolean
@@ -100,6 +102,8 @@ export const defaults: Config = {
   sheetWidth: 1500,
   sheetEdgeGap: 10,
   sheetPartGap: 5,
+  nestingRotations: 'quarter',
+  nestingCopies: 1,
   exploded: 0,
   showDimensions: true,
   renderHoles: true,

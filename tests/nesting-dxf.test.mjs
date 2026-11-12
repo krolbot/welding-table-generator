@@ -11,7 +11,7 @@ test('sheet DXF rotates native outlines, arcs, holes and engraving exactly', asy
     const { defaults } = await server.ssrLoadModule('/src/model.ts')
     const config = { ...defaults, engraving: true, nameMarking: true, liftingHoles: true }
     const part = geometry.makeParts(config).find(value => value.name === 'longSkirt')
-    for (const rotation of [0, 90, 180, 270]) {
+    for (const rotation of [0, 15, 45, 90, 105, 180, 270, 345]) {
       const placement = { part, instance: 0, sheet: 0, rotation, translation: { x: 1000, y: 1200 } }
       const text = dxf.dxfForNestedSheet(config, [placement])
       const raw = text.split('0\nSECTION\n2\nENTITIES\n')[1].split('0\nENDSEC\n')[0]

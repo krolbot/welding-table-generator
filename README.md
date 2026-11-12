@@ -9,6 +9,14 @@ An independent, browser-only welding-table layout planner. This is a clean-room 
 - Interactive SVG layout with pan, wheel/pinch zoom, hole removal and coordinate ruler; Three.js assembly with OrbitControls, hover highlighting, exploded view and dimensions.
 - Browser-only JSON open/save/share, production estimates, sheet fit feedback, individual-part DXF ZIPs and full-layout ASCII DXF R12 exports using `OUTLINE`, `ENGRAVE`, and `HOLES` layers.
 
+## Sheet nesting
+
+The **Sheet nesting** view performs contour-aware placement with cached no-fit regions, deterministic order/orientation search and progressive verified results. Inspect each sheet in 3D or 2D, pause and continue the search, constrain rotations, and nest batches of identical tables. It minimizes sheet count first, then prefers clear edge strips rather than merely displaying a coverage percentage.
+
+Exports retain native DXF lines/arcs/circles and include a reproducible placement manifest and project settings. Missing, stale or invalid placements block export. The search is heuristic, not a universal optimality guarantee; kerf, lead-ins, clamping and cutting sequence still require CAM review.
+
+See [the algorithm, limits, metrics, benchmark fixtures and audit commands](docs/sheet-nesting.md). `npm run bench:nesting -- 96` reproduces the quality comparison; `npm run audit:nesting -- archive.zip` inspects an actual exported archive.
+
 ## Local run
 
 Requires Node 26.7.0 or newer.
