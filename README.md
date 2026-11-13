@@ -20,7 +20,7 @@ See [the algorithm, limits, metrics, benchmark fixtures and audit commands](docs
 
 ## Tools
 
-Use **Tools** in the sidebar to choose a separate welded-product workspace. The first tool designs an independently engineered 500 × 200 × 200 mm open-bottom welding-table extension from seven flat steel pieces. Adjust its dimensions, inspect part profiles and the 3D assembly, then run the same automatic contour-aware sheet nesting for the complete cut list. Save or open a versioned project JSON, share a link, or download native per-part and per-sheet DXFs with layout and assembly manifests. Export stays disabled for incomplete or invalid nesting. The table generator's own project and settings remain separate.
+Use **Tools** in the sidebar to choose a separate welded-product workspace. The first tool designs an independently engineered 500 × 200 × 200 mm wedge extension from seven flat steel pieces: a horizontal perforated top, tapered open sides, a slotted mounting end, a shallow free end and two narrow cross ties with matching locating tabs and cuts. Adjust its dimensions, inspect part profiles and the 3D assembly, then run the same automatic contour-aware sheet nesting for the complete cut list. Save or open a versioned project JSON, share a link, or download native per-part and per-sheet DXFs with layout and assembly manifests. Export stays disabled for incomplete or invalid nesting. The table generator's own project and settings remain separate.
 
 This is **not a reconstruction of the manufacturer's dimensioned drawings**. See [the extension's assumptions and fabrication checks](docs/tools-extension.md) before cutting.
 

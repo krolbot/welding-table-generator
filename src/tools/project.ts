@@ -2,10 +2,10 @@ import JSZip from 'jszip'
 import { nativeDxfForNestedSheet, nativeDxfForPart } from '../dxf'
 import type { FabricationPart } from '../geometry'
 import { validateNesting, type NestingResult } from '../nesting'
-import { extensionAssembly, extensionDefaults, extensionParts, type ExtensionConfig } from './extension'
+import { extensionAssembly, extensionDefaults, extensionDimensions, extensionParts, type ExtensionConfig } from './extension'
 
 export type ToolProject = {
-  version: 1
+  version: 2
   tool: 'extension'
   size: ExtensionConfig
   sheet: { length: number; width: number; edgeGap: number; partGap: number }
@@ -13,7 +13,7 @@ export type ToolProject = {
 }
 
 export const defaultToolProject: ToolProject = {
-  version: 1, tool: 'extension', size: { ...extensionDefaults },
+  version: 2, tool: 'extension', size: { ...extensionDefaults },
   sheet: { length: 3000, width: 1500, edgeGap: 10, partGap: 5 }, copies: 1,
 }
 
@@ -27,12 +27,13 @@ export const parseToolProject = (text: string): ToolProject => {
   try { raw = JSON.parse(text) } catch { throw new Error('Project JSON is invalid') }
   const root = object(raw)
   if (!root || !exactKeys(root, ['version', 'tool', 'size', 'sheet', 'copies'])) throw new Error('Project has unknown or missing fields')
-  if (root.version !== 1 || root.tool !== 'extension') throw new Error('Unsupported project version or tool')
+  if (root.tool === 'extension' && root.version === 1) throw new Error('This project uses the retired box design. It cannot be silently converted into wedge cutting plans. Download the original JSON before starting the corrected design.')
+  if (root.version !== 2 || root.tool !== 'extension') throw new Error('Unsupported project version or tool')
   const size = object(root.size), sheet = object(root.sheet)
   if (!size || !exactKeys(size, ['length', 'width', 'height', 'thickness']) || !sheet || !exactKeys(sheet, ['length', 'width', 'edgeGap', 'partGap'])) throw new Error('Project dimensions are malformed')
   const number = (value: unknown) => { if (typeof value !== 'number') throw new Error('Project numeric fields must be numbers'); return value }
   const project: ToolProject = {
-    version: 1, tool: 'extension',
+    version: 2, tool: 'extension',
     size: { length: number(size.length), width: number(size.width), height: number(size.height), thickness: number(size.thickness) },
     sheet: { length: number(sheet.length), width: number(sheet.width), edgeGap: number(sheet.edgeGap), partGap: number(sheet.partGap) }, copies: number(root.copies),
   }
@@ -73,8 +74,8 @@ export const extensionArchive = (project: ToolProject, result: NestingResult, ke
     zip.file(`sheets/Sheet_${index + 1}.dxf`, nativeDxfForNestedSheet(result.placements.filter(placement => placement.sheet === index)))
   zip.file('project.json', JSON.stringify(project, null, 2))
   zip.file('layout.json', JSON.stringify({ version: 1, units: 'mm', projectKey: key, nesting: projectNestingOptions(project), placements: result.placements.map(({ part, instance, sheet, rotation, translation }) => ({ part: part.name, instance, sheet, rotation, translation })), stats: result.stats }, null, 2))
-  zip.file('assembly.json', JSON.stringify({ version: 1, units: 'mm', placements: extensionAssembly(project.size) }, null, 2))
-  zip.file('README.txt', 'Extension analogue: independently engineered, not a vendor drawing.\nNominal dimensions are millimetres. Mount to the actual table before cutting. Verify weld sequence/distortion, fit-up, clamp/load requirements and CAM kerf, lead-ins, tabs and cutting order.\n')
+  zip.file('assembly.json', JSON.stringify({ version: 2, units: 'mm', axes: 'X away from host table; Y across; Z up', joinery: extensionDimensions(project.size), placements: extensionAssembly(project.size) }, null, 2))
+  zip.file('README.txt', 'Wedge extension: seven flat parts with locating tabs and matching notches/mortises. X points away from the host table, the high mounting end is X=0, and the horizontal working top is Z=height.\nReference envelope: 500x200x200 mm, T6, D16/50. The tapered silhouette, large side windows, narrow cross ties and slotted mounting end follow the visual references. Free-end height, joint stations/0.2 mm total clearance, slot origins, radii and window dimensions are proposed, not manufacturer measurements.\nAssemble the two sides, high mounting end, low free end and two cross ties; seat the working top over their tabs before tack welding. Confirm joint fit and welding access on a sample first.\nAll DXFs use nominal millimetres. Check the actual host table and locking hardware, steel grade, loads, weld sequence/distortion and CAM kerf/lead-ins/cut order before fabrication. No structural rating or physical fit validation is supplied.\n')
   return zip
 }
 

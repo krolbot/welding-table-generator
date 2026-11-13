@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { FabricationPart } from '../geometry'
-import { extensionAssembly } from './extension'
-import { projectParts, type ToolProject } from './project'
+import { extensionAssembly, extensionParts, type ExtensionConfig } from './extension'
+import type { ToolProject } from './project'
 
 const shapeFor = (part: FabricationPart) => {
   const shape = new THREE.Shape()
@@ -20,40 +20,80 @@ const shapeFor = (part: FabricationPart) => {
   return shape
 }
 
+export const extensionGroup = (config: ExtensionConfig, material: THREE.Material) => {
+  const group = new THREE.Group(), parts = new Map(extensionParts(config).map(part => [part.name, part]))
+  for (const placement of extensionAssembly(config)) {
+    const part = parts.get(placement.part)!
+    const geometry = new THREE.ExtrudeGeometry(shapeFor(part), { depth: part.thickness, bevelEnabled: false, curveSegments: 32 })
+    geometry.translate(0, 0, -part.thickness / 2)
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.name = `${part.name}:${placement.instance}`
+    mesh.applyMatrix4(new THREE.Matrix4().set(
+      placement.axes[0][0], placement.axes[1][0], placement.axes[2][0], placement.origin[0],
+      placement.axes[0][1], placement.axes[1][1], placement.axes[2][1], placement.origin[1],
+      placement.axes[0][2], placement.axes[1][2], placement.axes[2][2], placement.origin[2], 0, 0, 0, 1,
+    ))
+    group.add(mesh)
+  }
+  return group
+}
+
 export function ExtensionAssembly3d({ project, dark }: { project: ToolProject; dark: boolean }) {
   const host = useRef<HTMLDivElement>(null)
+  const [error, setError] = useState('')
+  const { length, width, height, thickness } = project.size
   useEffect(() => {
     const mount = host.current
     if (!mount) return
     let renderer: THREE.WebGLRenderer
-    try { renderer = new THREE.WebGLRenderer({ antialias: true }) } catch { return }
-    const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(42, 1, 1, 10000)
+    try { renderer = new THREE.WebGLRenderer({ antialias: true }) }
+    catch { setError('WebGL is unavailable. The 2D profiles and DXF remain available.'); return }
+    setError('')
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    const scene = new THREE.Scene(), camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 10000)
+    camera.up.set(0, 0, 1)
     scene.background = new THREE.Color(dark ? 0x111827 : 0xe5e7eb)
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 2), new THREE.DirectionalLight(0xffffff, 2))
-    const light = scene.children.at(-1) as THREE.DirectionalLight; light.position.set(500, 600, 800)
-    const group = new THREE.Group(), material = new THREE.MeshStandardMaterial({ color: dark ? 0x94a3b8 : 0x64748b, metalness: .7, roughness: .35, side: THREE.DoubleSide })
-    const parts = new Map(projectParts(project).map(part => [part.name, part]))
-    extensionAssembly(project.size).forEach(placement => {
-      const part = parts.get(placement.part)
-      if (!part) return
-      const geometry = new THREE.ExtrudeGeometry(shapeFor(part), { depth: part.thickness, bevelEnabled: false, curveSegments: 24 })
-      geometry.translate(0, 0, -part.thickness / 2)
-      const mesh = new THREE.Mesh(geometry, material)
-      const matrix = new THREE.Matrix4().set(
-        placement.axes[0][0], placement.axes[1][0], placement.axes[2][0], placement.origin[0],
-        placement.axes[0][1], placement.axes[1][1], placement.axes[2][1], placement.origin[1],
-        placement.axes[0][2], placement.axes[1][2], placement.axes[2][2], placement.origin[2], 0, 0, 0, 1,
-      )
-      mesh.applyMatrix4(matrix); group.add(mesh)
-    })
-    scene.add(group); mount.append(renderer.domElement)
+    const ambient = new THREE.HemisphereLight(0xffffff, 0x64748b, 2)
+    ambient.position.set(0, 0, 1)
+    const light = new THREE.DirectionalLight(0xffffff, 3)
+    light.position.set(-500, -600, 800)
+    scene.add(ambient, light)
+    const material = new THREE.MeshStandardMaterial({ color: dark ? 0x94a3b8 : 0xa3aab2, metalness: .25, roughness: .6, side: THREE.DoubleSide })
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: dark ? 0x334155 : 0x555e6b })
+    const group = extensionGroup({ length, width, height, thickness }, material)
+    for (const item of group.children) if (item instanceof THREE.Mesh) item.add(new THREE.LineSegments(new THREE.EdgesGeometry(item.geometry, 30), edgeMaterial))
+    scene.add(group)
+    mount.append(renderer.domElement)
     const controls = new OrbitControls(camera, renderer.domElement)
-    const extent = Math.max(project.size.length, project.size.width, project.size.height)
-    camera.position.set(extent * 1.15, extent * .9, extent * 1.15); controls.target.set(project.size.length / 2, project.size.width / 2, project.size.height / 2); controls.update()
-    const resize = () => { renderer.setSize(mount.clientWidth, mount.clientHeight); camera.aspect = mount.clientWidth / Math.max(1, mount.clientHeight); camera.updateProjectionMatrix() }
-    const observer = new ResizeObserver(resize); observer.observe(mount); resize()
-    let frame = 0; const draw = () => { frame = requestAnimationFrame(draw); controls.update(); renderer.render(scene, camera) }; draw()
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); controls.dispose(); group.traverse(item => { if (item instanceof THREE.Mesh) item.geometry.dispose() }); material.dispose(); renderer.dispose(); mount.replaceChildren() }
-  }, [project, dark])
-  return <div className="tools-three" ref={host} aria-label="Interactive 3D extension assembly" />
+    const extent = Math.max(length, width, height)
+    controls.target.set(length / 2, width / 2, height * .6)
+    camera.position.copy(controls.target).add(new THREE.Vector3(-extent * .85, -extent * 1.1, extent * .8))
+    controls.update()
+    const resize = () => {
+      const aspect = mount.clientWidth / Math.max(1, mount.clientHeight), half = extent * .62
+      camera.left = -half * Math.max(1, aspect)
+      camera.right = -camera.left
+      camera.top = half / Math.min(1, aspect)
+      camera.bottom = -camera.top
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
+      camera.updateProjectionMatrix()
+    }
+    const observer = new ResizeObserver(resize)
+    observer.observe(mount)
+    resize()
+    let frame = 0
+    const draw = () => { frame = requestAnimationFrame(draw); controls.update(); renderer.render(scene, camera) }
+    draw()
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      controls.dispose()
+      group.traverse(item => { if (item instanceof THREE.Mesh || item instanceof THREE.LineSegments) item.geometry.dispose() })
+      material.dispose()
+      edgeMaterial.dispose()
+      renderer.dispose()
+      mount.replaceChildren()
+    }
+  }, [length, width, height, thickness, dark])
+  return <><div className="tools-three" ref={host} aria-label="Interactive 3D extension assembly" />{error && <p role="alert">{error}</p>}</>
 }

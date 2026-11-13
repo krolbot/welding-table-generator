@@ -77,6 +77,9 @@ export const nativeContourBounds = (contour: Contour) => {
 }
 
 /** Analytic boundary distance. Containment must be checked separately (positive boundary distance is not separation). */
+export const nativePointContourDistance = (point: Point, contour: Contour): number => Math.min(...contour.map(segment =>
+  segment.type === 'line' ? pointLine(point, segment) : pointArc(point, segment)))
+
 export const nativeContourDistance = (a: Contour, b: Contour): number => {
   let closest = Infinity
   for (const left of a) for (const right of b) {
