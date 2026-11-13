@@ -135,7 +135,8 @@ h3 small { margin-left: 2px; color: var(--faint); font-size: 10px; font-weight: 
 .mode button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; border-radius: 8px; padding: 8px 16px; font-size: 14px; line-height: 20px; color: var(--muted); font-weight: 500; }
 .mode .active { background: #2563eb; color: var(--accent-contrast); box-shadow: 0 1px 3px #0002; }
 .mode button svg { width: 14px; height: 14px; }
-.drawing-frame { position: absolute; inset: 0 32px 32px; background: #f8fafc; border: 2px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: inset 0 2px 4px #0001; }
+.drawing-frame { position: absolute; inset: 160px 16px 104px; background: #f8fafc; border: 2px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: inset 0 2px 4px #0001; }
+[data-view="3d"] .drawing-frame { top: 208px; }
 .drawing-grid { position: absolute; inset: 0; background-image: linear-gradient(to right, #f3f4f6 1px, transparent 1px), linear-gradient(to bottom, #f3f4f6 1px, transparent 1px); }
 .layout, .three-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 .layout { cursor: grab; }
@@ -381,8 +382,8 @@ h3 small { margin-left: 2px; color: var(--faint); font-size: 10px; font-weight: 
   .fixture-options > .checkbox:last-child { margin-bottom: 0; }
   .settings-scroll > section:not(.fixture-card) > h3 { padding-bottom: 6px; margin-bottom: 0; }
   .slider-field output { font-size: 12px; line-height: 16px; }
-  .drawing-frame { inset: 72px 8px auto; height: calc(100% - 32px); }
-  [data-view="3d"] .drawing-frame { height: calc(100% - 80px); }
+  .drawing-frame { inset: 128px 8px 104px; height: auto; }
+  [data-view="3d"] .drawing-frame { top: 184px; height: auto; }
   .drawing-toolbar { top: 56px; left: 8px; right: 8px; }
   .laser-note { max-width: 320px; padding: 8px; gap: 8px; }
   .laser-note strong { font-size: 12px; line-height: 16px; }
@@ -402,6 +403,9 @@ h3 small { margin-left: 2px; color: var(--faint); font-size: 10px; font-weight: 
   .three-tools .checkbox input { width: 12px; height: 12px; }
 }
 @media (max-width: 639px) {
+  .drawing-frame, [data-view="3d"] .drawing-frame { top: 96px; bottom: 120px; }
+  .social { bottom: 44px; }
+  .legal-disclosure { bottom: 8px; }
   .laser-note { display: none; }
   .three-tools { display: block; }
   .three-tools > header { margin-bottom: 0; }

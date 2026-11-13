@@ -1,5 +1,5 @@
 import { searchNesting, type NestingResult } from './nesting'
-import { nestingOptions, nestingParts, type NestingRequest, type NestingResponse } from './nestingSettings'
+import { type NestingRequest, type NestingResponse } from './nestingSettings'
 
 let iterator: Generator<NestingResult> | undefined
 let key = ''
@@ -12,7 +12,7 @@ self.onmessage = (event: MessageEvent<NestingRequest>) => {
       key = request.key
       elapsedMs = 0
       last = undefined
-      iterator = searchNesting(nestingParts(request.config), { ...nestingOptions(request.config), attempts: 4096 })
+      iterator = searchNesting(request.parts, { ...request.options, attempts: 4096 })
     }
     if (!iterator || request.key !== key) return
     const started = performance.now()

@@ -31,7 +31,7 @@ test('ZIP contains canonical parts, sheets and manifests, and rejects a tampered
   const key = project.projectKey(input)
   const result = nesting.nestParts(project.projectParts(input), { ...project.projectNestingOptions(input), attempts: 12 })
   assert.equal(project.validProjectLayout(input, result, key), true)
-  const archive = project.extensionArchive(input, result, key)
+  const archive = project.toolArchive(input, result, key)
   const readback = await JSZip.loadAsync(await archive.generateAsync({ type: 'nodebuffer' }))
   for (const name of ['project.json', 'layout.json', 'assembly.json', 'README.txt', 'parts/top_1pcs.dxf', 'sheets/Sheet_1.dxf']) assert.ok(readback.file(name), name)
   assert.equal(Object.keys(readback.files).filter(name => /^parts\/.*\.dxf$/.test(name)).length, 5)
@@ -48,5 +48,5 @@ test('ZIP contains canonical parts, sheets and manifests, and rejects a tampered
   const tampered = structuredClone(result)
   tampered.placements[0].translation.x = -1
   assert.equal(project.validProjectLayout(input, tampered, key), false)
-  assert.throws(() => project.extensionArchive(input, tampered, key), /stale or invalid/)
+  assert.throws(() => project.toolArchive(input, tampered, key), /stale or invalid/)
 })

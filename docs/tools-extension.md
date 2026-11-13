@@ -18,7 +18,7 @@ Seven flat pieces are cut from one thickness:
 
 `X = 0` is the mounting end against the host table; increasing X points outward. Y runs across the extension and Z points upward. The top is coplanar with the host working surface when correctly mounted. The underside stays open; there is no bottom plate or bent sheet.
 
-The canonical part contours feed SVG, the real extruded Three.js meshes and native DXF. Assembly placements are also exported. The viewer uses a Z-up orthographic camera, not a separate visual approximation.
+The canonical part contours feed SVG, the real extruded Three.js meshes and native DXF. Assembly placements are also exported. The viewer uses the main generator's shared perspective-camera/OrbitControls component with an explicit Z-up frame, not a separate visual approximation.
 
 ## Proposed dimensions, not measurements
 
@@ -35,7 +35,7 @@ For assembly, locate both sides around the high and low ends and the two ties, s
 
 ## Cutting, exports and saved projects
 
-The Tools selector contains one implemented design and remains separate from the table generator. Sheet layout uses the application's contour-aware automatic orientation search. It produces a validated result under a search budget, not a proven global optimum. Stale, incomplete or invalid layouts cannot be exported.
+The Tools selector contains the extension and a [flat welding square](tools-square.md). Their geometry and saved projects remain separate from the table, while the sidebar, fields, units/theme, estimates, project/export controls, interactive 2D, Three.js viewer and sheet-nesting workspace are the same components the table generator uses. Sheet layout uses one shared worker with progressive results, pause/resume and the application's contour-aware automatic orientation search. It produces a validated result under a search budget, not a proven global optimum. Stale, incomplete or invalid layouts cannot be exported.
 
 Tools JSON now uses `version: 2, tool: "extension"`. Version 1 describes the retired box: it is rejected explicitly, never silently reinterpreted as a wedge. On loading an old saved/shared project, the UI preserves and offers the original JSON, blocks editing/export, and requires an explicit start of the corrected design. That action backs up the original in browser storage before replacement. Importing an incompatible file leaves the current valid project unchanged.
 

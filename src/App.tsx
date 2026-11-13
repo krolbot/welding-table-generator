@@ -3,14 +3,10 @@ import {
   Suspense,
   useEffect,
   useMemo,
-  useRef,
   useState,
-  type ChangeEvent,
-  type PointerEvent,
 } from 'react'
 import {
   defaults,
-  display,
   mmPerInch,
   maxTabWidth,
   partLabels,
@@ -24,18 +20,18 @@ import {
   type CustomHole,
   type PartName,
 } from './model'
-import { contourPoints, engravingLines, fabricationError, layoutParts, legCornerPlateSpec, ribAccessHoleSpec, svgContourPath, totals, type Hole, type Point } from './geometry'
+import { engravingLines, fabricationError, layoutParts, legCornerPlateSpec, ribAccessHoleSpec, totals, type Hole } from './geometry'
 import { downloadFull, downloadZip } from './dxf'
-import { SheetNesting } from './SheetNesting'
-import { Icon, type IconName } from './Icon'
+import { TableSheetNesting } from './SheetNesting'
+import { Icon } from './Icon'
 import { NumberInput } from './NumberInput'
+import { AssemblyControls, Checkbox, GeneratorShell, NumberField, ProductionEstimate, ProjectActions, SliderField, VisualizationSettings, type ViewMode } from './GeneratorWorkspace'
+import { PartsLayout } from './PartsLayout'
+import { copyText, downloadFile } from './projectIO'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 const ToolsWorkspace = lazy(() => import('./tools/ToolsWorkspace').then(module => ({ default: module.ToolsWorkspace })))
 
-type View = '2d' | '3d' | 'sheet'
-type Tool = 'holes' | 'ruler' | null
-type Measure = { start: Point; end: Point }
 type NumericKey = {
   [K in keyof Config]: Config[K] extends number ? K : never
 }[keyof Config]
@@ -180,7 +176,7 @@ function loadedConfig(): Config {
     }
   }
   // Unknown project links do not override the saved table configuration.
-  if (params.has('project') || params.has('toolProject')) return normalizeConfig(stored)
+  if (params.has('project') || params.has('toolProject') || params.size === 1 && params.has('workspace')) return normalizeConfig(stored)
   if (!params.size) return normalizeConfig(stored)
   const candidate: Record<string, unknown> = {}
   for (const [key, value] of params) {
@@ -199,61 +195,28 @@ const serialiseConfig = (config: Config) => {
   return params
 }
 
-const copyText = async (value: string) => {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value)
-    return
-  }
-  const input = document.createElement('textarea')
-  input.value = value
-  input.style.position = 'fixed'
-  input.style.opacity = '0'
-  document.body.append(input)
-  input.select()
-  const copied = document.execCommand('copy')
-  input.remove()
-  if (!copied) throw new Error('Clipboard unavailable')
-}
-
 export default function App() {
-  const [workspace, setWorkspace] = useState<'table' | 'tools'>(() => new URLSearchParams(location.search).has('toolProject') ? 'tools' : 'table')
+  const [workspace, setWorkspace] = useState<'table' | 'tools'>(() => { const params = new URLSearchParams(location.search); return params.has('toolProject') || params.get('workspace') === 'tools' ? 'tools' : 'table' })
+  const selectWorkspace = (next: 'table' | 'tools') => {
+    const url = new URL(location.href)
+    if (next === 'tools') url.searchParams.set('workspace', 'tools')
+    else { url.searchParams.delete('workspace'); url.searchParams.delete('toolProject') }
+    history.replaceState(null, '', url)
+    setWorkspace(next)
+  }
   const [config, setConfig] = useState<Config>(loadedConfig)
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
-  const [view, setView] = useState<View>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
-  const [tool, setTool] = useState<Tool>(null)
-  const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null)
-  const [measure, setMeasure] = useState<Measure | null>(null)
-  const [rulerCursor, setRulerCursor] = useState<Point | null>(null)
+  const [view, setView] = useState<ViewMode>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
   const [notice, setNotice] = useState('')
-  const [about, setAbout] = useState(false)
   const [reset3d, setReset3d] = useState(0)
   const [focusMount3d, setFocusMount3d] = useState(0)
-  const pointers = useRef(new Map<number, { x: number; y: number }>())
-  const pinch = useRef<{ distance: number; center: Point; zoom: number; pan: Point } | null>(null)
-  const fileInput = useRef<HTMLInputElement>(null)
-  const closeButton = useRef<HTMLButtonElement>(null)
-  const svgRef = useRef<SVGSVGElement>(null)
-  const previousFocus = useRef<HTMLElement | null>(null)
-  const measuring = useRef(false)
-  const measureOrigin = useRef<Point | null>(null)
+  const [reset2dToken, setReset2dToken] = useState(0)
 
   const summary = useMemo(() => totals(config), [config])
   const layout = useMemo(() => layoutParts(config), [config])
   const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
   const ribAccess = useMemo(() => ribAccessHoleSpec(config), [config])
   const geometryError = useMemo(() => fabricationError(config), [config])
-  const snapPoints = useMemo(() => layout.instances.flatMap(item => [
-    ...item.part.contours.flatMap(contour => contourPoints(contour, 1)),
-    ...item.part.holes.flatMap(hole => [hole,
-      { x: hole.x - hole.d / 2, y: hole.y }, { x: hole.x + hole.d / 2, y: hole.y },
-      { x: hole.x, y: hole.y - hole.d / 2 }, { x: hole.x, y: hole.y + hole.d / 2 },
-    ]),
-  ].map(point => ({ x: item.position.x - layout.width / 2 + point.x, y: item.position.y - layout.height / 2 + point.y }))), [layout])
-  const canvasWidth = layout.width + 300
-  const canvasHeight = layout.height + 300
-  const rulerScale = Math.max(layout.width, layout.height) * 0.004 / zoom
   const unitLabel = config.units === 'mm' ? 'mm' : 'in'
 
   useEffect(() => {
@@ -266,20 +229,6 @@ export default function App() {
       localStorage.setItem('tableGenUI', JSON.stringify({ viewMode: view, renderHoles3D: config.renderHoles, enableHoverEffect: config.highlighting, explodeFactor: config.exploded, showDims: config.showDimensions, units: config.units === 'inch' ? 'in' : 'mm', theme: dark ? 'dark' : 'light' }))
     } catch { setNotice('Browser autosave is unavailable. Use Save to keep your project.') }
   }, [config, dark, view])
-
-  useEffect(() => {
-    if (!about) return
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    closeButton.current?.focus()
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setAbout(false)
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('keydown', closeOnEscape)
-      previousFocus.current?.focus()
-    }
-  }, [about])
 
   const patch = <K extends keyof Config>(key: K, value: Config[K]) => {
     setConfig(current => ({ ...current, [key]: value }))
@@ -303,40 +252,19 @@ export default function App() {
     })
   }
   const numberLabel = (millimetres: number, precision = 2) => String(Number((millimetres / (config.units === 'mm' ? 1 : mmPerInch)).toFixed(config.units === 'mm' ? 4 : precision)))
-  // The reference converts one-decimal metric estimates, not the full-precision geometry totals.
-  const productionLabel = (value: number, conversion: number) => (config.units === 'mm' ? value : Number(value.toFixed(1)) * conversion).toFixed(1)
   const numericInput = (key: NumericKey, label: string, min: number, max: number, step: number, precision = 0) => {
     const factor = config.units === 'mm' ? 1 : mmPerInch
     const inputStep = config.units === 'mm' ? step : key === 'holeDiameter' ? 0.05 : key === 'thickness' ? 0.01 : key === 'clearance' ? 0.002 : 0.25
-    return <label className="field"><span>{label}</span><NumberInput value={numberLabel(config[key], precision ? precision + 2 : 3)} min={min / factor} max={max / factor} step={inputStep} onValue={value => setNumeric(key, readDisplay(value, config.units))} /></label>
+    return <NumberField label={label} value={numberLabel(config[key], precision ? precision + 2 : 3)} min={min / factor} max={max / factor} step={inputStep} onValue={value => setNumeric(key, readDisplay(value, config.units))} />
   }
   const slider = (key: NumericKey, label: string, min: number, max: number, step: number, percentage = false) => {
     const imperial = config.units === 'inch' ? inchRanges[key] : undefined
     const range = imperial ?? { min, max, step }
-    return <label className="slider-field"><span><span className="slider-label">{percentage && <Icon name="explode" size={14} />}{label}</span><output>{percentage ? `${config[key]}%` : numberLabel(config[key], 2)}</output></span><input aria-label={label} type="range" min={range.min} max={range.max} step={range.step} value={imperial ? config[key] / mmPerInch : config[key]} onChange={event => setNumeric(key, Number(event.target.value) * (imperial ? mmPerInch : 1))} /></label>
+    return <SliderField label={label} output={percentage ? `${config[key]}%` : numberLabel(config[key], 2)} icon={percentage ? 'explode' : undefined} min={range.min} max={range.max} step={range.step} value={imperial ? config[key] / mmPerInch : config[key]} onValue={value => setNumeric(key, value * (imperial ? mmPerInch : 1))} />
   }
-  const toggle = (key: BooleanKey, label: string) => <label className="checkbox"><input type="checkbox" checked={config[key]} onChange={event => patch(key, event.target.checked)} /><span>{label}</span></label>
-  const socialLinks: Array<{ name: string; icon: IconName; url: string }> = [
-    { name: 'Ballwool Store', icon: 'cart', url: 'https://ballwool.com/shops/DIYWeldingProjects' },
-    { name: 'Instagram', icon: 'instagram', url: 'https://www.instagram.com/ta6urkin/' },
-    { name: 'TikTok', icon: 'tiktok', url: 'https://www.tiktok.com/@ta6urkin' },
-    { name: 'YouTube', icon: 'youtube', url: 'https://www.youtube.com/@ta6urkin' },
-    { name: 'Pinterest', icon: 'pinterest', url: 'https://www.pinterest.com/ta6urkin/' },
-    { name: 'Reddit', icon: 'reddit', url: 'https://www.reddit.com/user/taburkin/' },
-  ]
-
-  const reset2d = () => {
-    setZoom(1)
-    setPan({ x: 0, y: 0 })
-    setMeasure(null)
-    setRulerCursor(null)
-    pinch.current = null
-    pointers.current.clear()
-    setDrag(null)
-    measuring.current = false
-  }
+  const toggle = (key: BooleanKey, label: string) => <Checkbox label={label} checked={config[key]} onChange={value => patch(key, value)} />
+  const reset2d = () => setReset2dToken(value => value + 1)
   const removeHole = (hole: Hole, part?: PartName) => {
-    if (tool !== 'holes') return
     part ??= readPart(hole.id.split(':')[0])
     if (!part) return
     patch('removedHoles', [...config.removedHoles, { id: crypto.randomUUID(), part, x: hole.x, y: hole.y, r: hole.d / 2 }])
@@ -353,33 +281,15 @@ export default function App() {
       return Number.isFinite(number) && (key !== 'd' || number > 0) ? { ...hole, [key]: readDisplay(number, config.units) } : hole
     }))
   }
-  const save = () => {
-    const blob = new Blob([JSON.stringify(projectConfig(config), null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `WeldingTable_Project_${config.length}x${config.width}.json`
-    anchor.click()
-    queueMicrotask(() => URL.revokeObjectURL(url))
-  }
-  const open = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      try {
-        const value: unknown = JSON.parse(String(reader.result))
-        if (!isRecord(value) || !('length' in value) || !('width' in value)) throw new Error('Invalid project')
-        setConfig(current => ({ ...normalizeConfig(value), units: current.units, exploded: current.exploded, showDimensions: current.showDimensions, renderHoles: current.renderHoles, highlighting: current.highlighting }))
-        reset2d()
-        setNotice('Project loaded.')
-      } catch {
-        setNotice('Could not read this project JSON.')
-      }
-    }
-    reader.onerror = () => setNotice('Could not read this project JSON.')
-    reader.readAsText(file)
+  const save = () => downloadFile(JSON.stringify(projectConfig(config), null, 2), `WeldingTable_Project_${config.length}x${config.width}.json`)
+  const open = async (file: File) => {
+    try {
+      const value: unknown = JSON.parse(await file.text())
+      if (!isRecord(value) || !('length' in value) || !('width' in value)) throw new Error('Invalid project')
+      setConfig(current => ({ ...normalizeConfig(value), units: current.units, exploded: current.exploded, showDimensions: current.showDimensions, renderHoles: current.renderHoles, highlighting: current.highlighting }))
+      reset2d()
+      setNotice('Project loaded.')
+    } catch { setNotice('Could not read this project JSON.') }
   }
   const share = async () => {
     const url = new URL(location.href)
@@ -392,129 +302,9 @@ export default function App() {
     }
   }
 
-  const drawingPoint = (event: PointerEvent<SVGSVGElement>): Point => {
-    const matrix = event.currentTarget.getScreenCTM()
-    if (!matrix) return { x: 0, y: 0 }
-    const screen = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
-    return {
-      x: (screen.x - canvasWidth / 2 - pan.x) / zoom,
-      y: -(screen.y - canvasHeight / 2 - pan.y) / zoom,
-    }
-  }
-  const rulerPoint = (event: PointerEvent<SVGSVGElement>): Point => {
-    const point = drawingPoint(event)
-    let nearest = point
-    let distance = 20 / (Math.abs(event.currentTarget.getScreenCTM()?.a ?? 1) * zoom)
-    for (const candidate of snapPoints) {
-      const next = Math.hypot(candidate.x - point.x, candidate.y - point.y)
-      if (next < distance) { nearest = candidate; distance = next }
-    }
-    return nearest
-  }
-  const pointerDown = (event: PointerEvent<SVGSVGElement>) => {
-    if (event.button !== 0) return
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-    event.currentTarget.setPointerCapture(event.pointerId)
-    if (pointers.current.size === 2) {
-      const [a, b] = [...pointers.current.values()]
-      pinch.current = { distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, zoom, pan }
-      measuring.current = false
-      measureOrigin.current = null
-      setDrag(null)
-      return
-    }
-    if (tool === 'ruler') {
-      const point = rulerPoint(event)
-      setRulerCursor(point)
-      if (measuring.current && measure) {
-        setMeasure({ ...measure, end: point })
-        measuring.current = false
-      } else {
-        setMeasure({ start: point, end: point })
-        measuring.current = true
-      }
-      measureOrigin.current = { x: event.clientX, y: event.clientY }
-    } else setDrag({ x: event.clientX, y: event.clientY })
-  }
-  const pointerMove = (event: PointerEvent<SVGSVGElement>) => {
-    const previous = pointers.current.get(event.pointerId)
-    if (previous) pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-    const active = [...pointers.current.values()]
-    if (active.length === 2 && pinch.current) {
-      const matrix = event.currentTarget.getScreenCTM()
-      if (!matrix) return
-      const origin = pinch.current
-      const next = Math.max(0.1, Math.min(20, origin.zoom * Math.hypot(active[0].x - active[1].x, active[0].y - active[1].y) / origin.distance))
-      const ratio = next / origin.zoom
-      const center = new DOMPoint((active[0].x + active[1].x) / 2, (active[0].y + active[1].y) / 2).matrixTransform(matrix.inverse())
-      const start = new DOMPoint(origin.center.x, origin.center.y).matrixTransform(matrix.inverse())
-      setPan({ x: center.x - canvasWidth / 2 - (start.x - canvasWidth / 2 - origin.pan.x) * ratio, y: center.y - canvasHeight / 2 - (start.y - canvasHeight / 2 - origin.pan.y) * ratio })
-      setZoom(next)
-      return
-    }
-    pinch.current = null
-    if (tool === 'ruler') {
-      const end = rulerPoint(event)
-      setRulerCursor(end)
-      if (measuring.current) setMeasure(current => current ? { ...current, end } : current)
-      return
-    }
-    const matrix = svgRef.current?.getScreenCTM()
-    if (drag && previous && matrix) {
-      setPan(current => ({ x: current.x + (event.clientX - previous.x) / matrix.a, y: current.y + (event.clientY - previous.y) / matrix.d }))
-    }
-  }
-  const pointerUp = (event: PointerEvent<SVGSVGElement>) => {
-    pointers.current.delete(event.pointerId)
-    if (pointers.current.size < 2) pinch.current = null
-    if (tool === 'ruler' && measureOrigin.current && Math.hypot(event.clientX - measureOrigin.current.x, event.clientY - measureOrigin.current.y) > 4) measuring.current = false
-    measureOrigin.current = null
-    setDrag(null)
-  }
-
-  useEffect(() => {
-    const svg = svgRef.current
-    if (!svg || view !== '2d') return
-    const wheel = (event: globalThis.WheelEvent) => {
-      event.preventDefault()
-      const matrix = svg.getScreenCTM()
-      if (!matrix) return
-      const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
-      const next = Math.max(0.1, Math.min(20, zoom * (1 - event.deltaY * 0.001)))
-      const ratio = next / zoom
-      setPan(current => ({
-        x: point.x - canvasWidth / 2 - (point.x - canvasWidth / 2 - current.x) * ratio,
-        y: point.y - canvasHeight / 2 - (point.y - canvasHeight / 2 - current.y) * ratio,
-      }))
-      setZoom(next)
-    }
-    svg.addEventListener('wheel', wheel, { passive: false })
-    return () => svg.removeEventListener('wheel', wheel)
-  }, [view, zoom, canvasWidth, canvasHeight])
-
-  useEffect(() => {
-    if (!notice) return
-    const timer = window.setTimeout(() => setNotice(''), 4000)
-    return () => window.clearTimeout(timer)
-  }, [notice])
-
-  const measureLength = measure
-    ? Math.hypot(measure.end.x - measure.start.x, measure.end.y - measure.start.y)
-    : 0
-  const displayedLayoutWidth = display(layout.width, config.units, 0)
-  const displayedLayoutHeight = display(layout.height, config.units, 0)
-
-  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace dark={dark} onBack={() => setWorkspace('table')} /></Suspense>
-  return (
-    <main className="app-shell">
-      <aside className="settings">
-        <header>
-          <div className="brand"><Icon name="settings" size={24} /><h2>Welding Table Free Generator</h2></div>
-          <button className="icon" title={`Switch to ${dark ? 'light' : 'dark'} theme`} aria-label="Toggle color theme" onClick={() => setDark(value => !value)}><Icon name={dark ? 'sun' : 'moon'} /></button>
-        </header>
-        <nav className="workspace-navigation" aria-label="Product workspaces"><button aria-current="page">Table generator</button><button onClick={() => setWorkspace('tools')}>Tools</button></nav>
-        <div className="units"><h3>Units</h3><div className="segment">{(['mm', 'inch'] as const).map(unit => <button key={unit} className={config.units === unit ? 'active' : ''} onClick={() => patch('units', unit)}>{unit}</button>)}</div></div>
-        <div className="settings-scroll">
+  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
+  return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
+    settings={<>
           <section className="fixture-card">
             <h3>Fixture System</h3>
             <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={12} />}{preset}</button>)}</div>
@@ -588,82 +378,14 @@ export default function App() {
               <button title="Restore this hole" aria-label="Restore hole" onClick={() => patch('removedHoles', config.removedHoles.filter((_, item) => item !== index))}><Icon name="plus" size={12} /></button>
             </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Restore all</button><p>A removed hole disappears from every copy of that part. Coordinates are relative to the part centre.</p></> : <p>Switch on the Holes tool above the 2D drawing, then click any hole to remove it. Removed holes are listed here and can be restored.</p>}
           </section>
-          <section className="visualization"><h3><Icon name="eye" size={14} />3D Visualization</h3>{slider('exploded', 'Exploded View', 0, 100, 1, true)}{toggle('showDimensions', 'Show Dimensions')}</section>
-        </div>
-        <section className="production-card"><h3><Icon name="scale" size={16} />Production Estimate</h3>
-          {geometryError ? <p className="socket-error">Estimates unavailable until the fabrication geometry is valid.</p> : <><div className="estimate"><div><span>Estimated Weight</span><strong>{productionLabel(summary.kg, 2.20462)}<small>{config.units === 'mm' ? 'kg' : 'lb'}</small></strong></div><div><span>Cut Length</span><strong>{productionLabel(summary.cut, 3.28084)}<small>{config.units === 'mm' ? 'm' : 'ft'}</small></strong></div></div>
-          <div className="estimate-extra"><span>Holes: <b>{summary.holes}</b></span>{summary.engraving > 0 && <span>Engraving: <b>{productionLabel(summary.engraving, 3.28084)}{config.units === 'mm' ? 'm' : 'ft'}</b></span>}</div>
-          <div className="sheet-size"><div><span>Sheet size ({unitLabel})</span><div className="sheet-inputs"><NumberInput aria-label="Sheet length" value={numberLabel(config.sheetLength, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetLength', readDisplay(value, config.units))} /><span>×</span><NumberInput aria-label="Sheet width" value={numberLabel(config.sheetWidth, 3)} min={0} step={50 / (config.units === 'mm' ? 1 : mmPerInch)} onValue={value => setNumeric('sheetWidth', readDisplay(value, config.units))} /></div></div><p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? 'Each part fits individually; combined sheet layout is not checked.' : 'Some parts do not fit the sheet individually.'}</p></div></>}
-        </section>
-        <section className="exports"><input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={open} /><div><button className="secondary" title="Open Project (.json)" onClick={() => fileInput.current?.click()}><Icon name="folder" size={14} />Open</button><button className="secondary" title="Save Project (.json)" onClick={save}><Icon name="save" size={14} />Save</button></div><button className="secondary full share" onClick={() => void share()}><Icon name="share" size={14} />Share Link</button><button className="zip" disabled={Boolean(geometryError)} onClick={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))}><Icon name="archive" size={18} />Download ZIP (Parts)</button><button className="dxf" disabled={Boolean(geometryError)} onClick={() => downloadFull(config)}><Icon name="download" size={16} />Parts Strip DXF (not nested)</button></section>
-      </aside>
-      <section className="work-area" data-view={view}>
-        <div className="mode"><button className={view === '2d' ? 'active' : ''} onClick={() => setView('2d')}><Icon name="frame" />2D Layout</button><button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}><Icon name="box" />3D Assembly</button><button className={view === 'sheet' ? 'active' : ''} onClick={() => setView('sheet')}><Icon name="layers" />Sheet nesting</button></div>
-        {geometryError ? <div className="three-loading socket-error" role="alert">{geometryError}</div> : view === '2d' ? <>
-          <div className="drawing-frame" data-tool={tool ?? 'pan'}>
-            <div className="drawing-grid" style={{ backgroundSize: `${50 * zoom}px ${50 * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }} />
-            <svg
-            ref={svgRef}
-            className="layout"
-            viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+          <VisualizationSettings value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} />
 
-            onPointerDown={pointerDown}
-            onPointerMove={pointerMove}
-            onPointerUp={pointerUp}
-            onPointerCancel={pointerUp}
-            onPointerLeave={() => setRulerCursor(null)}
-            aria-label="Interactive 2D welding table parts layout"
-          >
-
-            <g transform={`translate(${canvasWidth / 2 + pan.x} ${canvasHeight / 2 + pan.y}) scale(${zoom})`}>
-              {layout.instances.map(item => {
-                const engravings = engravingLines(item.part, config)
-                return (
-                  <g key={`${item.part.name}:${item.instance}`} transform={`translate(${item.position.x - layout.width / 2} ${layout.height / 2 - item.position.y}) scale(1 -1)`} className="part">
-                    <path className="contour" d={svgContourPath(item.part.contours[0])} />
-                    {engravings.map((mark, index) => <line key={index} className="engrave" x1={mark.from.x} y1={mark.from.y} x2={mark.to.x} y2={mark.to.y} />)}
-                    {item.part.contours.slice(1).map((contour, index) => <path className="slot-contour" key={index} d={svgContourPath(contour)} />)}
-                    {item.part.holes.map(hole => (
-                      <circle
-                        key={hole.id}
-                        className="hole"
-                        onPointerDown={event => {
-                          if (tool === 'holes') {
-                            event.stopPropagation()
-                            removeHole(hole, item.part.name)
-                          }
-                        }}
-                        cx={hole.x}
-                        cy={hole.y}
-                        r={hole.d / 2}
-                      />
-                    ))}
-                  </g>
-                )
-              })}
-              {measure && (
-                <g className="measurement">
-                  <line x1={measure.start.x} y1={-measure.start.y} x2={measure.end.x} y2={-measure.end.y} strokeWidth={2.5 * rulerScale} strokeDasharray={`${8 * rulerScale} ${6 * rulerScale}`} />
-                  <g transform={`translate(${(measure.start.x + measure.end.x) / 2} ${-(measure.start.y + measure.end.y) / 2})`}>
-                    <rect x={-45 * rulerScale} y={-20 * rulerScale} width={90 * rulerScale} height={26 * rulerScale} rx={6 * rulerScale} strokeWidth={1.75 * rulerScale} />
-                    <text y={-5 * rulerScale} fontSize={14 * rulerScale}>{display(measureLength, config.units, 1)} {unitLabel}</text>
-                  </g>
-                </g>
-              )}
-              {tool === 'ruler' && rulerCursor && <g className="ruler-cursor" strokeWidth={1.5 * rulerScale}>
-                <line x1={rulerCursor.x - 14 * rulerScale} y1={-rulerCursor.y} x2={rulerCursor.x + 14 * rulerScale} y2={-rulerCursor.y} />
-                <line x1={rulerCursor.x} y1={-rulerCursor.y - 14 * rulerScale} x2={rulerCursor.x} y2={-rulerCursor.y + 14 * rulerScale} />
-              </g>}
-            </g>
-          </svg>
-          </div>
-          <div className="drawing-toolbar"><div className="laser-note"><Icon name="info" /><div><strong>File for Laser Cutting</strong><small>On DXF export, reliefs (dog-bones) are created as native <b>DXF ARC</b>, and grid holes as <b>DXF CIRCLE</b>.</small></div></div><div className="canvas-tools"><button aria-label="Holes" className={tool === 'holes' ? 'active holes-tool' : 'holes-tool'} onClick={() => { setTool(current => current === 'holes' ? null : 'holes'); measuring.current = false }}><Icon name="trash" /><span className="tool-label">Holes{tool === 'holes' ? ' (Active)' : ''}</span></button><button aria-label="Ruler" className={tool === 'ruler' ? 'active ruler-tool' : 'ruler-tool'} onClick={() => { setTool(current => current === 'ruler' ? null : 'ruler'); setMeasure(null); measuring.current = false }}><Icon name="ruler" /><span className="tool-label">Ruler{tool === 'ruler' ? ' (Active)' : ''}</span></button><button title="Reset Zoom (Center)" onClick={reset2d}><Icon name="maximize" />{displayedLayoutWidth} x {displayedLayoutHeight} {unitLabel}</button></div></div>
-        </> : view === 'sheet' ? <SheetNesting config={config} dark={dark} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} /> : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><div className="three-tools"><header><h3><Icon name="layers" size={16} />Interactive 3D Assembly</h3><div>{cornerPlate && <button title="Focus the camera on the front-right corner mount" onClick={() => setFocusMount3d(value => value + 1)}><Icon name="target" size={12} />Mount detail</button>}<button title="Reset camera to the default view" onClick={() => setReset3d(value => value + 1)}><Icon name="maximize" size={12} />Reset view</button></div></header>{toggle('renderHoles', 'Render Holes (affects FPS)')}{toggle('highlighting', 'Interactive Part Highlighting')}</div></>}
-        <nav className="social" aria-label="Original project links"><strong>DIY WELDING PROJECTS</strong><div>{socialLinks.map(link => <a key={link.name} title={link.name} aria-label={link.name} href={link.url} target="_blank" rel="noopener noreferrer"><Icon name={link.icon} size={18} /></a>)}</div></nav>
-        <div className="legal-disclosure">{about && <article id="about-panel" className="legal-panel" aria-labelledby="about-title"><header><h3 id="about-title">About & Legal Info</h3><button ref={closeButton} className="icon" aria-label="Close About and Legal Info" onClick={() => setAbout(false)}><Icon name="close" /></button></header><small>VERSION 1.0.0</small><p>This independent clean-room implementation preserves the public generator's workflow. It is not affiliated with or endorsed by the original author.</p><p>Models, layouts and DXF files are informational only. Confirm dimensions, kerf tolerances and structural integrity with a qualified professional before CNC or laser cutting.</p><a href="https://welding-table-generator.com/" target="_blank" rel="noopener noreferrer">Original project ↗</a></article>}<button className="legal-link" aria-expanded={about} aria-controls="about-panel" onClick={() => setAbout(value => !value)}>About & Legal Info<Icon name="chevron" size={14} style={{ transform: about ? 'rotate(180deg)' : undefined }} /></button></div>
-        {notice && <output className="notice" aria-live="polite" onClick={() => setNotice('')}>{notice}</output>}
-      </section>
-      <article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose a 16 mm or 28 mm fixture grid, or set a custom hole diameter, pitch and margin. Square and staggered patterns, skirt holes and grid engraving share one metric geometry model.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>
-    </main>
-  )
+    </>}
+    production={<ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={geometryError} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} />}
+    actions={<ProjectActions onOpen={file => void open(file)} onSave={save} onShare={() => void share()} disabled={Boolean(geometryError)} onZip={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))} onDxf={() => downloadFull(config)} />}
+    seo={<article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose a 16 mm or 28 mm fixture grid, or set a custom hole diameter, pitch and margin. Square and staggered patterns, skirt holes and grid engraving share one metric geometry model.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>}>
+    {geometryError ? <div className="three-loading socket-error" role="alert">{geometryError}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
+      : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
+      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><AssemblyControls value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onReset={() => setReset3d(value => value + 1)} onFocus={cornerPlate ? () => setFocusMount3d(value => value + 1) : undefined} /></>}
+  </GeneratorShell>
 }

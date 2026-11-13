@@ -1,18 +1,25 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { svgContourPath, engravingLines } from './geometry'
-import { display, readDisplay, type Config } from './model'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { svgContourPath, engravingLines, type FabricationPart, type EngravingLine } from './geometry'
+import { display, readDisplay, readPart, type Config } from './model'
 import { downloadNestedZip } from './dxf'
-import { nestingKey, nestingParts, type NestingRequest, type NestingResponse } from './nestingSettings'
-import type { NestingResult } from './nesting'
-import { NumberInput } from './NumberInput'
+import { nestingKey, nestingParts, nestingOptions, type NestingRequest, type NestingResponse } from './nestingSettings'
+import type { NestingOptions, NestingResult } from './nesting'
+import { NumberField } from './GeneratorWorkspace'
 import { Icon } from './Icon'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
-type Props = { config: Config; dark: boolean; onChange: (patch: Partial<Config>) => void; onNotice: (message: string) => void }
+export type SheetSettings = { length: number; width: number; edgeGap: number; partGap: number; copies: number }
+type Props = {
+  jobKey: string; sourceParts: FabricationPart[]; options: NestingOptions; sheetSettings: SheetSettings; units: Config['units']
+  onChange: (patch: Partial<SheetSettings>) => void | boolean; onNotice: (message: string) => void
+  render3D: (result: NestingResult, reset: number) => ReactNode
+  onExport: (result: NestingResult) => Promise<void>
+  getEngravings?: (part: FabricationPart) => EngravingLine[]
+  isLayoutValid?: (result: NestingResult, key: string) => boolean
+  batchLabel?: string; maxGap?: number
+}
 
-export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
-  const key = nestingKey(config)
-  const sourceParts = useMemo(() => nestingParts(config), [key])
+export function SheetNesting({ jobKey: key, sourceParts, options, sheetSettings: settings, units: unitSystem, onChange, onNotice, render3D, onExport, getEngravings, isLayoutValid, batchLabel = 'Identical items in this cutting batch', maxGap = 1000 }: Props) {
   const [snapshot, setSnapshot] = useState<{ key: string; result: NestingResult } | null>(null)
   const [stats, setStats] = useState<{ attempts: number; elapsedMs: number; search: NestingResult['stats'] | null }>({ attempts: 0, elapsedMs: 0, search: null })
   const [status, setStatus] = useState<'running' | 'pausing' | 'paused' | 'done' | 'error'>('running')
@@ -23,17 +30,19 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
   const [reset, setReset] = useState(0)
   const [retry, setRetry] = useState(0)
   const control = useRef<{ worker: Worker; running: boolean; busy: boolean; limit: number; elapsed: number; exhausted: boolean } | null>(null)
-  const configRef = useRef(config)
-  configRef.current = config
+  const sourceRef = useRef({ parts: sourceParts, options })
+  sourceRef.current = { parts: sourceParts, options }
   const budgetRef = useRef(budget)
   budgetRef.current = budget
 
   useEffect(() => {
     let active = true
     setSnapshot(null); setStats({ attempts: 0, elapsedMs: 0, search: null }); setStatus('running'); setError('')
-    // Debounce a sequence of numeric edits. Cleanup terminates old geometry work, including an in-flight pass.
+    // Debounce edits; cleanup cancels old geometry work, including an in-flight pass.
     const timer = window.setTimeout(() => {
-      const worker = new Worker(new URL('./nesting.worker.ts', import.meta.url), { type: 'module' })
+      let worker: Worker
+      try { worker = new Worker(new URL('./nesting.worker.ts', import.meta.url), { type: 'module' }) }
+      catch { setError('This browser cannot start the sheet calculation.'); setStatus('error'); return }
       const state = { worker, running: true, busy: true, limit: budgetRef.current * 1000, elapsed: 0, exhausted: false }
       control.current = state
       worker.onmessage = (event: MessageEvent<NestingResponse>) => {
@@ -44,9 +53,7 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
         state.elapsed = message.elapsedMs
         state.exhausted = message.done
         setStats({ attempts: message.result.stats.attempts, elapsedMs: message.elapsedMs, search: message.result.stats })
-        // Do not rebuild hundreds of 3D meshes for progress-only messages.
-        setSnapshot(previous => previous?.key === key && previous.result.stats.improvements === message.result.stats.improvements
-          ? previous : { key, result: message.result })
+        setSnapshot(previous => previous?.key === key && previous.result.stats.improvements === message.result.stats.improvements ? previous : { key, result: message.result })
         if (message.done || !message.result.validation.valid) { state.running = false; setStatus('done'); return }
         if (state.running && message.elapsedMs < state.limit) {
           state.busy = true
@@ -54,7 +61,7 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
         } else { state.running = false; setStatus('paused') }
       }
       worker.onerror = () => { if (active) { state.running = false; setError('Calculation worker failed. You can keep the last verified result or restart.'); setStatus('error') } }
-      worker.postMessage({ type: 'start', key, config: configRef.current } satisfies NestingRequest)
+      worker.postMessage({ type: 'start', key, ...sourceRef.current } satisfies NestingRequest)
     }, 250)
     return () => { active = false; clearTimeout(timer); control.current?.worker.terminate(); control.current = null }
   }, [key, retry])
@@ -77,26 +84,26 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
   const sheet = result?.sheets[selected]
   const metric = result?.metrics.sheets[selected]
   const focused = useMemo(() => result && sheet ? { ...result, sheets: [sheet], placements: sheet.placements } : undefined, [result, sheet])
-  const units = config.units === 'mm' ? 'mm' : 'in'
-  const complete = result && result.validation.valid && !result.unplaced.length && result.placements.length > 0
+  const units = unitSystem === 'mm' ? 'mm' : 'in'
+  const complete = result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(result, key))
   const running = status === 'running' || status === 'pausing'
-  const spacingField = (field: 'sheetEdgeGap' | 'sheetPartGap', label: string) => <label className="field"><span>{label} ({units})</span><NumberInput
-    aria-label={label} value={display(config[field], config.units, 2)} min={0} max={Number(display(1000, config.units, 2))} step={config.units === 'mm' ? 0.5 : 0.01}
-    onValue={value => { if (value !== Number(display(config[field], config.units, 2))) onChange({ [field]: Math.max(0, Math.min(1000, readDisplay(value, config.units))) }) }} /></label>
+  const spacingField = (field: 'edgeGap' | 'partGap', label: string) => <NumberField label={`${label} (${units})`}
+    aria-label={label} value={display(settings[field], unitSystem, 2)} min={0} max={Number(display(maxGap, unitSystem, 2))} step={unitSystem === 'mm' ? 0.5 : 0.01}
+    onValue={value => { if (value !== Number(display(settings[field], unitSystem, 2))) return onChange({ [field]: Math.max(0, Math.min(maxGap, readDisplay(value, unitSystem))) }) }} />
 
   return <div className="sheet-workspace">
     <div className="sheet-canvas">
-      {focused ? mode === '3d' ? <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ThreeAssembly config={config} dark={dark} resetToken={reset} mountFocusToken={0} nesting={focused} /></Suspense>
-        : <svg className="nested-plan" viewBox={`-30 -30 ${config.sheetLength + 60} ${config.sheetWidth + 60}`} role="img" aria-label={`Sheet ${selected + 1} cutting layout`}>
-          <g transform={`translate(0 ${config.sheetWidth}) scale(1 -1)`}>
-            <rect className="stock-outline" x={0} y={0} width={config.sheetLength} height={config.sheetWidth} />
-            <rect className="stock-margin" x={config.sheetEdgeGap} y={config.sheetEdgeGap} width={Math.max(0, config.sheetLength - 2 * config.sheetEdgeGap)} height={Math.max(0, config.sheetWidth - 2 * config.sheetEdgeGap)} />
+      {focused ? mode === '3d' ? render3D(focused, reset)
+        : <svg className="nested-plan" viewBox={`-30 -30 ${settings.length + 60} ${settings.width + 60}`} role="img" aria-label={`Sheet ${selected + 1} cutting layout`}>
+          <g transform={`translate(0 ${settings.width}) scale(1 -1)`}>
+            <rect className="stock-outline" x={0} y={0} width={settings.length} height={settings.width} />
+            <rect className="stock-margin" x={settings.edgeGap} y={settings.edgeGap} width={Math.max(0, settings.length - 2 * settings.edgeGap)} height={Math.max(0, settings.width - 2 * settings.edgeGap)} />
             {metric && metric.remnant.width > 0 && metric.remnant.height > 0 && <rect className="stock-remnant" {...metric.remnant} />}
             {sheet!.placements.map(p => <g key={`${p.part.name}:${p.instance}`} className="nested-part" transform={`translate(${p.translation.x} ${p.translation.y}) rotate(${p.rotation})`}>
               <title>{p.part.label} · {p.instance + 1} · {p.rotation}°</title>
               <path d={p.part.contours.map(svgContourPath).join(' ')} fillRule="evenodd" />
               {p.part.holes.map(hole => <circle key={hole.id} cx={hole.x} cy={hole.y} r={hole.d / 2} />)}
-              {engravings(sourceParts.find(part => part.name === p.part.name), config)}
+              {getEngravings?.(p.part).map((line, i) => <line key={i} className="nested-engraving" x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y} />)}
             </g>)}
           </g>
         </svg>
@@ -115,9 +122,9 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
       {result && result.sheets.length > 0 && <>
         <label className="field"><span>Preview sheet</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Sheet {i + 1} · {s.placements.length} parts</option>)}</select></label>
         <dl className="nesting-metrics">
-          <div><dt>Blank-outline coverage</dt><dd>{(100 * result.outlineArea / (result.sheets.length * config.sheetLength * config.sheetWidth)).toFixed(1)}%</dd></div>
+          <div><dt>Blank-outline coverage</dt><dd>{(100 * result.outlineArea / (result.sheets.length * settings.length * settings.width)).toFixed(1)}%</dd></div>
           <div><dt>Area lower bound</dt><dd>{result.metrics.sheetLowerBound} sheet(s)</dd></div>
-          {metric && <div><dt>Clear edge strip, this sheet</dt><dd>{display(metric.remnant.width, config.units, 1)} × {display(metric.remnant.height, config.units, 1)} {units}</dd></div>}
+          {metric && <div><dt>Clear edge strip, this sheet</dt><dd>{display(metric.remnant.width, unitSystem, 1)} × {display(metric.remnant.height, unitSystem, 1)} {units}</dd></div>}
         </dl>
         <p className="nesting-hint">Coverage includes holes. Green in 2D marks an empty edge strip, not all reusable offcuts. {complete && result.sheets.length === result.metrics.sheetLowerBound ? 'Sheet count meets the area lower bound; offcut shape can still improve.' : 'The lower bound is not a promise that this sheet count is feasible.'}</p>
       </>}
@@ -127,14 +134,24 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
         <p>{stats.attempts} orders evaluated · {(stats.elapsedMs / 1000).toFixed(1)} s compute time. Pausing or reaching the budget finishes the current pass. Export keeps the best verified layout.</p>
       </div>
       <details><summary>Spacing & batch</summary>
-        <div className="fields">{spacingField('sheetEdgeGap', 'Sheet edge gap')}{spacingField('sheetPartGap', 'Part gap')}</div>
-        <label className="field"><span>Identical tables in this cutting batch</span><NumberInput min={1} max={10} step={1} value={config.nestingCopies} onValue={value => onChange({ nestingCopies: Math.max(1, Math.min(10, Math.floor(value))) })} /></label>
-        <p>Rotations are chosen automatically: quarter turns first, then 15° refinements within the search budget. Batch affects sheet nesting only, not the assembled table or individual-part export. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
+        <div className="fields">{spacingField('edgeGap', 'Sheet edge gap')}{spacingField('partGap', 'Part gap')}</div>
+        <NumberField label={batchLabel} min={1} max={10} step={1} value={settings.copies} onValue={value => onChange({ copies: Math.max(1, Math.min(10, Math.floor(value))) })} />
+        <p>Rotations are chosen automatically: quarter turns first, then 15° refinements within the search budget. Batch affects sheet nesting only, not the assembled model or individual part geometry. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
       </details>
-      <button className="nesting-export" disabled={!complete} onClick={() => { if (result) void downloadNestedZip(config, { ...result, stats: stats.search ?? result.stats }).catch(() => onNotice('Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet DXFs (ZIP)</button>
+      <button className="nesting-export" disabled={!complete} onClick={() => { if (result) void onExport({ ...result, stats: stats.search ?? result.stats }).catch(() => onNotice('Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet DXFs (ZIP)</button>
       <p className="nesting-hint">Native LINE / ARC / CIRCLE output, placement manifest and project settings. Contour search is heuristic, not a global optimum proof. Confirm kerf, lead-ins, clamps and cutting order in CAM.</p>
     </section>
   </div>
 }
 
-const engravings = (part: Parameters<typeof engravingLines>[0] | undefined, config: Config) => part ? engravingLines(part, config).map((line, i) => <line key={i} className="nested-engraving" x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y} />) : null
+type TableProps = { config: Config; dark: boolean; onChange: (patch: Partial<Config>) => void; onNotice: (message: string) => void }
+export function TableSheetNesting({ config, dark, onChange, onNotice }: TableProps) {
+  const key = nestingKey(config)
+  const parts = useMemo(() => nestingParts(config), [key])
+  return <SheetNesting jobKey={key} sourceParts={parts} options={nestingOptions(config)} units={config.units}
+    sheetSettings={{ length: config.sheetLength, width: config.sheetWidth, edgeGap: config.sheetEdgeGap, partGap: config.sheetPartGap, copies: config.nestingCopies }}
+    onChange={changes => onChange({ ...(changes.edgeGap === undefined ? {} : { sheetEdgeGap: changes.edgeGap }), ...(changes.partGap === undefined ? {} : { sheetPartGap: changes.partGap }), ...(changes.copies === undefined ? {} : { nestingCopies: changes.copies }) })}
+    onNotice={onNotice} onExport={result => downloadNestedZip(config, result)} batchLabel="Identical tables in this cutting batch"
+    getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }}
+    render3D={(result, reset) => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ThreeAssembly config={config} dark={dark} resetToken={reset} mountFocusToken={0} nesting={result} /></Suspense>} />
+}

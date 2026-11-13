@@ -732,7 +732,7 @@ export const contourLength = (contour: Contour) => contour.reduce((sum, segment)
   return sum + segment.radius * Math.abs(radians(arcSweep(segment)))
 }, 0)
 
-export const partWeight = (part: FabricationPart, _c: Config) => {
+export const partWeight = (part: FabricationPart) => {
   const contourArea = Math.abs(signedContourArea(part.contours[0])) - part.contours.slice(1).reduce((area, contour) => area + Math.abs(signedContourArea(contour)), 0)
   const holeArea = part.holes.reduce((area, hole) => area + Math.PI * (hole.d / 2) ** 2, 0)
   return (contourArea - holeArea) * part.thickness * densityKgPerMm3
@@ -746,7 +746,7 @@ export const totals = (c: Config) => {
     const holeCut = part.holes.reduce((partSum, hole) => partSum + Math.PI * hole.d, 0)
     return sum + (contourCut + holeCut) * part.count
   }, 0) / 1000
-  const kg = parts.reduce((sum, part) => sum + partWeight(part, c) * part.count, 0)
+  const kg = parts.reduce((sum, part) => sum + partWeight(part) * part.count, 0)
   const engraving = parts.reduce((total, part) => total + engravingLines(part, c).reduce((sum, mark) => sum + distance(mark.from, mark.to), 0) * part.count, 0) / 1000
   const fit = parts.every(part =>
     (part.width <= c.sheetLength && part.height <= c.sheetWidth)

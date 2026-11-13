@@ -20,9 +20,11 @@ See [the algorithm, limits, metrics, benchmark fixtures and audit commands](docs
 
 ## Tools
 
-Use **Tools** in the sidebar to choose a separate welded-product workspace. The first tool designs an independently engineered 500 × 200 × 200 mm wedge extension from seven flat steel pieces: a horizontal perforated top, tapered open sides, a slotted mounting end, a shallow free end and two narrow cross ties with matching locating tabs and cuts. Adjust its dimensions, inspect part profiles and the 3D assembly, then run the same automatic contour-aware sheet nesting for the complete cut list. Save or open a versioned project JSON, share a link, or download native per-part and per-sheet DXFs with layout and assembly manifests. Export stays disabled for incomplete or invalid nesting. The table generator's own project and settings remain separate.
+Use **Tools** in the sidebar to select either a welded wedge extension or a flat welding square. Both use the **same components as the table generator**: shell and sidebar, metric/imperial controls, theme, production estimate, project/export actions, interactive 2D with ruler and pan/zoom, Three.js assembly and progressive sheet nesting with pause/resume. There is no separate Tools stylesheet, renderer lifecycle or nesting worker.
 
-This is **not a reconstruction of the manufacturer's dimensioned drawings**. See [the extension's assumptions and fabrication checks](docs/tools-extension.md) before cutting.
+The extension uses seven flat steel pieces: a horizontal perforated top, tapered open sides, a slotted mounting end, a shallow free end and two narrow cross ties with locating tabs/cuts. The second tool is one planar L-shaped plate, default 250 × 250 mm, with three round mounting holes—not a bent angle. Each product keeps independent dimensions and saved state. Save/open versioned JSON, share a link, export part DXFs or an explicitly unnested strip, and export nested sheet DXFs with layout/assembly manifests only from a current complete verified result. The table generator's fabrication project remains separate.
+
+This is **not a reconstruction of the manufacturer's dimensioned drawings**. See [the extension's assumptions and fabrication checks](docs/tools-extension.md) and [the flat square's editable assumptions](docs/tools-square.md) before cutting.
 
 ## Local run
 
