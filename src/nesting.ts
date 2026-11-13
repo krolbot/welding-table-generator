@@ -275,7 +275,7 @@ const measureResult = (result: NestingResult, options: NestingOptions, polygons:
  * contour contact regions and deterministic elite-order mutations. Holes are intentionally not nestable.
  * Consumers can stop between passes; the UI can terminate its worker immediately during an expensive pass.
  */
-export function* searchNesting(parts: readonly Part[], options: NestingOptions): Generator<NestingResult> {
+function* searchNestingCore(parts: readonly Part[], options: NestingOptions): Generator<NestingResult> {
   if (!validOptions(options) || parts.some(p => !Number.isInteger(p.count) || p.count < 0) || parts.reduce((n, p) => n + p.count, 0) > 256) {
     const invalid = emptyResult()
     invalid.validation = { valid: false, violations: [{ sheet: -1, message: 'Invalid nesting options or part count (limit 256)' }] }
@@ -333,7 +333,12 @@ export function* searchNesting(parts: readonly Part[], options: NestingOptions):
     const gap = options.partClearance ?? defaultPartClearance, edge = options.edgeClearance ?? defaultEdgeClearance
     for (const record of ordered) {
       const preferredRotation = preferred.get(recordKey(record))
-      const variants = shapes.get(record.part)!.slice().sort((a, b) => Number(b.rotation === preferredRotation) - Number(a.rotation === preferredRotation))
+      // Seed passes try every angle; contact passes test one fine angle for one part family at a time.
+      const refinePart = record.id === attempt % parts.length
+      const variants = shapes.get(record.part)!.filter(shape => !contourSearch || shape.rotation % 90 === 0
+        || refinePart && (shape.rotation === (Math.floor(attempt / parts.length) * 7 % 24) * 15
+          || shape.rotation === preferredRotation))
+        .sort((a, b) => Number(b.rotation === preferredRotation) - Number(a.rotation === preferredRotation))
       if (!variants.length) { result.unplaced.push({ ...record, reason: 'invalid-geometry' }); continue }
       let selected: NestingPlacement | undefined, selectedPolygon: Polygon | undefined, selectedShape: PreparedShape | undefined
       let selectedScore = [Infinity, Infinity]
@@ -345,12 +350,14 @@ export function* searchNesting(parts: readonly Part[], options: NestingOptions):
           const box = shape.polygon.box, error = shape.polygon.error
           const region = { minX: edge + error - box.minX, minY: edge + error - box.minY, maxX: options.sheet.width - edge - error - box.maxX, maxY: options.sheet.height - edge - error - box.maxY }
           if (region.minX > region.maxX || region.minY > region.maxY) continue
-          const candidates = candidateTranslations(shape, placed, sheet, options, polygons)
-          if (contourSearch) candidates.push(...contactCache.candidates(shape, placed.map(p => ({ shape: prepared.get(p)!, translation: p.translation })), region, gap))
           const preferLeft = seedOrder % 8 >= 4
           const score = (translation: Point): number[] => preferLeft
             ? [box.maxX + translation.x, box.maxY + translation.y]
             : [box.maxY + translation.y, box.maxX + translation.x]
+          const lowerBound = score({ x: region.minX, y: region.minY })
+          if (lowerBound[0] > selectedScore[0] + epsilon || Math.abs(lowerBound[0] - selectedScore[0]) <= epsilon && lowerBound[1] >= selectedScore[1] - epsilon) continue
+          const candidates = candidateTranslations(shape, placed, sheet, options, polygons)
+          if (contourSearch) candidates.push(...contactCache.candidates(shape, placed.map(p => ({ shape: prepared.get(p)!, translation: p.translation })), region, gap))
           candidates.sort((a, b) => { const sa = score(a), sb = score(b); return sa[0] - sb[0] || sa[1] - sb[1] })
           for (const translation of candidates) {
             const candidateScore = score(translation)
@@ -378,6 +385,53 @@ export function* searchNesting(parts: readonly Part[], options: NestingOptions):
       elites.push({ result, order: ordered }); elites.sort((a, b) => compareNesting(a.result, b.result)); elites.splice(6)
     }
     yield { ...best!, stats: { attempts: attempt + 1, improvements, contactCacheHits: contactCache.hits, contactCacheMisses: contactCache.misses, coarsenedPairs: contactCache.coarsened } }
+  }
+}
+
+export function* searchNesting(parts: readonly Part[], options: NestingOptions): Generator<NestingResult> {
+  const angles = options.rotations ?? rotations
+  const passes = options.attempts ?? 32
+  if (!validOptions(options) || parts.some(part => !Number.isInteger(part.count) || part.count < 0)
+    || parts.reduce((count, part) => count + part.count, 0) > 256
+    || angles.length !== 24 || ![0, 90, 180, 270].every(angle => angles.includes(angle)) || passes <= 12) {
+    yield* searchNestingCore(parts, options)
+    return
+  }
+
+  const edge = options.edgeClearance ?? defaultEdgeClearance
+  const quarterFitsEach = parts.every(part => part.count === 0 || [0, 90, 180, 270].some(angle => {
+    const polygon = makeShape(part, angle, options.arcTolerance ?? defaultArcTolerance)?.polygon
+    return polygon && polygon.box.maxX - polygon.box.minX + 2 * (edge + polygon.error) <= options.sheet.width
+      && polygon.box.maxY - polygon.box.minY + 2 * (edge + polygon.error) <= options.sheet.height
+  }))
+  if (!quarterFitsEach) {
+    yield* searchNestingCore(parts, options)
+    return
+  }
+
+  // Keep the proven quarter-turn search intact before refining the incumbent with finer angles.
+  const quarterPasses = Math.min(48, passes)
+  let best: NestingResult | undefined
+  let attempts = 0, improvements = 0, contactCacheHits = 0, contactCacheMisses = 0, coarsenedPairs = 0
+  for (const result of searchNestingCore(parts, { ...options, rotations: [0, 90, 180, 270], attempts: quarterPasses })) {
+    attempts = result.stats.attempts
+    improvements = result.stats.improvements
+    contactCacheHits = result.stats.contactCacheHits
+    contactCacheMisses = result.stats.contactCacheMisses
+    coarsenedPairs = result.stats.coarsenedPairs
+    best = result
+    yield { ...best, stats: { attempts, improvements, contactCacheHits, contactCacheMisses, coarsenedPairs } }
+  }
+  if (passes === quarterPasses) return
+  for (const result of searchNestingCore(parts, { ...options, attempts: passes - quarterPasses })) {
+    attempts = quarterPasses + result.stats.attempts
+    if (!best || compareNesting(result, best) < 0) { best = result; improvements++ }
+    yield { ...best!, stats: {
+      attempts, improvements,
+      contactCacheHits: contactCacheHits + result.stats.contactCacheHits,
+      contactCacheMisses: contactCacheMisses + result.stats.contactCacheMisses,
+      coarsenedPairs: coarsenedPairs + result.stats.coarsenedPairs,
+    } }
   }
 }
 

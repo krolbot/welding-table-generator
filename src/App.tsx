@@ -134,7 +134,6 @@ function normalizeConfig(input: unknown): Config {
   if (value.engravingMode === 'through' || value.engravingMode === 'between') result.engravingMode = value.engravingMode
   if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') result.legMountStyle = value.legMountStyle
   result.nestingCopies = Math.floor(result.nestingCopies)
-  if (value.nestingRotations === 'fixed' || value.nestingRotations === 'half' || value.nestingRotations === 'quarter' || value.nestingRotations === 'eighth' || value.nestingRotations === 'fine') result.nestingRotations = value.nestingRotations
   if (value.legMountStyle === 'squareSocket') result.legMountStyle = 'cornerPlate'
   result.customHoles = parseCustomHoles(value.customHoles)
   result.removedHoles = Array.isArray(value.removedHoles) ? value.removedHoles.flatMap((item): Array<RemovedHole | string> => {

@@ -126,13 +126,10 @@ export function SheetNesting({ config, dark, onChange, onNotice }: Props) {
         <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Pause search</button> : <button disabled={status === 'done' || status === 'error'} onClick={resume}>Continue improving</button>}<button onClick={() => setRetry(value => value + 1)}>Restart</button></div>
         <p>{stats.attempts} orders evaluated · {(stats.elapsedMs / 1000).toFixed(1)} s compute time. Pausing or reaching the budget finishes the current pass. Export keeps the best verified layout.</p>
       </div>
-      <details><summary>Spacing, rotations & batch</summary>
+      <details><summary>Spacing & batch</summary>
         <div className="fields">{spacingField('sheetEdgeGap', 'Sheet edge gap')}{spacingField('sheetPartGap', 'Part gap')}</div>
-        <label className="field"><span>Allowed rotations</span><select value={config.nestingRotations} onChange={event => onChange({ nestingRotations: event.target.value as Config['nestingRotations'] })}>
-          <option value="fixed">No rotation</option><option value="half">0° / 180° · fixed grain axis</option><option value="quarter">Every 90°</option><option value="eighth">Every 45° · slower</option><option value="fine">Every 15° · slowest</option>
-        </select></label>
         <label className="field"><span>Identical tables in this cutting batch</span><NumberInput min={1} max={10} step={1} value={config.nestingCopies} onValue={value => onChange({ nestingCopies: Math.max(1, Math.min(10, Math.floor(value))) })} /></label>
-        <p>Batch affects sheet nesting only, not the assembled table or individual-part export. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
+        <p>Rotations are chosen automatically: quarter turns first, then 15° refinements within the search budget. Batch affects sheet nesting only, not the assembled table or individual-part export. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
       </details>
       <button className="nesting-export" disabled={!complete} onClick={() => { if (result) void downloadNestedZip(config, { ...result, stats: stats.search ?? result.stats }).catch(() => onNotice('Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet DXFs (ZIP)</button>
       <p className="nesting-hint">Native LINE / ARC / CIRCLE output, placement manifest and project settings. Contour search is heuristic, not a global optimum proof. Confirm kerf, lead-ins, clamps and cutting order in CAM.</p>

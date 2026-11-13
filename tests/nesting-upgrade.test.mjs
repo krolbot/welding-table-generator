@@ -79,9 +79,13 @@ test('progress is deterministic, monotonically improving and resumable at a pass
   assert.deepEqual(previous,nesting.nestParts(parts,{...options,attempts:30}))
 })
 
-test('batch count and rotation settings share export validation and preserve presentation-only changes', async () => {
-  const c={...defaults,length:800,width:500,height:100,ribs:false,dogBones:false,nestingCopies:2,nestingRotations:'half'}
+test('automatic rotations and batch count share export validation and preserve presentation-only changes', async () => {
+  const c={...defaults,length:800,width:500,height:100,ribs:false,dogBones:false,nestingCopies:2}
   const parts=settings.nestingParts(c)
+  const rotations=settings.nestingOptions(c).rotations
+  assert.equal(rotations.length,24)
+  assert.deepEqual(new Set(rotations),new Set(Array.from({length:24},(_,i)=>i*15)))
+  assert.deepEqual(settings.nestingOptions({...c,nestingRotations:'fixed'}).rotations,rotations)
   const result=nesting.nestParts(parts,{...settings.nestingOptions(c),attempts:12})
   assert.equal(result.placements.length,10)
   assert.equal(dxf.validateNestedExport(c,result),true)
@@ -95,11 +99,30 @@ test('batch count and rotation settings share export validation and preserve pre
   const project=JSON.parse(await zip.file('project.json').async('string'))
   assert.equal(manifest.tableCopies,2)
   assert.equal(manifest.placements.length,10)
-  assert.deepEqual(manifest.allowedRotations,[0,180])
+  assert.deepEqual(manifest.allowedRotations,rotations)
   assert.equal(project.nestingCopies,2)
-  assert.equal(project.nestingRotations,'half')
+  assert.equal('nestingRotations' in project,false)
   assert.equal(manifest.globalOptimalityProven,false)
   assert.equal(Object.keys(zip.files).filter(name=>name.endsWith('.dxf')).length,result.sheets.length)
+})
+
+test('automatic sheet layout tries diagonal angles without a user rotation setting', () => {
+  const part=rect('top',150,10)
+  const config={...defaults,sheetLength:120,sheetWidth:120,sheetEdgeGap:1,sheetPartGap:2}
+  const result=nesting.nestParts([part],{...settings.nestingOptions(config),attempts:1,maxSheets:1})
+  assert.equal(result.unplaced.length,0)
+  assert.equal(result.validation.valid,true)
+  assert.ok(result.placements[0].rotation%90!==0)
+})
+
+test('automatic refinement preserves the better quarter-turn baseline', () => {
+  const config={...defaults,sheetLength:220,sheetWidth:120,sheetEdgeGap:1,sheetPartGap:2}
+  const options={...settings.nestingOptions(config),attempts:49,maxSheets:2}
+  const snapshots=[...nesting.searchNesting([rect('a',120,40),rect('b',70,30)],options)]
+  assert.equal(snapshots.length,49)
+  assert.equal(snapshots[48].stats.attempts,49)
+  assert.ok(nesting.compareNesting(snapshots[48],snapshots[47])<=0)
+  assert.equal(snapshots[48].validation.valid,true)
 })
 
 test('invalid geometry, sheet settings and work limits fail closed', () => {
