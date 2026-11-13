@@ -12,11 +12,17 @@ An independent, browser-only welding-table layout planner. This is a clean-room 
 
 ## Sheet nesting
 
-The **Sheet nesting** view performs contour-aware placement with cached no-fit regions, deterministic order/orientation search and progressive verified results. Inspect each sheet in 3D or 2D, pause and continue the search, constrain rotations, and nest batches of identical tables. It minimizes sheet count first, then prefers clear edge strips rather than merely displaying a coverage percentage.
+The **Sheet nesting** view performs contour-aware placement with cached no-fit regions, deterministic order/orientation search and progressive verified results. Inspect each sheet in 3D or 2D, pause and continue the search, and nest batches of identical tables. Rotations are selected automatically. It minimizes sheet count first, then prefers clear edge strips rather than merely displaying a coverage percentage.
 
 Exports retain native DXF lines/arcs/circles and include a reproducible placement manifest and project settings. Missing, stale or invalid placements block export. The search is heuristic, not a universal optimality guarantee; kerf, lead-ins, clamping and cutting sequence still require CAM review.
 
 See [the algorithm, limits, metrics, benchmark fixtures and audit commands](docs/sheet-nesting.md). `npm run bench:nesting -- 96` replays the historical pre-mounting-plate part inventory for a like-for-like algorithm comparison; `npm run audit:nesting -- archive.zip` inspects an actual exported archive.
+
+## Tools
+
+Use **Tools** in the sidebar to choose a separate welded-product workspace. The first tool designs an independently engineered 500 × 200 × 200 mm open-bottom welding-table extension from seven flat steel pieces. Adjust its dimensions, inspect part profiles and the 3D assembly, then run the same automatic contour-aware sheet nesting for the complete cut list. Save or open a versioned project JSON, share a link, or download native per-part and per-sheet DXFs with layout and assembly manifests. Export stays disabled for incomplete or invalid nesting. The table generator's own project and settings remain separate.
+
+This is **not a reconstruction of the manufacturer's dimensioned drawings**. See [the extension's assumptions and fabrication checks](docs/tools-extension.md) before cutting.
 
 ## Local run
 

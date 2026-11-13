@@ -31,6 +31,7 @@ import { Icon, type IconName } from './Icon'
 import { NumberInput } from './NumberInput'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
+const ToolsWorkspace = lazy(() => import('./tools/ToolsWorkspace').then(module => ({ default: module.ToolsWorkspace })))
 
 type View = '2d' | '3d' | 'sheet'
 type Tool = 'holes' | 'ruler' | null
@@ -179,7 +180,7 @@ function loadedConfig(): Config {
     }
   }
   // Unknown project links do not override the saved table configuration.
-  if (params.has('project')) return normalizeConfig(stored)
+  if (params.has('project') || params.has('toolProject')) return normalizeConfig(stored)
   if (!params.size) return normalizeConfig(stored)
   const candidate: Record<string, unknown> = {}
   for (const [key, value] of params) {
@@ -215,6 +216,7 @@ const copyText = async (value: string) => {
 }
 
 export default function App() {
+  const [workspace, setWorkspace] = useState<'table' | 'tools'>(() => new URLSearchParams(location.search).has('toolProject') ? 'tools' : 'table')
   const [config, setConfig] = useState<Config>(loadedConfig)
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
   const [view, setView] = useState<View>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
@@ -502,6 +504,7 @@ export default function App() {
   const displayedLayoutWidth = display(layout.width, config.units, 0)
   const displayedLayoutHeight = display(layout.height, config.units, 0)
 
+  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace dark={dark} onBack={() => setWorkspace('table')} /></Suspense>
   return (
     <main className="app-shell">
       <aside className="settings">
@@ -509,6 +512,7 @@ export default function App() {
           <div className="brand"><Icon name="settings" size={24} /><h2>Welding Table Free Generator</h2></div>
           <button className="icon" title={`Switch to ${dark ? 'light' : 'dark'} theme`} aria-label="Toggle color theme" onClick={() => setDark(value => !value)}><Icon name={dark ? 'sun' : 'moon'} /></button>
         </header>
+        <nav className="workspace-navigation" aria-label="Product workspaces"><button aria-current="page">Table generator</button><button onClick={() => setWorkspace('tools')}>Tools</button></nav>
         <div className="units"><h3>Units</h3><div className="segment">{(['mm', 'inch'] as const).map(unit => <button key={unit} className={config.units === unit ? 'active' : ''} onClick={() => patch('units', unit)}>{unit}</button>)}</div></div>
         <div className="settings-scroll">
           <section className="fixture-card">

@@ -34,6 +34,9 @@ button svg, a svg { flex-shrink: 0; }
 .brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .brand > svg { color: var(--blue); width: 24px; flex-shrink: 1; }
 .brand h2 { font-size: 24px; font-weight: 700; line-height: 32px; letter-spacing: -.6px; margin: 0; color: #0f172a; }
+.workspace-navigation { display: flex; gap: 4px; margin: 0 0 16px; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--soft); }
+.workspace-navigation button { flex: 1; min-width: 0; border-radius: 7px; padding: 7px 8px; font-size: 13px; color: var(--control-text); }
+.workspace-navigation [aria-current="page"] { background: var(--blue); color: white; }
 .icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 8px; border-radius: 8px; color: var(--control-text); background: var(--control-bg); border: 1px solid var(--input-border); flex-shrink: 0; }
 .icon:hover { background: var(--soft); }
 h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; font-weight: 600; color: var(--muted); margin: 0 0 16px; }
