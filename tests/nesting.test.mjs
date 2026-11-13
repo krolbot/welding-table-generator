@@ -102,7 +102,6 @@ test('nests the realistic 1450×1150 corner-tab table deterministically with val
     width: 1150,
     height: 150,
     thickness: 8,
-    skirtHoleLayout: 'compact',
     ribs: true,
     ribSpacing: 400,
     clearance: 0.2,

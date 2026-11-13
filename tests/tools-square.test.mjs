@@ -9,7 +9,7 @@ let server, square, projects, geometry, native, nesting, dxf, viewer
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
   ;[square, projects, geometry, native, nesting, dxf, viewer] = await Promise.all([
-    '/src/tools/square.ts', '/src/tools/project.ts', '/src/geometry.ts', '/src/nestingNative.ts',
+    '/src/tools/square.ts', '/src/tools/project.ts', '/src/geometry.ts', '/src/contourGeometry.ts',
     '/src/nesting.ts', '/src/dxf.ts', '/src/tools/ToolAssembly3d.tsx',
   ].map(path => server.ssrLoadModule(path)))
 })

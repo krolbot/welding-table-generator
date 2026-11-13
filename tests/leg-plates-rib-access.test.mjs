@@ -7,7 +7,7 @@ let server, geometry, native, dxf, settings, model
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
   ;[geometry, native, dxf, settings, model] = await Promise.all([
-    '/src/geometry.ts', '/src/nestingNative.ts', '/src/dxf.ts', '/src/nestingSettings.ts', '/src/model.ts',
+    '/src/geometry.ts', '/src/contourGeometry.ts', '/src/dxf.ts', '/src/nestingSettings.ts', '/src/model.ts',
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
@@ -136,7 +136,7 @@ test('access holes update material, cutting, markings and serialized settings wi
 test('invalid corner mounting geometry cannot silently omit the leg plates from exports', () => {
   const c = config({ legPlateSize: 80, legPlateHoleSpacing: 100 })
   assert.equal(geometry.legCornerPlateSpec(c), undefined)
-  assert.match(geometry.fabricationError(c), /leg plates/)
+  assert.equal(geometry.fabricationError(c)?.code, 'leg-plates')
   assert.throws(() => dxf.fullDxf(c), /leg plates/)
   assert.throws(() => settings.nestingParts(c), /leg plates/)
   assert.equal(geometry.fabricationError({ ...c, legMounts: false }), undefined)
@@ -150,7 +150,7 @@ test('oversize access holes fail closed in every fabrication export path', async
   assert.equal(geometry.fabricationError(fitting), undefined)
   for (const bad of [max + 0.001, 0, -1, Infinity, NaN]) {
     const c = { ...good, ribAccessHoleDiameter: bad }
-    assert.match(geometry.fabricationError(c), /do not fit/)
+    assert.equal(geometry.fabricationError(c)?.code, 'rib-access')
     const part = geometry.makeParts(good)[0]
     assert.throws(() => dxf.dxfForPart(part, c), /do not fit/)
     assert.throws(() => dxf.fullDxf(c), /do not fit/)

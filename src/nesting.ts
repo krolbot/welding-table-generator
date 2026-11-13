@@ -1,6 +1,6 @@
 import { signedContourArea, type Contour, type FabricationPart, type Point } from './geometry'
 import { ContactCache, type ContactShape } from './nestingNfp'
-import { nativeContourBounds, nativeContourDistance } from './nestingNative'
+import { nativeContourBounds, nativeContourDistance } from './contourGeometry'
 
 type Part = FabricationPart
 

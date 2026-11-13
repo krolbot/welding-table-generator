@@ -9,7 +9,7 @@ const { extensionParts, extensionDefaults, extensionDimensions, extensionAssembl
 const { defaultToolProject } = await server.ssrLoadModule('/src/tools/project.ts')
 const { toolGroup } = await server.ssrLoadModule('/src/tools/ToolAssembly3d.tsx')
 const { contourPoints } = await server.ssrLoadModule('/src/geometry.ts')
-const { nativeContourBounds, nativeContourDistance, nativePointContourDistance } = await server.ssrLoadModule('/src/nestingNative.ts')
+const { nativeContourBounds, nativeContourDistance, nativePointContourDistance } = await server.ssrLoadModule('/src/contourGeometry.ts')
 const { nativeDxfForPart } = await server.ssrLoadModule('/src/dxf.ts')
 await server.close()
 
@@ -25,7 +25,7 @@ const inside = (p, vertices) => {
 const loops = part => part.contours.map(contour => contourPoints(contour, 64))
 const materialAt = (part, paths, p) => inside(p, paths[0]) && !paths.slice(1).some(path => inside(p, path)) && !part.holes.some(hole => Math.hypot(p.x - hole.x, p.y - hole.y) < hole.d / 2)
 const cases = []
-for (const length of [400, 450, 500, 800]) for (const width of [200, 400]) for (const height of [150, 200, 250, 300]) for (const thickness of [4, 6, 10]) cases.push({ length, width, height, thickness })
+for (const length of [400, 450, 500, 800]) for (const width of [200, 400]) for (const height of [150, 200, 250, 300]) for (const thickness of [4, 6, 9]) cases.push({ length, width, height, thickness })
 
 test('reference topology: horizontal perforated top, taper, large windows, open underside and narrow ties', () => {
   const parts = extensionParts(), byName = Object.fromEntries(parts.map(part => [part.name, part]))

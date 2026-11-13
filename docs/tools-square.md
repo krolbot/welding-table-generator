@@ -24,7 +24,7 @@ Both Tools items and the table use `GeneratorShell`, numeric/range/checkbox cont
 
 ## Project and exports
 
-The square uses `version: 2, tool: "square"`; the extension keeps its existing version 2 schema. Unknown fields, incorrect tool/size combinations and retired extension version 1 are rejected. Switching products preserves their own settings; a rejected legacy project remains recoverable before replacement.
+The square uses `version: 2, tool: "square"`; the extension uses version 3 for its datum-anchored grid. Unknown fields, incorrect tool/size combinations and retired extension version 1 are rejected. Switching products preserves their own settings; a rejected legacy project remains recoverable before replacement.
 
 - **Download ZIP (Parts):** canonical part DXF plus project, assembly and fabrication notes.
 - **Parts Strip DXF:** the same one-item arrangement shown in 2D; explicitly not nested.

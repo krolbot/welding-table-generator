@@ -25,7 +25,6 @@ const fullConfig = () => ({
   height: 150,
   thickness: 8,
   grid: 'square',
-  skirtHoleLayout: 'compact',
   ribs: true,
   ribSpacing: 400,
   clearance: 0.2,
@@ -65,7 +64,7 @@ test('lifting cutout uses the nearest rib-free long-skirt bay', () => {
   assert.ok(cutoutBounds)
 
   const centerX = (cutoutBounds.minX + cutoutBounds.maxX) / 2
-  assert.equal(Math.abs(centerX), 175)
+  assert.equal(Math.abs(centerX), 0)
   const slotBounds = skirt.contours.slice(1, 1 + skirt.slots.length)
     .map(contour => bounds(geometry.contourPoints(contour, 72)))
   for (const box of slotBounds) {

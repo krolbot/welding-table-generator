@@ -2,7 +2,7 @@ import JSZip from 'jszip'
 import { assertFabricationReady, fabricationError, contourPoints, engravingLines, layoutParts, makeParts, type Contour, type FabricationPart, type Part, type Point } from './geometry'
 import { projectConfig, type Config } from './model'
 import { nestingOptions, nestingParts } from './nestingSettings'
-import { nativeContourBounds } from './nestingNative'
+import { nativeContourBounds } from './contourGeometry'
 import { transformNestingPoint, transformNestingContour, validateNesting, type NestingPlacement, type NestingResult } from './nesting'
 
 const group = (code: number, value: string | number) => `${code}\n${value}\n`

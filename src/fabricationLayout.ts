@@ -1,5 +1,5 @@
 import { contourLength, partWeight, type FabricationPart, type Point } from './geometry'
-import { nativeContourBounds } from './nestingNative'
+import { nativeContourBounds } from './contourGeometry'
 
 export type FabricationLayout = { instances: Array<{ part: FabricationPart; instance: number; position: Point }>; width: number; height: number }
 

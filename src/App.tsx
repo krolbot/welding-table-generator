@@ -10,10 +10,8 @@ import {
   mmPerInch,
   maxTabWidth,
   partLabels,
-  projectFields,
   projectConfig,
   readPart,
-  type RemovedHole,
   presetValues,
   readDisplay,
   type Config,
@@ -28,171 +26,51 @@ import { NumberInput } from './NumberInput'
 import { AssemblyControls, Checkbox, GeneratorShell, NumberField, ProductionEstimate, ProjectActions, SliderField, VisualizationSettings, type ViewMode } from './GeneratorWorkspace'
 import { PartsLayout } from './PartsLayout'
 import { copyText, downloadFile } from './projectIO'
+import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey } from './tableProject'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 const ToolsWorkspace = lazy(() => import('./tools/ToolsWorkspace').then(module => ({ default: module.ToolsWorkspace })))
 
-type NumericKey = {
-  [K in keyof Config]: Config[K] extends number ? K : never
-}[keyof Config]
-type BooleanKey = {
-  [K in keyof Config]: Config[K] extends boolean ? K : never
-}[keyof Config]
-
-const numericKeys: NumericKey[] = [
-  'holeDiameter', 'pitch', 'margin', 'length', 'width', 'height', 'ribSpacing', 'ribAccessHoleDiameter', 'thickness', 'tabWidth',
-  'clearance', 'dogBoneDiameter', 'legBoltDiameter', 'legPatternX', 'legPatternY', 'legCols', 'legRows',
-  'legEdgeOffset', 'legBottomOffset', 'legProfileSize', 'legPlateSize',
-  'legPlateHoleDiameter', 'legPlateHoleSpacing', 'legLength', 'sheetLength', 'sheetWidth', 'sheetEdgeGap', 'sheetPartGap', 'nestingCopies', 'exploded',
-]
-const numericBounds: Record<NumericKey, { min: number; max: number }> = {
-  holeDiameter: { min: 1, max: 40 },
-  pitch: { min: 11, max: 1000 },
-  margin: { min: 0, max: 200 * mmPerInch / 2 - 10 },
-  length: { min: 500, max: 200 * mmPerInch },
-  width: { min: 400, max: 200 * mmPerInch },
-  height: { min: 50, max: 20 * mmPerInch },
-  ribSpacing: { min: 200, max: 24 * mmPerInch },
-  ribAccessHoleDiameter: { min: 1, max: 1000 },
-  thickness: { min: 1, max: 40 },
-  tabWidth: { min: 0, max: Math.floor((20 * mmPerInch - 1) / 2) - 5 },
-  clearance: { min: 0, max: 2.5 },
-  dogBoneDiameter: { min: 0.5, max: 5 },
-  legBoltDiameter: { min: 1, max: 100 },
-  legPatternX: { min: 0, max: 1000 },
-  legPatternY: { min: 0, max: 1000 },
-  legCols: { min: 1, max: 4 },
-  legRows: { min: 1, max: 4 },
-  legEdgeOffset: { min: 0, max: 1000 },
-  legBottomOffset: { min: 0, max: 1000 },
-  legProfileSize: { min: 20, max: 200 },
-  legPlateSize: { min: 80, max: 400 },
-  legPlateHoleDiameter: { min: 1, max: 40 },
-  legPlateHoleSpacing: { min: 20, max: 350 },
-  legLength: { min: 100, max: 1500 },
-  sheetLength: { min: 0, max: Infinity },
-  sheetWidth: { min: 0, max: Infinity },
-  sheetEdgeGap: { min: 0, max: 1000 },
-  sheetPartGap: { min: 0, max: 1000 },
-  nestingCopies: { min: 1, max: 10 },
-  exploded: { min: 0, max: 100 },
-}
-const booleanKeys: BooleanKey[] = [
-  'skirtHoles', 'engraving', 'nameMarking', 'ribs', 'ribAccessHoles', 'dogBones', 'legMounts', 'liftingHoles',
-  'showDimensions', 'renderHoles', 'highlighting',
-]
 const inchRanges: Partial<Record<NumericKey, { min: number; max: number; step: number }>> = {
   length: { min: 20, max: 200, step: 1 }, width: { min: 16, max: 200, step: 1 },
   height: { min: 2, max: 20, step: 0.5 }, ribSpacing: { min: 8, max: 24, step: 1 },
 }
 const partNames = Object.keys(partLabels) as PartName[]
-const clampNumeric = (key: NumericKey, value: number) => {
-  const bounds = numericBounds[key]
-  return Math.max(bounds.min, Math.min(bounds.max, value))
-}
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 const isPart = (value: unknown): value is PartName => typeof value === 'string' && Object.hasOwn(partLabels, value)
-const parseCustomHoles = (value: unknown): CustomHole[] => {
-  if (!Array.isArray(value)) return []
-  return value.flatMap(item => {
-    if (!isRecord(item) || !['string', 'number'].includes(typeof item.id)) return []
-    const part = readPart(item.part)
-    if (!part) return []
-    const x = Number(item.x)
-    const y = Number(item.y)
-    const d = Number(item.d)
-    return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(d) && d > 0
-      ? [{ id: item.id as string | number, part, x, y, d }]
-      : []
-  })
-}
-
-function normalizeConfig(input: unknown): Config {
-  if (!isRecord(input)) return { ...defaults }
-  const value: Record<string, unknown> = { ...input }
-  for (const [key, field] of Object.entries(projectFields)) {
-    if (Object.hasOwn(input, field)) value[key] = input[field]
-  }
-  if (value.grid === 'grid') value.grid = 'square'
-  if (value.grid === 'stagger') value.grid = 'staggered'
-  const result: Config = { ...defaults }
-  for (const key of numericKeys) {
-    const candidate = Number(value[key])
-    if (Number.isFinite(candidate)) result[key] = clampNumeric(key, candidate)
-  }
-  for (const key of booleanKeys) {
-    if (typeof value[key] === 'boolean') result[key] = value[key]
-  }
-  if (value.units === 'mm' || value.units === 'inch') result.units = value.units
-  if (value.units === 'in') result.units = 'inch'
-  if (value.preset === 'D16' || value.preset === 'D28' || value.preset === 'Custom') result.preset = value.preset
-  if (value.grid === 'square' || value.grid === 'staggered') result.grid = value.grid
-  if (value.skirtHoleLayout === 'canonical' || value.skirtHoleLayout === 'compact') result.skirtHoleLayout = value.skirtHoleLayout
-  if (value.engravingMode === 'through' || value.engravingMode === 'between') result.engravingMode = value.engravingMode
-  if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') result.legMountStyle = value.legMountStyle
-  result.nestingCopies = Math.floor(result.nestingCopies)
-  if (value.legMountStyle === 'squareSocket') result.legMountStyle = 'cornerPlate'
-  result.customHoles = parseCustomHoles(value.customHoles)
-  result.removedHoles = Array.isArray(value.removedHoles) ? value.removedHoles.flatMap((item): Array<RemovedHole | string> => {
-    if (typeof item === 'string') return [item]
-    if (!isRecord(item)) return []
-    const part = readPart(item.part)
-    if (!part || !['string', 'number'].includes(typeof item.id)) return []
-    const x = Number(item.x), y = Number(item.y), r = Number(item.r)
-    return [x, y, r].every(Number.isFinite) && r > 0
-      ? [{ id: item.id as string | number, part, x, y, r }] : []
-  }) : []
-  const fixtureEdgeWeb = 5
-  result.pitch = Math.max(result.pitch, result.holeDiameter + 2 * fixtureEdgeWeb)
-  result.margin = Math.max(result.holeDiameter / 2 + fixtureEdgeWeb, Math.min(result.margin, Math.min(result.length, result.width) / 2 - 2 * fixtureEdgeWeb))
-  if (!value.preset) result.preset = Object.entries(presetValues).find(([, values]) =>
-    values.holeDiameter === result.holeDiameter && values.pitch === result.pitch && values.margin === result.margin,
-  )?.[0] as Config['preset'] ?? 'Custom'
-  result.legCols = Math.max(1, Math.round(result.legCols))
-  result.legRows = Math.max(1, Math.round(result.legRows))
-  result.exploded = Math.max(0, Math.min(100, result.exploded))
-  result.tabWidth = Math.min(result.tabWidth, maxTabWidth(result))
-  return result
-}
-
 const readStorage = (key: string): Record<string, unknown> => {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
-    return isRecord(value) ? value : {}
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
   } catch { return {} }
 }
 
-function loadedConfig(): Config {
+type ProjectReview = { kind: 'migration'; original: string; config: Config } | { kind: 'rejected'; original: string; message: string }
+const reviewMessage = (review: ProjectReview) => review.kind === 'migration'
+  ? 'This project used a centred grid. The corrected grid is anchored to the table edges and working surface. Saved origins and manual hole coordinates are retained; select a standard origin explicitly if needed. Review hole removals and mating parts before cutting. The old geometry is not exported.'
+  : review.message
+const preserveView = (next: Config, current: Config): Config => ({ ...next, units: current.units, exploded: current.exploded, showDimensions: current.showDimensions, renderHoles: current.renderHoles, highlighting: current.highlighting })
+const loadedTable = (): { config: Config; review: ProjectReview | null } => {
   const ui = readStorage('tableGenUI')
-  const preferences = { units: ui.units, exploded: ui.explodeFactor, showDimensions: ui.showDims, renderHoles: ui.renderHoles3D, highlighting: ui.enableHoverEffect }
-  const stored = { ...readStorage('tableGenParams'), ...preferences }
-  const params = new URLSearchParams(location.search)
-  const legacy = params.get('state')
-  if (legacy) {
-    try {
-      return normalizeConfig(JSON.parse(legacy))
-    } catch {
-      return { ...defaults }
-    }
+  const config: Config = {
+    ...defaults, units: ui.units === 'in' || ui.units === 'inch' ? 'inch' : 'mm',
+    exploded: typeof ui.explodeFactor === 'number' && Number.isFinite(ui.explodeFactor) ? clampNumeric('exploded', ui.explodeFactor) : defaults.exploded,
+    showDimensions: typeof ui.showDims === 'boolean' ? ui.showDims : defaults.showDimensions,
+    renderHoles: typeof ui.renderHoles3D === 'boolean' ? ui.renderHoles3D : defaults.renderHoles,
+    highlighting: typeof ui.enableHoverEffect === 'boolean' ? ui.enableHoverEffect : defaults.highlighting,
   }
-  // Unknown project links do not override the saved table configuration.
-  if (params.has('project') || params.has('toolProject') || params.size === 1 && params.has('workspace')) return normalizeConfig(stored)
-  if (!params.size) return normalizeConfig(stored)
-  const candidate: Record<string, unknown> = {}
-  for (const [key, value] of params) {
-    if (['customHoles', 'removedHoles'].includes(key)) {
-      try { candidate[key] = JSON.parse(value) } catch { candidate[key] = [] }
-    } else candidate[key] = value === 'true' ? true : value === 'false' ? false : value
+  let original = ''
+  try {
+    original = location.href
+    const shared = tableProjectFromQuery(new URLSearchParams(location.search))
+    original = shared ?? localStorage.getItem('tableGenParams') ?? ''
+    if (!original) return { config, review: null }
+    const parsed = parseTableProject(original)
+    return parsed.kind === 'migration'
+      ? { config, review: { kind: 'migration', original, config: parsed.config } }
+      : { config: preserveView(parsed.config, config), review: null }
+  } catch (error) {
+    return { config, review: { kind: 'rejected', original, message: error instanceof Error ? error.message : 'The saved/shared project could not be read. It has not been overwritten.' } }
   }
-  return normalizeConfig({ ...preferences, ...candidate })
-}
-
-const serialiseConfig = (config: Config) => {
-  const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(projectConfig(config))) {
-    params.set(key, Array.isArray(value) ? JSON.stringify(value) : String(value))
-  }
-  return params
 }
 
 export default function App() {
@@ -204,7 +82,9 @@ export default function App() {
     history.replaceState(null, '', url)
     setWorkspace(next)
   }
-  const [config, setConfig] = useState<Config>(loadedConfig)
+  const [initial] = useState(loadedTable)
+  const [config, setConfig] = useState<Config>(initial.config)
+  const [review, setReview] = useState<ProjectReview | null>(initial.review)
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
   const [view, setView] = useState<ViewMode>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
   const [notice, setNotice] = useState('')
@@ -225,10 +105,20 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('tableGenParams', JSON.stringify(projectConfig(config)))
+      if (!review) localStorage.setItem('tableGenParams', JSON.stringify(projectConfig(config)))
       localStorage.setItem('tableGenUI', JSON.stringify({ viewMode: view, renderHoles3D: config.renderHoles, enableHoverEffect: config.highlighting, explodeFactor: config.exploded, showDims: config.showDimensions, units: config.units === 'inch' ? 'in' : 'mm', theme: dark ? 'dark' : 'light' }))
     } catch { setNotice('Browser autosave is unavailable. Use Save to keep your project.') }
-  }, [config, dark, view])
+  }, [config, dark, view, review])
+
+  useEffect(() => {
+    if (review) return
+    const url = new URL(location.href)
+    if (url.searchParams.has('toolProject') || !['state', 'length', 'schemaVersion'].some(key => url.searchParams.has(key))) return
+    const selectedWorkspace = url.searchParams.get('workspace')
+    url.search = tableProjectQuery(config).toString()
+    if (selectedWorkspace) url.searchParams.set('workspace', selectedWorkspace)
+    history.replaceState(null, '', url)
+  }, [config, review])
 
   const patch = <K extends keyof Config>(key: K, value: Config[K]) => {
     setConfig(current => ({ ...current, [key]: value }))
@@ -248,7 +138,7 @@ export default function App() {
         next.legPatternY = Math.max(next.legPatternY, next.legBoltDiameter * 1.5)
       }
       if (key === 'holeDiameter' || key === 'pitch' || key === 'margin') next.preset = 'Custom'
-      return normalizeConfig(next)
+      return next
     })
   }
   const numberLabel = (millimetres: number, precision = 2) => String(Number((millimetres / (config.units === 'mm' ? 1 : mmPerInch)).toFixed(config.units === 'mm' ? 4 : precision)))
@@ -282,18 +172,37 @@ export default function App() {
     }))
   }
   const save = () => downloadFile(JSON.stringify(projectConfig(config), null, 2), `WeldingTable_Project_${config.length}x${config.width}.json`)
+  const replaceProject = (candidate: Config) => {
+    const next = preserveView(candidate, config)
+    const url = new URL(location.href)
+    url.search = tableProjectQuery(next).toString()
+    history.replaceState(null, '', url)
+    setConfig(next)
+    setReview(null)
+    reset2d()
+  }
+  const migrationPreset = review?.kind === 'migration' ? (['D16', 'D28'] as const).find(name => review.config.holeDiameter === presetValues[name].holeDiameter && review.config.pitch === presetValues[name].pitch && review.config.margin !== presetValues[name].margin) : undefined
+  const acceptReview = (candidate: Config) => {
+    if (!review) return
+    try { localStorage.setItem('tableGenParams.previous', review.original) }
+    catch { setNotice('The original project could not be backed up. It has not been replaced. Download the original data and free browser storage before continuing.'); return }
+    replaceProject(candidate)
+    setNotice('Original data preserved. Review the corrected hole positions before fabrication.')
+  }
+  const reportError = (error: unknown) => setNotice(error instanceof Error ? error.message : 'The operation failed. No export was created.')
   const open = async (file: File) => {
+    if (review) { setNotice('Resolve the pending project review before replacing it with another file.'); return }
+    let original = ''
     try {
-      const value: unknown = JSON.parse(await file.text())
-      if (!isRecord(value) || !('length' in value) || !('width' in value)) throw new Error('Invalid project')
-      setConfig(current => ({ ...normalizeConfig(value), units: current.units, exploded: current.exploded, showDimensions: current.showDimensions, renderHoles: current.renderHoles, highlighting: current.highlighting }))
-      reset2d()
-      setNotice('Project loaded.')
-    } catch { setNotice('Could not read this project JSON.') }
+      original = await file.text()
+      const parsed = parseTableProject(original)
+      if (parsed.kind === 'migration') setReview({ kind: 'migration', original, config: parsed.config })
+      else { replaceProject(parsed.config); setNotice('Project loaded.') }
+    } catch (error) { reportError(error) }
   }
   const share = async () => {
     const url = new URL(location.href)
-    url.search = serialiseConfig(config).toString()
+    url.search = tableProjectQuery(config).toString()
     try {
       await copyText(url.toString())
       setNotice('Full metric project link copied to clipboard.')
@@ -305,14 +214,17 @@ export default function App() {
   if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
   return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
     settings={<>
+          {review && <section role="alert" className="project-review"><h3>Project review required</h3><p className="socket-error">{reviewMessage(review)}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'welding-table-original.txt', 'text/plain')}>Download original data</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Apply {migrationPreset} origin ({presetValues[migrationPreset].margin} mm)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? `Keep saved origin (${review.config.margin} mm)` : 'Start a new table project'}</button></section>}
+          <fieldset className="table-settings" disabled={Boolean(review)}>
           <section className="fixture-card">
             <h3>Fixture System</h3>
             <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={12} />}{preset}</button>)}</div>
-            <div className="fields three">{numericInput('holeDiameter', 'Hole Ø', numericBounds.holeDiameter.min, numericBounds.holeDiameter.max, 1)}{numericInput('pitch', 'Pitch', config.holeDiameter + 10, numericBounds.pitch.max, 5)}{numericInput('margin', 'Margin', config.holeDiameter / 2 + 5, Math.min(config.length, config.width) / 2 - 10, 5)}</div>
-            <p className="grid-summary">Grid: Ø{numberLabel(config.holeDiameter, 3)} / {numberLabel(config.pitch, 3)} {unitLabel} pitch / {numberLabel(config.margin, 3)} {unitLabel} from edge</p>
-            <div className="hole-pattern"><span>Hole Pattern</span><div className="grid-buttons"><button className={config.grid === 'square' ? 'active' : ''} onClick={() => patch('grid', 'square')}>Square grid</button><button className={config.grid === 'staggered' ? 'active' : ''} onClick={() => patch('grid', 'staggered')}>Staggered</button></div>{config.grid === 'staggered' && <p>Rows are offset by half a pitch. Grid engraving draws rows only — columns no longer line up.</p>}</div>
+            <div className="fields three">{numericInput('holeDiameter', 'Hole Ø', numericBounds.holeDiameter.min, numericBounds.holeDiameter.max, 1)}{numericInput('pitch', 'Pitch', config.holeDiameter + 10, numericBounds.pitch.max, 5)}{numericInput('margin', 'Grid origin', config.holeDiameter / 2 + 5, Math.min(config.length, config.width) / 2 - 10, 5)}</div>
+            <p className="grid-summary">Ø{numberLabel(config.holeDiameter, 3)} / {numberLabel(config.pitch, 3)} {unitLabel} pitch. Origin: {numberLabel(config.margin, 3)} {unitLabel} from the top plate’s −X / −Z edges; skirt rows start {numberLabel(config.margin, 3)} {unitLabel} below the working surface.</p>
+            <p>Origins do not move when dimensions change. Any remainder stays at the far edges. Joint cuts and manual hole edits can interrupt the grid. Displaying inches does not select a 5/8″ fixture system.</p>
+            <div className="hole-pattern"><span>Hole Pattern</span><div className="grid-buttons"><button className={config.grid === 'square' ? 'active' : ''} onClick={() => patch('grid', 'square')}>Square grid</button><button className={config.grid === 'staggered' ? 'active' : ''} onClick={() => patch('grid', 'staggered')}>Diagonal grid</button></div>{config.grid === 'staggered' && <p>Square grid plus cell-centre holes: half-pitch rows and alternating half-pitch column offsets, identical on the top and skirts.</p>}</div>
             <div className="fixture-options">{toggle('skirtHoles', 'Skirt Holes')}
-              {config.skirtHoles && <div className="skirt-layout-options"><span>Skirt hole layout</span><div className="grid-buttons"><button className={config.skirtHoleLayout === 'canonical' ? 'active' : ''} onClick={() => patch('skirtHoleLayout', 'canonical')}>Canonical</button><button className={config.skirtHoleLayout === 'compact' ? 'active' : ''} onClick={() => patch('skirtHoleLayout', 'compact')}>Compact edge rows</button></div><p>{config.skirtHoleLayout === 'compact' ? 'Vertical rows are centred with at least half a pitch to the nominal skirt edges, independent of the tabletop margin. D16 / 50 mm gives two rows on a 100 mm skirt.' : 'Vertical rows use the same edge margin as the canonical tabletop grid.'}</p></div>}
+
               {toggle('engraving', 'Grid Engraving')}
               {config.engraving && <div className="engraving-options"><span>Engraving layout</span><div className="grid-buttons"><button title="Lines run through the hole centres" className={config.engravingMode === 'through' ? 'active' : ''} onClick={() => patch('engravingMode', 'through')}>Through holes</button><button title="Lines run between the holes, forming cells" className={config.engravingMode === 'between' ? 'active' : ''} onClick={() => patch('engravingMode', 'between')}>Between (cells)</button></div></div>}
               {toggle('nameMarking', 'Part Name Marking')}
@@ -379,12 +291,14 @@ export default function App() {
             </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Restore all</button><p>A removed hole disappears from every copy of that part. Coordinates are relative to the part centre.</p></> : <p>Switch on the Holes tool above the 2D drawing, then click any hole to remove it. Removed holes are listed here and can be restored.</p>}
           </section>
           <VisualizationSettings value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} />
-
+          <p>Grid geometry does not certify cross-brand fit. Confirm the fastener’s grip range for {numberLabel(config.thickness, 3)} {unitLabel} stock, hole finish/tolerance and actual accessory dimensions before cutting.</p>
+          </fieldset>
     </>}
-    production={<ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={geometryError} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} />}
-    actions={<ProjectActions onOpen={file => void open(file)} onSave={save} onShare={() => void share()} disabled={Boolean(geometryError)} onZip={() => void downloadZip(config).catch(() => setNotice('Could not create the ZIP archive.'))} onDxf={() => downloadFull(config)} />}
-    seo={<article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose a 16 mm or 28 mm fixture grid, or set a custom hole diameter, pitch and margin. Square and staggered patterns, skirt holes and grid engraving share one metric geometry model.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>}>
-    {geometryError ? <div className="three-loading socket-error" role="alert">{geometryError}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
+    production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? reviewMessage(review) : geometryError?.message} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
+    actions={<ProjectActions onOpen={file => void open(file)} onSave={save} onShare={() => void share()} disabled={Boolean(review || geometryError)} onZip={() => void downloadZip(config).catch(reportError)} onDxf={() => { try { downloadFull(config) } catch (error) { reportError(error) } }} />}
+    seo={<article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose D16/50, D28/100 or a custom hole diameter, pitch and grid origin. Square and diagonal grids share fixed edge and working-surface datums across the top and skirts. Grid geometry alone does not certify accessory fit.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>}>
+    {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly review the corrected grid in the sidebar.</div>
+      : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
       : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
       : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><AssemblyControls value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onReset={() => setReset3d(value => value + 1)} onFocus={cornerPlate ? () => setFocusMount3d(value => value + 1) : undefined} /></>}
   </GeneratorShell>

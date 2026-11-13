@@ -1,5 +1,5 @@
 import { type Contour, type FabricationPart, type Hole } from '../geometry'
-import { nativePointContourDistance } from '../nestingNative'
+import { nativePointContourDistance } from '../contourGeometry'
 
 /** Own editable dimensions; only the 250 × 250 envelope and three-hole topology come from the photo. */
 export type SquareConfig = { length: number; width: number; armWidth: number; thickness: number; holeDiameter: number; endOffset: number }

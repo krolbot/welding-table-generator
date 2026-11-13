@@ -1,14 +1,10 @@
 import type { Config, PartName, RemovedHole } from './model'
 import { strokeGlyphs } from './strokeGlyphs.js'
-
-export type Point = { x: number; y: number }
+import { nativePointContourDistance, type ArcSegment, type Contour, type LineSegment, type Point } from './contourGeometry'
+export type { ArcSegment, Contour, ContourSegment, LineSegment, Point } from './contourGeometry'
 export type Hole = Point & { id: string; d: number; kind: 'grid' | 'custom' | 'mount' | 'lift' | 'access' }
 export type Slot = Point & { width: number; height: number }
 export type EngravingLine = { from: Point; to: Point }
-export type LineSegment = { type: 'line'; from: Point; to: Point }
-export type ArcSegment = { type: 'arc'; center: Point; radius: number; start: number; end: number; clockwise?: boolean }
-export type ContourSegment = LineSegment | ArcSegment
-export type Contour = ContourSegment[]
 export type FabricationPart<Name extends string = string> = {
   name: Name
   width: number
@@ -166,35 +162,35 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   }
 }
 
-const grid = (part: PartName, width: number, height: number, c: Config, enabled: boolean): Hole[] => {
-  if (!enabled) return []
-  const holes: Hole[] = []
-  const xs = centeredGridCoordinates(width, c)
-  const rowPitch = c.grid === 'staggered' ? c.pitch / 2 : c.pitch
-  const compactSkirt = part.endsWith('Skirt') && c.skirtHoleLayout === 'compact'
-  // Compact skirts keep the declared coordinate pitch vertically; staggered mode only offsets alternate rows horizontally.
-  const verticalPitch = compactSkirt ? c.pitch : rowPitch
-  const canonicalRowCount = Math.max(part === 'top' ? 0 : 1, Math.floor((height - (part === 'top' ? 0 : c.thickness) - 2 * c.margin) / rowPitch + epsilon) + 1)
-  const compactNominalRowCount = Math.max(1, Math.floor(height / verticalPitch + epsilon))
-  const safePitch = compactSkirt ? verticalPitch : rowPitch
-  const cornerMount = c.legMounts && c.legMountStyle === 'cornerPlate'
-  const skirtSafeRowCount = part.endsWith('Skirt')
-    ? Math.max(0, Math.floor((height - (cornerMount ? 2 : 1) * c.thickness - c.holeDiameter - 2 * minimumHoleWeb) / safePitch + epsilon) + 1)
-    : Number.POSITIVE_INFINITY
-  const rowCount = compactSkirt
-    ? Math.min(compactNominalRowCount, skirtSafeRowCount)
-    : Math.min(canonicalRowCount, skirtSafeRowCount)
-  const ys = Array.from({ length: rowCount }, (_, index) => (index - (rowCount - 1) / 2) * verticalPitch)
-  for (let row = 0; row < ys.length; row += 1) {
-    const y = ys[row]
-    const offset = c.grid === 'staggered' && row % 2 ? c.pitch / 2 : 0
-    for (const x of xs) {
-      if (x + offset > width / 2 - c.margin + epsilon) continue
-      holes.push({ x: x + offset, y, id: key(part, x + offset, y), d: c.holeDiameter, kind: 'grid' })
-    }
-  }
-  return holes
+export type FabricationErrorCode = 'invalid-grid' | 'grid-spacing' | 'grid-origin' | 'skirt-clearance' | 'leg-plates' | 'rib-access' | 'custom-hole' | 'invalid-dimensions' | 'contour-closure' | 'contour-bounds' | 'cut-clearance' | 'hole-clearance' | 'missing-grid-row'
+export class FabricationError extends Error {
+  readonly name = 'FabricationError'
+  constructor(readonly code: FabricationErrorCode, message: string, readonly details: Record<string, string | number> = {}) { super(message) }
 }
+
+type GridSettings = Pick<Config, 'pitch' | 'margin' | 'grid'>
+
+/** Coordinates from a fixed datum; the far edge takes any non-pitch remainder. */
+export const fixtureGridPoints = (width: number, height: number, c: GridSettings): Point[] => {
+  if (![width, height, c.pitch, c.margin].every(Number.isFinite) || width <= 0 || height <= 0 || c.pitch <= 0 || c.margin < 0)
+    throw new FabricationError('invalid-grid', 'Grid dimensions must be finite and positive; the origin cannot be negative.')
+  const rowPitch = c.grid === 'staggered' ? c.pitch / 2 : c.pitch
+  const rows = Math.max(0, Math.floor((height - 2 * c.margin) / rowPitch + epsilon) + 1)
+  return Array.from({ length: rows }, (_, row) => {
+    const firstX = c.margin + (c.grid === 'staggered' && row % 2 ? c.pitch / 2 : 0)
+    const columns = Math.max(0, Math.floor((width - c.margin - firstX) / c.pitch + epsilon) + 1)
+    return Array.from({ length: columns }, (_, column) => point(firstX + column * c.pitch, c.margin + row * rowPitch))
+  }).flat()
+}
+
+/** Assembly origin relative to the working surface, shared with the actual viewer. */
+export const skirtAssemblyY = (c: Config) => -c.height / 2 - (c.legMounts && c.legMountStyle === 'cornerPlate' ? 0 : c.thickness / 2)
+
+const gridHoles = (part: PartName, width: number, height: number, c: Config): Hole[] => fixtureGridPoints(width, height, c).map(position => {
+  const x = position.x - width / 2
+  const y = part === 'top' ? position.y - height / 2 : -skirtAssemblyY(c) - position.y
+  return { x, y, id: key(part, x, y), d: c.holeDiameter, kind: 'grid' }
+})
 
 const pushHole = (holes: Hole[], part: PartName, x: number, y: number, d: number, kind: Hole['kind'], id?: string) => {
   if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(d) && d > 0) {
@@ -234,7 +230,7 @@ const legMountHoles = (part: PartName, width: number, height: number, c: Config,
 const decorate = (part: PartName, width: number, height: number, c: Config, base: Hole[]) => {
   const holes = [...base]
   c.customHoles
-    .filter(hole => hole.part === part && Math.abs(hole.x) + hole.d / 2 <= width / 2 && Math.abs(hole.y) + hole.d / 2 <= height / 2)
+    .filter(hole => hole.part === part)
     .forEach(hole => pushHole(holes, part, hole.x, hole.y, hole.d, 'custom', `custom:${String(hole.id)}`))
   legMountHoles(part, width, height, c, holes)
   return removeConfiguredHoles(part, holes, c)
@@ -349,16 +345,16 @@ const jumperPlateSlot = (c: Config, spec: LegCornerPlateSpec) => {
   }
 }
 
-const centeredGridCoordinates = (span: number, c: Config) => {
+const gridCoordinates = (span: number, c: Config) => {
   const count = Math.max(0, Math.floor((span - 2 * c.margin) / c.pitch + epsilon) + 1)
-  return Array.from({ length: count }, (_, index) => (index - (count - 1) / 2) * c.pitch)
+  return Array.from({ length: count }, (_, index) => -span / 2 + c.margin + index * c.pitch)
 }
 
 const ribPositions = (span: number, c: Config, fixedCount?: number) => {
   if (!c.ribs) return []
   let count = fixedCount ?? Math.max(1, Math.ceil(span / c.ribSpacing) - 1)
-  const gridCoordinates = centeredGridCoordinates(span, c)
-  const gaps = gridCoordinates.slice(1).map((value, index) => (value + gridCoordinates[index]) / 2)
+  const coordinates = gridCoordinates(span, c)
+  const gaps = coordinates.slice(1).map((value, index) => (value + coordinates[index]) / 2)
   if (fixedCount === undefined && count % 2 && gaps.length && !gaps.some(value => Math.abs(value) < epsilon)) count += 1
   return Array.from({ length: count }, (_, index) => {
     const desired = (index + 1) * span / (count + 1) - span / 2
@@ -408,15 +404,41 @@ export const ribAccessHoleSpec = (c: Config) => {
   return { longRib, shortRib, web, maxDiameter, diameter: c.ribAccessHoleDiameter, valid }
 }
 
-export const fabricationError = (c: Config): string | undefined => {
-  if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return 'The leg plates, joints or mounting holes do not fit the frame. Adjust the conflicting dimensions before fabrication export.'
+export const fabricationError = (c: Config): FabricationError | undefined => {
+  if (![c.holeDiameter, c.pitch, c.margin, c.length, c.width, c.height, c.thickness].every(Number.isFinite)
+    || Math.min(c.holeDiameter, c.pitch, c.length, c.width, c.height, c.thickness) <= 0)
+    return new FabricationError('invalid-grid', 'Table and grid dimensions must be finite and positive.')
+  const spacing = c.grid === 'staggered' ? c.pitch / Math.SQRT2 : c.pitch
+  if (spacing < c.holeDiameter + minimumHoleWeb - epsilon)
+    return new FabricationError('grid-spacing', 'The grid leaves insufficient metal between holes. Increase the pitch or reduce the hole diameter.', { spacing, minimum: c.holeDiameter + minimumHoleWeb })
+  if (c.margin < c.holeDiameter / 2 + minimumHoleWeb || 2 * c.margin > Math.min(c.length, c.width))
+    return new FabricationError('grid-origin', 'The grid origin must leave a safe edge web and at least one row on the top plate.', { margin: c.margin })
+  if (c.skirtHoles && (c.margin < c.thickness + c.holeDiameter / 2 + minimumHoleWeb - epsilon || 2 * c.margin > c.height))
+    return new FabricationError('skirt-clearance', 'The fixed skirt grid does not fit this stock or height. Increase the grid origin or skirt height, or reduce the stock thickness. Rows will not be shifted automatically.', { margin: c.margin, minimum: c.thickness + c.holeDiameter / 2 + minimumHoleWeb, height: c.height })
+  if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return new FabricationError('leg-plates', 'The leg plates, joints or mounting holes do not fit the frame. Adjust the conflicting dimensions before fabrication export.')
   const access = ribAccessHoleSpec(c)
-  if (access && !access.valid) return `Rib access holes do not fit. Maximum diameter is ${access.maxDiameter.toFixed(2)} mm for the current ribs. Reduce the hole diameter or increase the available rib web. Fabrication export is disabled.`
+  if (access && !access.valid) return new FabricationError('rib-access', `Rib access holes do not fit. Maximum diameter is ${access.maxDiameter.toFixed(2)} mm for the current ribs. Reduce the hole diameter or increase the available rib web. Fabrication export is disabled.`, { maximum: access.maxDiameter })
+  if (c.customHoles.length) {
+    if (new Set(c.customHoles.map(hole => String(hole.id))).size !== c.customHoles.length)
+      return new FabricationError('custom-hole', 'Custom holes require unique serialized IDs.')
+    const parts = makeParts(c)
+    for (const custom of c.customHoles) {
+      const hole: Hole = { ...custom, id: `custom:${String(custom.id)}`, kind: 'custom' }
+      if (!removeConfiguredHoles(custom.part, [hole], c).length) continue
+      const part = parts.find(p => p.name === custom.part)
+      const web = custom.d / 2 + minimumHoleWeb
+      if (![custom.x, custom.y, custom.d].every(Number.isFinite) || custom.d <= 0 || !part
+        || !pointInContour(hole, part.contours[0]) || nativePointContourDistance(hole, part.contours[0]) < web - epsilon
+        || part.contours.slice(1).some(cut => pointInContour(hole, cut) || nativePointContourDistance(hole, cut) < web - epsilon)
+        || part.holes.some(other => other.id !== hole.id && distance(hole, other) < (hole.d + other.d) / 2 + minimumHoleWeb - epsilon))
+        return new FabricationError('custom-hole', 'A custom hole is outside its active part, overlaps another cut or leaves insufficient metal. Adjust or remove it before fabrication.', { part: custom.part, id: String(custom.id) })
+    }
+  }
 }
 
 export const assertFabricationReady = (c: Config) => {
   const error = fabricationError(c)
-  if (error) throw new Error(error)
+  if (error) throw error
 }
 
 const internalSlots = (c: Config) => {
@@ -621,8 +643,10 @@ export const makeParts = (c: Config): Part[] => {
       thickness: item.thickness,
       count: item.count,
       label: item.label,
-      holes: decorate(item.name, item.width, item.height, c, [...grid(item.name, item.width, item.height, c, item.grid), ...plateHoles, ...accessHoles]).filter(hole => {
+      holes: decorate(item.name, item.width, item.height, c, [...(item.grid ? gridHoles(item.name, item.width, item.height, c) : []), ...plateHoles, ...accessHoles]).filter((hole, _, holes) => {
         if (hole.kind !== 'grid') return true
+        if (!pointInContour(hole, item.outline) || nativePointContourDistance(hole, item.outline) < hole.d / 2 + minimumHoleWeb - epsilon) return false
+        if (holes.some(other => other.kind === 'custom' && distance(hole, other) < (hole.d + other.d) / 2 + minimumHoleWeb - epsilon)) return false
         if (exclusions.some(slot => Math.abs(hole.x - slot.x) < slot.width / 2 + hole.d / 2 + minimumHoleWeb && Math.abs(hole.y - slot.y) < slot.height / 2 + hole.d / 2 + minimumHoleWeb)) return false
         if (mounts.some(mount => {
           const inset = (hole.d + mount.d) / 2 + mountHoleWeb
@@ -667,14 +691,16 @@ export const layoutParts = (c: Config): Layout => {
 export const engravingLines = (part: Part, c: Config): EngravingLine[] => {
   const lines: EngravingLine[] = []
   if (c.engraving && part.name === 'top') {
-    const xs = centeredGridCoordinates(part.width, c)
-    const ys = centeredGridCoordinates(part.height, c)
-    const step = c.grid === 'staggered' ? c.pitch / 2 : c.pitch
-    const offset = c.engravingMode === 'between' ? step / 2 : 0
-    const halfW = ((xs.length - 1) * c.pitch) / 2 + offset
-    const halfH = ((ys.length - 1) * c.pitch) / 2 + offset
-    for (let x = -halfW; x <= halfW + epsilon; x += step) lines.push({ from: point(x, -halfH), to: point(x, halfH) })
-    for (let y = -halfH; y <= halfH + epsilon; y += step) lines.push({ from: point(-halfW, y), to: point(halfW, y) })
+    const positions = fixtureGridPoints(part.width, part.height, c)
+    if (positions.length) {
+      const xs = [...new Set(positions.map(p => p.x - part.width / 2))].sort((a, b) => a - b)
+      const ys = [...new Set(positions.map(p => p.y - part.height / 2))].sort((a, b) => a - b)
+      const between = (axis: number[]) => axis.slice(1).map((value, index) => (value + axis[index]) / 2)
+      const columns = c.engravingMode === 'between' ? between(xs) : xs
+      const rows = c.engravingMode === 'between' ? between(ys) : ys
+      if (ys.length > 1) for (const x of columns) lines.push({ from: point(x, ys[0]), to: point(x, ys[ys.length - 1]) })
+      if (xs.length > 1) for (const y of rows) lines.push({ from: point(xs[0], y), to: point(xs[xs.length - 1], y) })
+    }
   }
   if (c.nameMarking) {
     const nameLines: EngravingLine[] = []
@@ -762,6 +788,16 @@ export const contourPoints = (contour: Contour, arcSteps = 8): Point[] => contou
   return Array.from({ length: steps }, (_, index) => arcPoint(segment.center, segment.radius, segment.start + (end - segment.start) * index / steps))
 })
 
+export const pointInContour = (value: Point, contour: Contour) => {
+  const vertices = contourPoints(contour, 64)
+  let inside = false
+  for (let index = 0, previous = vertices.length - 1; index < vertices.length; previous = index++) {
+    const a = vertices[index], b = vertices[previous]
+    if ((a.y > value.y) !== (b.y > value.y) && value.x < (b.x - a.x) * (value.y - a.y) / (b.y - a.y) + a.x) inside = !inside
+  }
+  return inside
+}
+
 const arcSweep = (segment: ArcSegment) => segment.clockwise
   ? -((segment.start - segment.end + 360) % 360 || 360)
   : ((segment.end - segment.start + 360) % 360 || 360)
@@ -778,12 +814,3 @@ export const svgContourPath = (contour: Contour) => contour.map((segment, index)
   const sweep = Math.abs(arcSweep(segment)) > 180 ? 1 : 0
   return `${index ? '' : `M ${svgNumber(start.x)} ${svgNumber(start.y)} `}A ${svgNumber(segment.radius)} ${svgNumber(segment.radius)} 0 ${sweep} ${segment.clockwise ? 0 : 1} ${svgNumber(end.x)} ${svgNumber(end.y)}`
 }).join(' ') + ' Z'
-
-/**
- * Shared even-odd SVG path in fabrication coordinates.  Consumers should use
- * `fill-rule="evenodd"` and flip Y once (`scale(1 -1)`) for screen SVG.
- */
-export const partSvgPath = (part: Part, _c: Config) => [
-  ...part.contours.map(svgContourPath),
-  ...part.holes.map(hole => `M ${svgNumber(hole.x - hole.d / 2)} ${svgNumber(hole.y)} a ${svgNumber(hole.d / 2)} ${svgNumber(hole.d / 2)} 0 1 0 ${svgNumber(hole.d)} 0 a ${svgNumber(hole.d / 2)} ${svgNumber(hole.d / 2)} 0 1 0 -${svgNumber(hole.d)} 0 Z`),
-].join(' ')

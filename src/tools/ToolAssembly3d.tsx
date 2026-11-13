@@ -143,7 +143,8 @@ const resetCamera = (runtime: AssemblyRuntime, project: ToolProject) => {
   const { length, width, height } = projectEnvelope(project)
   const extent = Math.max(length, width, height)
   const target = new THREE.Vector3(length / 2, width / 2, height / 2)
-  runtime.camera.position.copy(target).add(new THREE.Vector3(-extent * 0.85, -extent * 1.1, extent * 0.8))
+  const direction = project.tool === 'cornerBracket' ? new THREE.Vector3(0.85, 1.1, 1) : new THREE.Vector3(-0.85, -1.1, 0.8)
+  runtime.camera.position.copy(target).addScaledVector(direction, extent)
   runtime.controls.target.copy(target)
   runtime.controls.update()
 }

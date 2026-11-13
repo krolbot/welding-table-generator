@@ -2,7 +2,6 @@ export type Units = 'mm' | 'inch'
 export type Preset = 'D16' | 'D28' | 'Custom'
 export type Grid = 'square' | 'staggered'
 export type EngravingMode = 'through' | 'between'
-export type SkirtHoleLayout = 'canonical' | 'compact'
 export type LegMountStyle = 'boltPattern' | 'cornerPlate'
 export type PartName = 'top' | 'longSkirt' | 'shortSkirt' | 'longRib' | 'shortRib' | 'legCornerPlate' | 'legJumper' | 'legMountPlate'
 export type CustomHole = { id: string | number; part: PartName; x: number; y: number; d: number }
@@ -16,7 +15,6 @@ export type Config = {
   margin: number
   grid: Grid
   skirtHoles: boolean
-  skirtHoleLayout: SkirtHoleLayout
   engraving: boolean
   engravingMode: EngravingMode
   nameMarking: boolean
@@ -65,10 +63,9 @@ export const defaults: Config = {
   preset: 'D16',
   holeDiameter: 16,
   pitch: 50,
-  margin: 50,
+  margin: 25,
   grid: 'square',
   skirtHoles: true,
-  skirtHoleLayout: 'canonical',
   engraving: true,
   engravingMode: 'through',
   nameMarking: false,
@@ -129,8 +126,8 @@ export const display = (value: number, units: Units, precision = 0) =>
   (units === 'mm' ? value : value / mmPerInch).toFixed(units === 'mm' ? precision : Math.max(2, precision + 2))
 export const readDisplay = (value: number, units: Units) => value * (units === 'mm' ? 1 : mmPerInch)
 export const presetValues: Record<Exclude<Preset, 'Custom'>, Pick<Config, 'holeDiameter' | 'pitch' | 'margin'>> = {
-  D16: { holeDiameter: 16, pitch: 50, margin: 50 },
-  D28: { holeDiameter: 28, pitch: 100, margin: 100 },
+  D16: { holeDiameter: 16, pitch: 50, margin: 25 },
+  D28: { holeDiameter: 28, pitch: 100, margin: 50 },
 }
 
 export const projectFields = {
@@ -147,9 +144,12 @@ export const projectParts: Record<PartName, string> = {
 export const readPart = (value: unknown): PartName | undefined =>
   (Object.keys(projectParts) as PartName[]).find(part => part === value || projectParts[part] === value)
 
+export const tableProjectVersion = 2
+
 export function projectConfig(config: Config): Record<string, unknown> {
-  const project: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(config)) {
+  const project: Record<string, unknown> = { schemaVersion: tableProjectVersion }
+  for (const key of Object.keys(defaults) as (keyof Config)[]) {
+    const value = config[key]
     if (['units', 'preset', 'exploded', 'showDimensions', 'renderHoles', 'highlighting'].includes(key)) continue
     const field = projectFields[key as keyof typeof projectFields] ?? key
     if (key === 'grid') project[field] = value === 'square' ? 'grid' : 'stagger'

@@ -11,18 +11,15 @@ const server=await createServer({root:fileURLToPath(new URL('..',import.meta.url
 const source=process.argv[2]
 if (!source) { await server.close(); throw new Error('Usage: npm run audit:nesting -- path/to/SheetArchive.zip') }
 try {
- const {defaults,projectFields,readPart}=await server.ssrLoadModule('/src/model.ts')
+ const {parseTableProject}=await server.ssrLoadModule('/src/tableProject.ts')
  const {engravingLines}=await server.ssrLoadModule('/src/geometry.ts')
  const {nestingParts}=await server.ssrLoadModule('/src/nestingSettings.ts')
- const {nativeContourBounds,nativeContourDistance}=await server.ssrLoadModule('/src/nestingNative.ts')
+ const {nativeContourBounds,nativeContourDistance}=await server.ssrLoadModule('/src/contourGeometry.ts')
  const zip=await JSZip.loadAsync(fs.readFileSync(source))
  const manifest=JSON.parse(await zip.file('layout.json').async('string'))
- const project=JSON.parse(await zip.file('project.json').async('string'))
- const config={...defaults,...project}
- for(const [key,field] of Object.entries(projectFields)) if(field in project) config[key]=project[field]
- config.grid=project.holePattern==='stagger'?'staggered':'square'
- config.customHoles=config.customHoles.map(h=>({...h,part:readPart(h.part)}))
- config.removedHoles=config.removedHoles.map(h=>typeof h==='string'?h:{...h,part:readPart(h.part)})
+ const decoded=parseTableProject(await zip.file('project.json').async('string'))
+ assert.equal(decoded.kind,'current','audit requires a current grid revision; legacy files must not be silently regenerated')
+ const config=decoded.config
  assert.deepEqual(manifest.parts,nestingParts(config),'manifest must match the actual canonical project')
  assert.equal(manifest.schemaVersion,1)
  assert.equal(manifest.placements.length,manifest.parts.reduce((sum,p)=>sum+p.count,0))

@@ -10,7 +10,7 @@ The sheet planner packs complete sets of welding-table parts in the browser. It 
 4. Choose a search budget. **Pause search** finishes the current pass; **Continue improving** resumes the same search and contact cache. **Restart**, changing fabrication settings, or leaving this view terminates that worker. A longer budget does not guarantee a better result. The displayed time is worker compute time, not wall-clock time spent paused or rendering.
 5. **Download sheet DXFs (ZIP)** exports the best verified result available at that moment, even while the search continues. Missing parts, invalid geometry, stale settings, duplicates and clearance violations prevent export.
 
-The search automatically starts with 0°/90°/180°/270°, then explores every 15° orientation after up to 48 passes. If a part cannot fit the sheet at a quarter turn, it tries all orientations immediately. Older saved rotation policies are ignored when loaded. No mirroring is performed. Limits: 256 part instances, 32 sheets, 24 orientations and 4,096 search passes. A numeric edit is debounced; changing theme or mm/in display does not restart the calculation.
+The search automatically starts with 0°/90°/180°/270°, then explores every 15° orientation after up to 48 passes. If a part cannot fit the sheet at a quarter turn, it tries all orientations immediately. Current projects contain no rotation policy; unsupported obsolete fields are rejected rather than applied as a hidden alternate mode. No mirroring is performed. Limits: 256 part instances, 32 sheets, 24 orientations and 4,096 search passes. A numeric edit is debounced; changing theme or mm/in display does not restart the calculation.
 
 ## Geometry and search
 
@@ -55,7 +55,7 @@ npm run audit:nesting -- /path/to/WeldingTable_Sheets_1450x1150.zip
 
 The export audit uses `dxf-parser` to parse the actual archive, compares every native cutting and engraving entity with the manifest and regenerated project, checks intersections with independent `polygon-clipping`, and checks native boundary distances and sheet margins. Its polygon intersection test samples arcs; the reported chord error states that approximation. It does not substitute for a machine-specific CAM review.
 
-`benchmarks/nesting-baseline.json` records the exact inputs and measured sheet counts from commit `640b7e96565ae6b2d42431621a1fd3da10a0b879` (12 orders). The upgraded benchmark uses 96 orders, so this is a quality comparison with a larger computation budget, not an equal-time speed claim.
+`benchmarks/nesting-baseline.json` records the exact inputs and measured sheet counts from commit `640b7e96565ae6b2d42431621a1fd3da10a0b879` (12 orders). These are historical measurements. The command now applies those dimensions and saved origins to the corrected datum grid and complete current inventory, so its historical counts are informational rather than an identical-geometry comparison or an equal-time speed claim.
 
 Measured comparison at the contour-nesting release, before the four plain leg mounting plates were added:
 
@@ -65,7 +65,7 @@ Measured comparison at the contour-nesting release, before the four plain leg mo
 - 1450×1150×200 table, no corner mounts, lifting openings, **2970×1500 sheet**: previous **2 sheets**, contour search **1** for all 10 parts.
 - All comparisons use 10 mm nominal edge and 5 mm nominal part gaps, plus the 0.002 mm export reserve. Full fixtures are the authority for remaining parameters.
 
-The benchmark command deliberately excludes the new `legMountPlate` parts to replay that historical inventory; it does not claim that an 18-part result includes the new 22-part kit. Normal UI, exports and the current-kit regression include all four mounting plates. Rib access holes do not change external silhouettes and are never treated as nesting space.
+The benchmark command includes all current mounting plates and validates completeness/clearance. It does not assert a sheet-count regression against the old grid and old 18-part kit: both rib stations and inventory changed. The pinned JSON remains historical evidence, not an active legacy-layout implementation. Normal UI, exports and current-kit regressions use the corrected geometry. Rib access holes are never treated as nesting space.
 
 A small synthetic U/L interlocking test also improves from two sheets to one; it isolates contour placement from table-specific geometry. Other regression tests cover containment, tangent and sub-chord arc gaps, diagonal-only fit, zero-gap crossing rejection, invalid inputs, deterministic monotone progress, batch counts, stale exports and all native entity transforms at non-quarter-turn angles.
 

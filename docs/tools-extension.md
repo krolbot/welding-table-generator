@@ -6,7 +6,7 @@ This is an independently dimensioned analogue, **not a measured replica or a man
 
 ## Geometry and assembly
 
-All geometry, nesting and DXF coordinates are millimetres. Length is adjustable from 400–800 mm, width 200–400 mm, mounting-end height 150–300 mm and thickness 4–10 mm. Defaults are 500 × 200 × 200 mm, T6.
+All geometry, nesting and DXF coordinates are millimetres. Length is adjustable from 400–800 mm, width 200–400 mm, mounting-end height 150–300 mm and thickness 4–9 mm. Defaults are 500 × 200 × 200 mm, T6.
 
 Seven flat pieces are cut from one thickness:
 
@@ -28,7 +28,7 @@ The following are design choices and must be checked before manufacture:
 - Side-window borders: 55 mm at the mounting end, 45 mm below the top underside, 30 mm normal to the inclined lower edge; 6 mm corner radii.
 - Cross ties: 30 mm body depth. Their two stations are derived near one-third and two-thirds of the length and snapped between nominal hole columns.
 - Top and end locating tabs: 20 mm long. Cross-tie side tabs: 18 mm high. Matching notches/mortises add **0.2 mm total clearance**, or 0.1 mm per side on centred dimensions. This is nominal CAD clearance, not machine kerf compensation.
-- The top's default hole grid starts 25 mm from its edges. Side/end row origins retain an 8 mm minimum material web; stock thicker than 9 mm moves the upper row inward. Holes conflicting with a window, slot or outer edge are omitted rather than drawn as islands in a void.
+- The top grid starts 25 mm from X=0/Y=0; every side/end grid starts 25 mm below the assembled working surface, independent of thickness. Non-pitch remainders stay at the far edges. Stock must satisfy `thickness + 8 mm hole radius + 8 mm web ≤ 25 mm`, so more than 9 mm is rejected, never compensated by moving the upper row. Holes conflicting with a window, slot or outer edge are omitted rather than drawn as islands in a void; losing an entire first side row rejects the design.
 - Mounting-slot origins, travel, radial-slot centre/radius and pivot position are proposed. Ø16 width alone does not establish compatibility with the host table or locking hardware.
 
 For assembly, locate both sides around the high and low ends and the two ties, seat the top over their tabs, verify square/flat alignment, then tack and weld using an independently chosen sequence. First prove the fit and welding access with a material/kerf sample. No bolts, clamps, weld beads or load rating are invented by the generator.
@@ -37,7 +37,7 @@ For assembly, locate both sides around the high and low ends and the two ties, s
 
 The Tools selector contains the extension and a [flat welding square](tools-square.md). Their geometry and saved projects remain separate from the table, while the sidebar, fields, units/theme, estimates, project/export controls, interactive 2D, Three.js viewer and sheet-nesting workspace are the same components the table generator uses. Sheet layout uses one shared worker with progressive results, pause/resume and the application's contour-aware automatic orientation search. It produces a validated result under a search budget, not a proven global optimum. Stale, incomplete or invalid layouts cannot be exported.
 
-Tools JSON now uses `version: 2, tool: "extension"`. Version 1 describes the retired box: it is rejected explicitly, never silently reinterpreted as a wedge. On loading an old saved/shared project, the UI preserves and offers the original JSON, blocks editing/export, and requires an explicit start of the corrected design. That action backs up the original in browser storage before replacement. Importing an incompatible file leaves the current valid project unchanged.
+Extension JSON uses `version: 3, tool: "extension"`; square and corner-bracket projects retain version 2. A version-2 extension requires explicit grid review before changing its dimensions into a version-3 cutting plan; dimensions, sheet settings and quantity are retained. The original JSON is downloadable and backed up before replacement. An old T10 extension is rejected because its stock cannot satisfy the fixed 25 mm datum and existing web requirement. Version 1 remains the retired box and is not converted. Editing/export stay blocked during saved/shared-project recovery; an incompatible import leaves the current valid project unchanged.
 
 Share links use the `toolProject` query parameter. The ZIP contains:
 

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { AssemblyViewport, type AssemblyPartInfo, type AssemblyPartMesh, type AssemblyRuntime } from './AssemblyViewport'
 import { addDimensionLine, dimensionLabel, disposeObject3D, extrudedPartMesh } from './assemblyGeometry'
 import { display, type Config } from './model'
-import { framePositions, legCornerPlateSpec, makeParts, partWeight, type FabricationPart } from './geometry'
+import { framePositions, legCornerPlateSpec, makeParts, partWeight, skirtAssemblyY, type FabricationPart } from './geometry'
 import type { NestingResult } from './nesting'
 
 type Props = { config: Config; resetToken: number; mountFocusToken: number; dark: boolean; nesting?: NestingResult }
@@ -84,7 +84,7 @@ const rebuildDimensions = (runtime: AssemblyRuntime, config: Config) => {
   ].forEach(sprite => { if (sprite) runtime.dimensions.add(sprite) })
 }
 
-const rebuildAssembly = (runtime: AssemblyRuntime, config: Config) => {
+export const rebuildAssembly = (runtime: AssemblyRuntime, config: Config) => {
   disposeObject3D(runtime.assembly)
   runtime.assembly.clear()
   runtime.meshes = []
@@ -97,11 +97,10 @@ const rebuildAssembly = (runtime: AssemblyRuntime, config: Config) => {
     plate(runtime, top, config, new THREE.Vector3(0, -config.thickness / 2, 0), new THREE.Euler(Math.PI / 2, 0, 0), new THREE.Vector3(0, config.width * 0.4, 0))
   }
   const longSkirt = find('longSkirt')
-  const skirtY = config.legMounts && config.legMountStyle === 'cornerPlate' ? -config.height / 2 : -config.height / 2 - config.thickness / 2
+  const skirtY = skirtAssemblyY(config)
   if (longSkirt) {
     for (const side of [1, -1]) {
-      const rotation = config.liftingHoles && side < 0 ? new THREE.Euler(0, Math.PI, 0) : new THREE.Euler()
-      plate(runtime, longSkirt, config, new THREE.Vector3(0, skirtY, side * (config.width / 2 - config.thickness / 2)), rotation, new THREE.Vector3(0, 0, side * config.width * 0.3))
+      plate(runtime, longSkirt, config, new THREE.Vector3(0, skirtY, side * (config.width / 2 - config.thickness / 2)), new THREE.Euler(), new THREE.Vector3(0, 0, side * config.width * 0.3))
     }
   }
   const shortSkirt = find('shortSkirt')

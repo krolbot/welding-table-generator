@@ -1,4 +1,8 @@
-import type { Contour, Point } from './geometry'
+export type Point = { x: number; y: number }
+export type LineSegment = { type: 'line'; from: Point; to: Point }
+export type ArcSegment = { type: 'arc'; center: Point; radius: number; start: number; end: number; clockwise?: boolean }
+export type ContourSegment = LineSegment | ArcSegment
+export type Contour = ContourSegment[]
 
 type Segment = Contour[number]
 type Arc = Extract<Segment, { type: 'arc' }>
