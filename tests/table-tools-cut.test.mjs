@@ -26,7 +26,7 @@ const finish = (c, base = baseline(c), attempts = 12) => {
 }
 
 test('selected tools preserve exact native geometry and independent quantities with collision-free provenance', () => {
-  const c = table({ nestingCopies: 2, nestingTools: [selection('one', 'extension'), selection('two', 'square', { copies: 2 }), selection('three', 'square'), selection('four', 'cornerBracket'), selection('five', 'compactExtension', { copies: 2 })] })
+  const c = table({ nestingCopies: 2, nestingTools: [selection('one', 'extension'), selection('two', 'square', { copies: 2 }), selection('three', 'square'), selection('four', 'cornerBracket'), selection('five', 'compactExtension', { copies: 2 }), selection('six', 'viseModule')] })
   const inventory = cut.tableCutInventory(c)
   assert.equal(new Set(inventory.parts.map(p => p.name)).size, inventory.parts.length)
   assert.ok(inventory.parts.find(p => p.name === 'top'))
@@ -45,7 +45,7 @@ test('selected tools preserve exact native geometry and independent quantities w
 })
 
 test('schema 3 round-trips selected tools exactly; v2 imports empty tools without a grid migration', () => {
-  const c = table({ nestingTools: [selection('ext', 'extension'), selection('bracket', 'cornerBracket', { copies: 3 }), selection('compact', 'compactExtension', { copies: 2 })] })
+  const c = table({ nestingTools: [selection('ext', 'extension'), selection('bracket', 'cornerBracket', { copies: 3 }), selection('compact', 'compactExtension', { copies: 2 }), selection('vise', 'viseModule')] })
   const saved = model.projectConfig(c)
   assert.equal(saved.schemaVersion, 3)
   assert.deepEqual(model.projectConfig(codec.parseTableProject(JSON.stringify(saved)).config), saved)
@@ -85,14 +85,48 @@ test('compact thickness inherits the table across geometry, selection and projec
     assert.equal(codec.tableProjectFromQuery(new URLSearchParams({ toolProject: tools.projectJson(source.project) })), undefined)
   }
   assert.deepEqual(source, original, 'inherited stock never mutates an input snapshot')
-  for (const id of tools.toolIds.filter(id => id !== 'compactExtension')) {
+  for (const id of tools.toolIds.filter(id => !tools.toolUsesTableStock(id))) {
     const project = tools.toolDefaults[id]
-    assert.strictEqual(tools.projectAtTableThickness(project, 4), project)
+    assert.strictEqual(tools.projectAtTable(project, table({ thickness: 4 })), project)
   }
   for (const thickness of [3, 9, 10]) {
-    assert.throws(() => tools.toolSelectionsAtTableThickness([source], thickness))
+    assert.throws(() => tools.toolSelectionsAtTable([source], table({ thickness })))
     assert.deepEqual(source, original, 'failed stock changes preserve dimensions, quantity and original stock')
   }
+})
+
+test('vise inherits the entire mounting interface across saved tools, table JSON and mixed archives', async () => {
+  const source = selection('vise', 'viseModule', { copies: 2, size: { thickness: 6 } }), original = structuredClone(source)
+  for (const thickness of [4, 6, 8]) for (const grid of ['square', 'staggered']) {
+    const c = table({ thickness, grid, nestingTools: [source] }), inventory = cut.tableCutInventory(c)
+    const resolved = inventory.selections[0].project
+    assert.deepEqual(resolved.size, { ...source.project.size, thickness, holeDiameter: c.holeDiameter, holePitch: c.pitch, holeInset: c.margin, grid })
+    assert.equal(resolved.copies, 2)
+    const loaded = codec.parseTableProject(JSON.stringify(model.projectConfig(c))).config
+    assert.deepEqual(loaded.nestingTools, inventory.selections)
+    assert.deepEqual(codec.parseTableProject(codec.tableProjectFromQuery(codec.tableProjectQuery(loaded))).config.nestingTools, inventory.selections)
+  }
+  assert.deepEqual(source, original)
+  const c = table({ grid: 'staggered', nestingTools: [source] }), run = finish(c)
+  const zip = await JSZip.loadAsync(await dxf.nestedArchive(c, run.result, run.stock).generateAsync({ type: 'nodebuffer' }))
+  const saved = JSON.parse(await zip.file('project.json').async('string'))
+  const manifest = JSON.parse(await zip.file('layout.json').async('string'))
+  assert.deepEqual(saved.nestingTools, manifest.selectedTools)
+  assert.equal(saved.nestingTools[0].project.size.grid, 'staggered')
+  assert.equal(saved.nestingTools[0].project.size.thickness, c.thickness)
+  assert.equal(manifest.placements.filter(p => p.part.startsWith('tool:')).length, 10)
+  const changed = { ...c, grid: 'square' }
+  assert.equal(cut.validateTableCut(changed, run.result, run.stock), false)
+  assert.throws(() => dxf.nestedArchive(changed, run.result, run.stock), error => error.code === 'invalid-layout')
+  for (const changes of [{ thickness: 20 }, { margin: 20 }, { holeDiameter: 28, pitch: 100, margin: 50 }])
+    assert.throws(() => tools.toolSelectionsAtTable([source], table(changes)))
+  const wider = { ...source, project: { ...source.project, size: { ...source.project.size, width: 600 } } }
+  for (const [changes, selected] of [[{ height: 50, tabWidth: 10 }, source], [{ length: 500, width: 500 }, wider]]) {
+    assert.throws(() => tools.toolSelectionsAtTable([selected], table(changes)), error => error.code === 'mounting-grid-mismatch')
+    assert.throws(() => cut.tableCutInventory(table({ ...changes, nestingTools: [selected] })), /complete vise mounting grid/)
+    assert.throws(() => codec.parseTableProject(JSON.stringify(model.projectConfig(table({ ...changes, nestingTools: [selected] })))), /complete vise mounting grid/)
+  }
+  assert.deepEqual(source, original, 'rejected changes never mutate the retained selection')
 })
 
 test('compact shared export records inherited stock and refuses the previous layout after a thickness change', async () => {
@@ -106,14 +140,14 @@ test('compact shared export records inherited stock and refuses the previous lay
   assert.equal(project.nestingTools[0].project.size.thickness, c.thickness)
   assert.deepEqual(manifest.selectedTools, project.nestingTools)
   assert.ok(manifest.parts.every(part => part.thickness === c.thickness))
-  const changed = { ...c, thickness: 6, nestingTools: tools.toolSelectionsAtTableThickness(c.nestingTools, 6) }
+  const changed = { ...c, thickness: 6, nestingTools: tools.toolSelectionsAtTable(c.nestingTools, table({ thickness: 6 })) }
   assert.notEqual(settings.nestingKey(changed), settings.nestingKey(c))
   assert.equal(cut.validateTableCut(changed, run.result, run.stock), false)
   assert.throws(() => dxf.nestedArchive(changed, run.result, run.stock), error => error.code === 'invalid-layout')
 })
 
 test('complete mixed job fits existing stock and real ZIP preserves all circles, arcs, engraving and provenance', async () => {
-  const c = table({ nestingTools: [selection('ext', 'extension'), selection('square', 'square', { copies: 2 }), selection('bracket', 'cornerBracket'), selection('compact', 'compactExtension', { copies: 2 })] })
+  const c = table({ nestingTools: [selection('ext', 'extension'), selection('square', 'square', { copies: 2 }), selection('bracket', 'cornerBracket'), selection('compact', 'compactExtension', { copies: 2 }), selection('vise', 'viseModule')] })
   const base = baseline(c), run = finish(c, base)
   assert.equal(cut.validateTableCut(c, run.result, run.stock), true)
   assert.ok(run.result.sheets.length <= base.sheets.length)
@@ -187,7 +221,7 @@ test('first-time mixed job exposes a non-exportable table-capacity phase before 
 })
 
 test('actual shared Three sheet renderer keeps every mixed part and the same rigid placements as DXF', () => {
-  const c = table({ nestingTools: [selection('ext', 'extension'), selection('square', 'square'), selection('bracket', 'cornerBracket'), selection('compact', 'compactExtension')] })
+  const c = table({ nestingTools: [selection('ext', 'extension'), selection('square', 'square'), selection('bracket', 'cornerBracket'), selection('compact', 'compactExtension'), selection('vise', 'viseModule')] })
   const run = finish(c)
   const runtime = { assembly: new THREE.Group(), dimensions: new THREE.Group(), meshes: [], metal: new THREE.MeshStandardMaterial(), colors: { edge: 0, dim: 0 }, renderHoles: true, factor: 0, targetFactor: 0 }
   viewer.rebuildSheets(runtime, c, run.result)

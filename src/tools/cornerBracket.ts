@@ -1,5 +1,5 @@
 import { contourPoints, type Contour, type FabricationPart, type Hole, type Point } from '../geometry'
-import { jointOutline, type EdgeJoint } from '../fabricationProfiles'
+import { capsuleContour, jointOutline, type EdgeJoint } from '../fabricationProfiles'
 import { nativeContourBounds, nativeContourDistance, nativePointContourDistance } from '../contourGeometry'
 
 export type CornerBracketConfig = {
@@ -50,16 +50,6 @@ const inside = (p: Point, contour: Contour) => {
     if ((a.y > p.y) !== (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) result = !result
   }
   return result
-}
-
-const capsule = (x: number, y: number, length: number, diameter: number): Contour => {
-  const r = diameter / 2, a = x - (length - diameter) / 2, b = x + (length - diameter) / 2
-  return [
-    { type: 'line', from: point(a, y - r), to: point(b, y - r) },
-    { type: 'arc', center: point(b, y), radius: r, start: 270, end: 450 },
-    { type: 'line', from: point(b, y + r), to: point(a, y + r) },
-    { type: 'arc', center: point(a, y), radius: r, start: 90, end: 270 },
-  ]
 }
 
 const validatePart = (part: BracketPart) => {
@@ -114,7 +104,7 @@ export const cornerBracketParts = (config: CornerBracketConfig = cornerBracketDe
   const parts = [
     part('cornerBase', 'Corner base', length, width, [base], baseHoles),
     part('cornerHoleWall', 'Perforated wall', length, height, [wall(length, wallStart, xJoints)], [-1, 0, 1].map((index, i) => hole(`wall:${i}`, length / 2 + index * holePitch, wallHoleHeight))),
-    part('cornerSlotWall', 'Slotted wall', width, height, [wall(width, 0, yJoints), capsule(width / 2, wallHoleHeight, slotLength, holeDiameter)], []),
+    part('cornerSlotWall', 'Slotted wall', width, height, [wall(width, 0, yJoints), capsuleContour(point(width / 2, wallHoleHeight), slotLength, holeDiameter)], []),
   ]
   parts.forEach(validatePart)
   return parts

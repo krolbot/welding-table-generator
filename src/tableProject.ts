@@ -1,6 +1,6 @@
 import { defaults, maxTabWidth, mmPerInch, presetValues, projectConfig, projectFields, readPart, tableProjectVersion, type Config, type CustomHole, type RemovedHole } from './model'
 
-import { parseToolSelections, toolSelectionsAtTableThickness } from './tools/project'
+import { parseToolSelections, toolSelectionsAtTable } from './tools/project'
 
 export type NumericKey = { [K in keyof Config]: Config[K] extends number ? K : never }[keyof Config]
 export type BooleanKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config]
@@ -115,7 +115,7 @@ export const parseTableProject = (text: string): TableProjectLoad => {
   if (value.removedHoles !== undefined) config.removedHoles = removedHoles(value.removedHoles)
   if (value.nestingTools !== undefined) {
     if (raw.schemaVersion !== tableProjectVersion) return invalid('nestingTools', 'requires the current cut-job schema')
-    config.nestingTools = toolSelectionsAtTableThickness(parseToolSelections(value.nestingTools), config.thickness)
+    config.nestingTools = toolSelectionsAtTable(parseToolSelections(value.nestingTools), config)
   }
   if (config.tabWidth > maxTabWidth(config)) return invalid('tabWidth', 'does not fit the selected height and stock')
 

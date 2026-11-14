@@ -36,6 +36,22 @@ export const polygonContour = (vertices: Point[]): Contour => vertices.map((from
   type: 'line', from, to: vertices[(index + 1) % vertices.length],
 }))
 
+/** Overall slot length includes both semicircular ends; angle is in degrees. */
+export const capsuleContour = (center: Point, length: number, diameter: number, angle = 0): Contour => {
+  if (![center.x, center.y, length, diameter, angle].every(Number.isFinite) || diameter <= 0 || length <= diameter)
+    throw new FabricationError('invalid-dimensions', 'A rounded slot needs a positive width and a greater overall length')
+  const radians = angle * Math.PI / 180, ux = Math.cos(radians), uy = Math.sin(radians)
+  const r = diameter / 2, half = (length - diameter) / 2
+  const a = point(center.x - half * ux, center.y - half * uy), b = point(center.x + half * ux, center.y + half * uy)
+  const offset = (p: Point, sign: number) => point(p.x - sign * r * uy, p.y + sign * r * ux)
+  return [
+    line(offset(a, -1), offset(b, -1)),
+    { type: 'arc', center: b, radius: r, start: 270 + angle, end: 450 + angle },
+    line(offset(b, 1), offset(a, 1)),
+    { type: 'arc', center: a, radius: r, start: 90 + angle, end: 270 + angle },
+  ]
+}
+
 /** Positive depth projects outwards from a counter-clockwise outline; negative depth makes a notch. */
 export const jointOutline = (vertices: Point[], joints: EdgeJoint[][]): Contour => {
   const points: Point[] = []

@@ -3,7 +3,7 @@ import { readPart, type Config } from './model'
 import { nestingKey, nestingOptions, nestingParts } from './nestingSettings'
 import { validNestingInventory, type NestingJob, type NestingStock } from './nestingJob'
 import type { NestingResult } from './nesting'
-import { parseToolSelections, projectModelParts, toolSelectionsAtTableThickness, toolLabels, type ToolId } from './tools/project'
+import { parseToolSelections, projectModelParts, toolSelectionsAtTable, toolLabels, type ToolId } from './tools/project'
 
 export class TableCutJobError extends Error {
   readonly name = 'TableCutJobError'
@@ -19,7 +19,7 @@ export const tableCutInventory = (config: Config) => {
   const tableParts = nestingParts(config)
   const sources: Record<string, CutPartSource> = Object.fromEntries(tableParts.map(part => [part.name, { kind: 'table', part: part.name, perCopy: part.count / config.nestingCopies }]))
   const parts: FabricationPart[] = [...tableParts]
-  const selections = toolSelectionsAtTableThickness(parseToolSelections(config.nestingTools), config.thickness)
+  const selections = toolSelectionsAtTable(parseToolSelections(config.nestingTools), config)
   selections.forEach(({ id, project }, index) => {
     for (const source of projectModelParts(project)) {
       if (source.thickness !== config.thickness) throw new TableCutJobError('thickness-mismatch', `${toolLabels[project.tool]} #${index + 1} uses ${source.thickness} mm stock; the table uses ${config.thickness} mm. Change the tool explicitly or remove it from this cut job.`, id)

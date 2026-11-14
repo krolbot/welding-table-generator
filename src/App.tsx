@@ -30,7 +30,7 @@ import { tableCutInventory, type TableLayoutSnapshot } from './tableCutJob'
 import { compareNesting } from './nesting'
 import { fabricationEstimate } from './fabricationLayout'
 import { TableTools } from './tools/TableTools'
-import { toolSelectionsAtTableThickness, type ToolProject } from './tools/project'
+import { toolSelectionsAtTable, type ToolProject } from './tools/project'
 import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey } from './tableProject'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
@@ -133,29 +133,31 @@ export default function App() {
     history.replaceState(null, '', url)
   }, [config, review])
 
-  const patch = <K extends keyof Config>(key: K, value: Config[K]) => {
-    setConfig(current => ({ ...current, [key]: value }))
+  const applyTableConfig = (next: Config) => {
+    try {
+      next.nestingTools = toolSelectionsAtTable(next.nestingTools, next)
+      setConfig(next)
+      return true
+    } catch (error) {
+      setNotice(`Table settings were not changed: ${error instanceof Error ? error.message : 'Invalid selected tool geometry'}`)
+      return false
+    }
   }
+  const patch = <K extends keyof Config>(key: K, value: Config[K]) => applyTableConfig({ ...config, [key]: value })
   const setPreset = (preset: Config['preset']) => {
     const values = preset === 'Custom' ? {} : presetValues[preset]
-    setConfig(current => ({ ...current, ...values, preset }))
-    if (preset === 'Custom') setNotice('Enter any hole diameter, pitch and margin in the fields below.')
+    if (applyTableConfig({ ...config, ...values, preset }) && preset === 'Custom') setNotice('Enter any hole diameter, pitch and margin in the fields below.')
   }
   const setNumeric = (key: NumericKey, value: number) => {
     if (!Number.isFinite(value)) return false
     const next = { ...config, [key]: clampNumeric(key, value) }
     if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key)) next.tabWidth = Math.min(next.tabWidth, maxTabWidth(next))
-    if (key === 'thickness') {
-      try { next.nestingTools = toolSelectionsAtTableThickness(next.nestingTools, next.thickness) }
-      catch (error) { setNotice(`Table thickness was not changed: ${error instanceof Error ? error.message : 'Invalid selected tool geometry'}`); return false }
-    }
     if (key === 'legBoltDiameter' || key === 'legPatternX' || key === 'legPatternY') {
       next.legPatternX = Math.max(next.legPatternX, next.legBoltDiameter * 1.5)
       next.legPatternY = Math.max(next.legPatternY, next.legBoltDiameter * 1.5)
     }
     if (key === 'holeDiameter' || key === 'pitch' || key === 'margin') next.preset = 'Custom'
-    setConfig(next)
-    return true
+    return applyTableConfig(next)
   }
   const numberLabel = (millimetres: number, precision = 2) => String(Number((millimetres / (config.units === 'mm' ? 1 : mmPerInch)).toFixed(config.units === 'mm' ? 4 : precision)))
   const numericInput = (key: NumericKey, label: string, min: number, max: number, step: number, precision = 0) => {
@@ -229,7 +231,7 @@ export default function App() {
 
   const withSelectedTool = (project: ToolProject) => {
     if (review) throw new Error('Resolve the table project review before adding tools.')
-    const next = { ...config, nestingTools: toolSelectionsAtTableThickness([...config.nestingTools, { id: crypto.randomUUID(), project }], config.thickness) }
+    const next = { ...config, nestingTools: toolSelectionsAtTable([...config.nestingTools, { id: crypto.randomUUID(), project }], config) }
     tableCutInventory(next)
     return next
   }

@@ -1,23 +1,25 @@
-import type { FabricationPart } from '../geometry'
+import { fixtureGridPoints, type FabricationPart } from '../geometry'
+import type { Config } from '../model'
 import type { NestingResult } from '../nesting'
 import { validNestingInventory } from '../nestingJob'
 import { automaticNestingOptions } from '../nestingSettings'
 import { extensionAssembly, extensionDefaults, extensionParts, type ExtensionConfig } from './extension'
 import { compactExtensionAssembly, compactExtensionDefaults, compactExtensionParts, type CompactExtensionConfig } from './compactExtension'
+import { viseModuleAssembly, viseModuleDefaults, viseModuleParts, type ViseModuleConfig } from './viseModule'
 import { squareDefaults, squareParts, type SquareConfig } from './square'
 import { cornerBracketAssembly, cornerBracketDefaults, cornerBracketParts, type CornerBracketConfig } from './cornerBracket'
 
-export const toolIds = ['extension', 'compactExtension', 'square', 'cornerBracket'] as const
+export const toolIds = ['extension', 'compactExtension', 'square', 'cornerBracket', 'viseModule'] as const
 export type ToolId = typeof toolIds[number]
 export const isToolId = (value: unknown): value is ToolId => toolIds.some(id => id === value)
 export type ToolSheet = { length: number; width: number; edgeGap: number; partGap: number }
 type ProjectBase = { sheet: ToolSheet; copies: number }
-export type ToolProject = ProjectBase & ({ version: 3; tool: 'extension'; size: ExtensionConfig } | { version: 1; tool: 'compactExtension'; size: CompactExtensionConfig } | { version: 2; tool: 'square'; size: SquareConfig } | { version: 2; tool: 'cornerBracket'; size: CornerBracketConfig })
+export type ToolProject = ProjectBase & ({ version: 3; tool: 'extension'; size: ExtensionConfig } | { version: 1; tool: 'compactExtension'; size: CompactExtensionConfig } | { version: 2; tool: 'square'; size: SquareConfig } | { version: 2; tool: 'cornerBracket'; size: CornerBracketConfig } | { version: 1; tool: 'viseModule'; size: ViseModuleConfig })
 type Vector3 = [number, number, number]
 export type ToolSelection = { id: string; project: ToolProject }
 export type ToolPlacement = { part: string; instance: number; origin: Vector3; axes: [Vector3, Vector3, Vector3] }
 
-export const toolLabels: Record<ToolId, string> = { extension: 'Wedge table extension', compactExtension: 'Compact table extension', square: 'Flat welding square', cornerBracket: 'Internal corner bracket' }
+export const toolLabels: Record<ToolId, string> = { extension: 'Wedge table extension', compactExtension: 'Compact table extension', square: 'Flat welding square', cornerBracket: 'Internal corner bracket', viseModule: 'Vise mounting module' }
 export const defaultToolProject: ToolProject & { tool: 'extension' } = {
   version: 3, tool: 'extension', size: { ...extensionDefaults },
   sheet: { length: 3000, width: 1500, edgeGap: 10, partGap: 5 }, copies: 1,
@@ -35,16 +37,21 @@ export const defaultCompactExtensionProject: ToolProject & { tool: 'compactExten
   version: 1, tool: 'compactExtension', size: { ...compactExtensionDefaults },
   sheet: { ...defaultToolProject.sheet }, copies: 1,
 }
-export const toolDefaults = { extension: defaultToolProject, compactExtension: defaultCompactExtensionProject, square: defaultSquareProject, cornerBracket: defaultCornerBracketProject } satisfies Record<ToolId, ToolProject>
+export const defaultViseModuleProject: ToolProject & { tool: 'viseModule' } = {
+  version: 1, tool: 'viseModule', size: { ...viseModuleDefaults },
+  sheet: { ...defaultToolProject.sheet }, copies: 1,
+}
+export const toolDefaults = { extension: defaultToolProject, compactExtension: defaultCompactExtensionProject, square: defaultSquareProject, cornerBracket: defaultCornerBracketProject, viseModule: defaultViseModuleProject } satisfies Record<ToolId, ToolProject>
 
 const finite = (value: unknown, min: number, max: number) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max
 const exactKeys = (value: Record<string, unknown>, keys: string[]) => Object.keys(value).length === keys.length && keys.every(key => key in value)
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 export class ToolProjectError extends Error {
   readonly name = 'ToolProjectError'
-  constructor(readonly code: 'invalid-json' | 'invalid-field' | 'unsupported-version' | 'grid-migration' | 'invalid-layout', message: string) { super(message) }
+  constructor(readonly code: 'invalid-json' | 'invalid-field' | 'unsupported-version' | 'grid-migration' | 'invalid-layout' | 'mounting-grid-mismatch', message: string) { super(message) }
 }
 const number = (value: unknown) => { if (typeof value !== 'number') throw new ToolProjectError('invalid-field', 'Project numeric fields must be numbers'); return value }
+const grid = (value: unknown): Config['grid'] => { if (value !== 'square' && value !== 'staggered') throw new ToolProjectError('invalid-field', 'Unsupported table grid'); return value }
 
 /** Only current fabrication data can reach exports; old shapes and grids have no runtime path. */
 export const parseToolProject = (text: string): ToolProject => {
@@ -67,6 +74,7 @@ export const parseToolProject = (text: string): ToolProject => {
   switch (root.tool) {
     case 'extension': project = { ...base, version: 3, tool: 'extension', size: { ...common, height: number(size.height) } }; break
     case 'compactExtension': project = { ...base, version: 1, tool: 'compactExtension', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), holeInset: number(size.holeInset), tipHeight: number(size.tipHeight), taperRun: number(size.taperRun), windowInset: number(size.windowInset), windowRadius: number(size.windowRadius), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
+    case 'viseModule': project = { ...base, version: 1, tool: 'viseModule', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), holeInset: number(size.holeInset), grid: grid(size.grid), slotWidth: number(size.slotWidth), slotLength: number(size.slotLength), slotInnerRadius: number(size.slotInnerRadius), tipHeight: number(size.tipHeight), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
     case 'square': project = { ...base, version: 2, tool: 'square', size: { ...common, armWidth: number(size.armWidth), holeDiameter: number(size.holeDiameter), endOffset: number(size.endOffset) } }; break
     case 'cornerBracket': project = { ...base, version: 2, tool: 'cornerBracket', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), slotLength: number(size.slotLength), cornerCut: number(size.cornerCut), tipWidth: number(size.tipWidth), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
   }
@@ -74,18 +82,31 @@ export const parseToolProject = (text: string): ToolProject => {
   return project
 }
 
-/** The compact extension is cut from its host table's stock, including outside a mixed job. */
-export const projectAtTableThickness = (project: ToolProject, thickness: number): ToolProject => project.tool === 'compactExtension'
-  ? { ...project, size: { ...project.size, thickness } }
-  : project
+export const toolUsesTableStock = (tool: ToolId) => tool === 'compactExtension' || tool === 'viseModule'
+type ToolTableSettings = Pick<Config, 'length' | 'width' | 'height' | 'thickness' | 'holeDiameter' | 'pitch' | 'margin' | 'grid'>
 
-export const toolSelectionsAtTableThickness = (selections: ToolSelection[], thickness: number): ToolSelection[] => selections.map(row => {
-  const project = projectAtTableThickness(row.project, thickness)
-  if (project.tool === 'compactExtension') projectModelParts(project)
+/** Host-owned dimensions resolve identically for editing, imports and mixed cutting jobs. */
+export const projectAtTable = (project: ToolProject, table: ToolTableSettings): ToolProject => {
+  switch (project.tool) {
+    case 'compactExtension': return { ...project, size: { ...project.size, thickness: table.thickness } }
+    case 'viseModule': return { ...project, size: { ...project.size, thickness: table.thickness, holeDiameter: table.holeDiameter, holePitch: table.pitch, holeInset: table.margin, grid: table.grid } }
+    default: return project
+  }
+}
+
+export const toolSelectionsAtTable = (selections: ToolSelection[], table: ToolTableSettings): ToolSelection[] => selections.map(row => {
+  const project = projectAtTable(row.project, table)
+  if (toolUsesTableStock(project.tool)) projectModelParts(project)
+  if (project.tool === 'viseModule') {
+    const hostGrid = new Set(fixtureGridPoints(Math.max(table.length, table.width), table.height, table).map(p => `${p.x}:${p.y}`))
+    const mountingGrid = fixtureGridPoints(project.size.width, project.size.height, table)
+    if (mountingGrid.some(p => !hostGrid.has(`${p.x}:${p.y}`)))
+      throw new ToolProjectError('mounting-grid-mismatch', 'The complete vise mounting grid must fit a host table side; increase the table side length/depth or reduce the module dimensions')
+  }
   return { ...row, project }
 })
 
-/** Dimensions/quantities are snapshots; compact-extension thickness follows the host table. */
+/** Unowned dimensions and quantities are snapshots; table-owned settings resolve at admission. */
 export const parseToolSelections = (value: unknown): ToolSelection[] => {
   if (!Array.isArray(value) || value.length > 32) throw new ToolProjectError('invalid-field', 'Select at most 32 configured tools for a table cut job')
   const ids = new Set<string>()
@@ -114,6 +135,7 @@ export const projectModelParts = (project: ToolProject): FabricationPart[] => {
   switch (project.tool) {
     case 'extension': return extensionParts(project.size)
     case 'compactExtension': return compactExtensionParts(project.size)
+    case 'viseModule': return viseModuleParts(project.size)
     case 'square': return squareParts(project.size)
     case 'cornerBracket': return cornerBracketParts(project.size)
   }
@@ -124,6 +146,7 @@ export const projectAssembly = (project: ToolProject): ToolPlacement[] => {
   switch (project.tool) {
     case 'extension': return extensionAssembly(project.size)
     case 'compactExtension': return compactExtensionAssembly(project.size)
+    case 'viseModule': return viseModuleAssembly(project.size)
     case 'square': return [{ part: 'square', instance: 0, origin: [0, 0, project.size.thickness / 2], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] }]
     case 'cornerBracket': return cornerBracketAssembly(project.size)
   }
