@@ -1,48 +1,53 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { svgContourPath, engravingLines, type FabricationPart, type EngravingLine } from './geometry'
-import { display, readDisplay, readPart, type Config } from './model'
+import { svgContourPath, type FabricationPart, type EngravingLine } from './geometry'
+import { display, readDisplay, type Config } from './model'
 import { downloadNestedZip } from './dxf'
-import { nestingKey, nestingParts, nestingOptions, type NestingRequest, type NestingResponse } from './nestingSettings'
-import type { NestingOptions, NestingResult } from './nesting'
+import { nestingKey, type NestingRequest, type NestingResponse } from './nestingSettings'
+import type { NestingResult } from './nesting'
+import type { NestingJob, NestingRun } from './nestingJob'
+import { tableNestingJob, tableLayoutKey, tableCutEngravings, validateTableCut, type TableLayoutSnapshot } from './tableCutJob'
 import { NumberField } from './GeneratorWorkspace'
 import { Icon } from './Icon'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 export type SheetSettings = { length: number; width: number; edgeGap: number; partGap: number; copies: number }
 type Props = {
-  jobKey: string; sourceParts: FabricationPart[]; options: NestingOptions; sheetSettings: SheetSettings; units: Config['units']
+  jobKey: string; job: NestingJob; sheetSettings: SheetSettings; units: Config['units']
   onChange: (patch: Partial<SheetSettings>) => void | boolean; onNotice: (message: string) => void
   render3D: (result: NestingResult, reset: number) => ReactNode
-  onExport: (result: NestingResult) => Promise<void>
+  onExport: (run: Extract<NestingRun, { phase: 'nesting' }>) => Promise<void>
+  onRun?: (run: NestingRun) => void
   getEngravings?: (part: FabricationPart) => EngravingLine[]
-  isLayoutValid?: (result: NestingResult, key: string) => boolean
+  isLayoutValid?: (run: Extract<NestingRun, { phase: 'nesting' }>, key: string) => boolean
   batchLabel?: string; maxGap?: number
 }
 
-export function SheetNesting({ jobKey: key, sourceParts, options, sheetSettings: settings, units: unitSystem, onChange, onNotice, render3D, onExport, getEngravings, isLayoutValid, batchLabel = 'Identical items in this cutting batch', maxGap = 1000 }: Props) {
-  const [snapshot, setSnapshot] = useState<{ key: string; result: NestingResult } | null>(null)
+export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units: unitSystem, onChange, onNotice, render3D, onExport, onRun, getEngravings, isLayoutValid, batchLabel = 'Identical items in this cutting batch', maxGap = 1000 }: Props) {
+  const [snapshot, setSnapshot] = useState<{ key: string; run: NestingRun } | null>(null)
   const [stats, setStats] = useState<{ attempts: number; elapsedMs: number; search: NestingResult['stats'] | null }>({ attempts: 0, elapsedMs: 0, search: null })
   const [status, setStatus] = useState<'running' | 'pausing' | 'paused' | 'done' | 'error'>('running')
-  const [error, setError] = useState('')
+  const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [budget, setBudget] = useState(30)
   const [sheetIndex, setSheetIndex] = useState(0)
   const [mode, setMode] = useState<'3d' | '2d'>('3d')
   const [reset, setReset] = useState(0)
   const [retry, setRetry] = useState(0)
   const control = useRef<{ worker: Worker; running: boolean; busy: boolean; limit: number; elapsed: number; exhausted: boolean } | null>(null)
-  const sourceRef = useRef({ parts: sourceParts, options })
-  sourceRef.current = { parts: sourceParts, options }
+  const sourceRef = useRef(job)
+  sourceRef.current = job
+  const onRunRef = useRef(onRun)
+  onRunRef.current = onRun
   const budgetRef = useRef(budget)
   budgetRef.current = budget
 
   useEffect(() => {
     let active = true
-    setSnapshot(null); setStats({ attempts: 0, elapsedMs: 0, search: null }); setStatus('running'); setError('')
+    setSnapshot(null); setStats({ attempts: 0, elapsedMs: 0, search: null }); setStatus('running'); setError(null)
     // Debounce edits; cleanup cancels old geometry work, including an in-flight pass.
     const timer = window.setTimeout(() => {
       let worker: Worker
       try { worker = new Worker(new URL('./nesting.worker.ts', import.meta.url), { type: 'module' }) }
-      catch { setError('This browser cannot start the sheet calculation.'); setStatus('error'); return }
+      catch { setError({ code: 'worker-unavailable', message: 'This browser cannot start the sheet calculation.' }); setStatus('error'); return }
       const state = { worker, running: true, busy: true, limit: budgetRef.current * 1000, elapsed: 0, exhausted: false }
       control.current = state
       worker.onmessage = (event: MessageEvent<NestingResponse>) => {
@@ -52,16 +57,17 @@ export function SheetNesting({ jobKey: key, sourceParts, options, sheetSettings:
         if ('error' in message) { state.running = false; setError(message.error); setStatus('error'); return }
         state.elapsed = message.elapsedMs
         state.exhausted = message.done
-        setStats({ attempts: message.result.stats.attempts, elapsedMs: message.elapsedMs, search: message.result.stats })
-        setSnapshot(previous => previous?.key === key && previous.result.stats.improvements === message.result.stats.improvements ? previous : { key, result: message.result })
-        if (message.done || !message.result.validation.valid) { state.running = false; setStatus('done'); return }
+        setStats({ attempts: message.run.result.stats.attempts, elapsedMs: message.elapsedMs, search: message.run.result.stats })
+        setSnapshot(previous => previous?.key === key && previous.run.phase === message.run.phase && previous.run.result.stats.improvements === message.run.result.stats.improvements ? previous : { key, run: message.run })
+        onRunRef.current?.(message.run)
+        if (message.done || !message.run.result.validation.valid) { state.running = false; setStatus('done'); return }
         if (state.running && message.elapsedMs < state.limit) {
           state.busy = true
           worker.postMessage({ type: 'continue', key } satisfies NestingRequest)
         } else { state.running = false; setStatus('paused') }
       }
-      worker.onerror = () => { if (active) { state.running = false; setError('Calculation worker failed. You can keep the last verified result or restart.'); setStatus('error') } }
-      worker.postMessage({ type: 'start', key, ...sourceRef.current } satisfies NestingRequest)
+      worker.onerror = () => { if (active) { state.running = false; setError({ code: 'worker-failed', message: 'Calculation worker failed. You can keep the last verified result or restart.' }); setStatus('error') } }
+      worker.postMessage({ type: 'start', key, job: sourceRef.current } satisfies NestingRequest)
     }, 250)
     return () => { active = false; clearTimeout(timer); control.current?.worker.terminate(); control.current = null }
   }, [key, retry])
@@ -79,13 +85,14 @@ export function SheetNesting({ jobKey: key, sourceParts, options, sheetSettings:
     setStatus('running')
     state.worker.postMessage({ type: 'continue', key } satisfies NestingRequest)
   }
-  const result = snapshot?.key === key ? snapshot.result : null
+  const run = snapshot?.key === key ? snapshot.run : null
+  const result = run?.result
   const selected = Math.max(0, Math.min(sheetIndex, (result?.sheets.length ?? 1) - 1))
   const sheet = result?.sheets[selected]
   const metric = result?.metrics.sheets[selected]
   const focused = useMemo(() => result && sheet ? { ...result, sheets: [sheet], placements: sheet.placements } : undefined, [result, sheet])
   const units = unitSystem === 'mm' ? 'mm' : 'in'
-  const complete = result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(result, key))
+  const complete = run?.phase === 'nesting' && result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(run, key))
   const running = status === 'running' || status === 'pausing'
   const spacingField = (field: 'edgeGap' | 'partGap', label: string) => <NumberField label={`${label} (${units})`}
     aria-label={label} value={display(settings[field], unitSystem, 2)} min={0} max={Number(display(maxGap, unitSystem, 2))} step={unitSystem === 'mm' ? 0.5 : 0.01}
@@ -116,9 +123,11 @@ export function SheetNesting({ jobKey: key, sourceParts, options, sheetSettings:
     </div>
     <section className="sheet-panel" aria-labelledby="nesting-title">
       <header><h3 id="nesting-title">Sheet nesting</h3><span className="nesting-status">{status === 'running' ? 'Optimizing' : status === 'pausing' ? 'Finishing pass' : status === 'paused' ? 'Paused' : status === 'error' ? 'Stopped' : 'Finished'}</span></header>
-      <p className="nesting-summary" role="status">{result ? !result.validation.valid ? 'Validation failed. Export is disabled.' : result.unplaced.length ? `${result.unplaced.length} parts not placed. Export is disabled.` : `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Calculating the first verified layout…'}</p>
-      {error && <p role="alert" className="nesting-error">{error}</p>}
+      <p className="nesting-summary" role="status">{run?.phase === 'capacity' ? 'Calculating table-only capacity. Selected tools are not yet placed; export is disabled.' : result ? !result.validation.valid ? 'Validation failed. Export is disabled.' : result.unplaced.length ? `${result.unplaced.length} parts not placed. Export is disabled.` : `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Calculating the first verified layout…'}</p>
+      {error && <p role="alert" className="nesting-error" data-error-code={error.code}>{error.message}</p>}
       {result && !result.validation.valid && <p className="nesting-error">{result.validation.violations[0]?.message}</p>}
+      {run?.phase === 'nesting' && run.stock.kind === 'table-offcuts' && <p className="nesting-hint">Table-only capacity: {run.stock.baseline.sheets.length} sheet(s). No extra sheets for tools. Table parts may be rearranged. Export requires every selected tool in full.</p>}
+      {result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>Not placed in this search. Continue improving, change quantities or remove tools; no partial job can be exported.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
       {result && result.sheets.length > 0 && <>
         <label className="field"><span>Preview sheet</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Sheet {i + 1} · {s.placements.length} parts</option>)}</select></label>
         <dl className="nesting-metrics">
@@ -138,20 +147,29 @@ export function SheetNesting({ jobKey: key, sourceParts, options, sheetSettings:
         <NumberField label={batchLabel} min={1} max={10} step={1} value={settings.copies} onValue={value => onChange({ copies: Math.max(1, Math.min(10, Math.floor(value))) })} />
         <p>Rotations are chosen automatically: quarter turns first, then 15° refinements within the search budget. Batch affects sheet nesting only, not the assembled model or individual part geometry. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
       </details>
-      <button className="nesting-export" disabled={!complete} onClick={() => { if (result) void onExport({ ...result, stats: stats.search ?? result.stats }).catch(() => onNotice('Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet DXFs (ZIP)</button>
+      <button className="nesting-export" disabled={!complete} onClick={() => { if (run?.phase === 'nesting') void onExport({ ...run, result: { ...run.result, stats: stats.search ?? run.result.stats } }).catch(error => onNotice(error instanceof Error ? error.message : 'Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet DXFs (ZIP)</button>
       <p className="nesting-hint">Native LINE / ARC / CIRCLE output, placement manifest and project settings. Contour search is heuristic, not a global optimum proof. Confirm kerf, lead-ins, clamps and cutting order in CAM.</p>
     </section>
   </div>
 }
 
-type TableProps = { config: Config; dark: boolean; onChange: (patch: Partial<Config>) => void; onNotice: (message: string) => void }
-export function TableSheetNesting({ config, dark, onChange, onNotice }: TableProps) {
+type TableProps = { config: Config; dark: boolean; onChange: (patch: Partial<Config>) => void; onNotice: (message: string) => void; baseline?: TableLayoutSnapshot; onBaseline: (snapshot: TableLayoutSnapshot) => void }
+export function TableSheetNesting({ config, dark, onChange, onNotice, baseline, onBaseline }: TableProps) {
   const key = nestingKey(config)
-  const parts = useMemo(() => nestingParts(config), [key])
-  return <SheetNesting jobKey={key} sourceParts={parts} options={nestingOptions(config)} units={config.units}
+  const prepared = useMemo(() => {
+    try { return { job: tableNestingJob(config, baseline) } }
+    catch (error) { return { error: error instanceof Error ? error : new Error('Invalid cutting job') } }
+  }, [key, baseline])
+  if (!prepared.job) return <div className="three-loading socket-error" role="alert" data-error-code={prepared.error && 'code' in prepared.error ? String(prepared.error.code) : 'invalid-cut-job'}>{prepared.error?.message}</div>
+  return <SheetNesting jobKey={key} job={prepared.job} units={config.units}
     sheetSettings={{ length: config.sheetLength, width: config.sheetWidth, edgeGap: config.sheetEdgeGap, partGap: config.sheetPartGap, copies: config.nestingCopies }}
     onChange={changes => onChange({ ...(changes.edgeGap === undefined ? {} : { sheetEdgeGap: changes.edgeGap }), ...(changes.partGap === undefined ? {} : { sheetPartGap: changes.partGap }), ...(changes.copies === undefined ? {} : { nestingCopies: changes.copies }) })}
-    onNotice={onNotice} onExport={result => downloadNestedZip(config, result)} batchLabel="Identical tables in this cutting batch"
-    getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }}
+    onNotice={onNotice} onExport={({ result, stock }) => downloadNestedZip(config, result, stock)} batchLabel="Identical tables in this cutting batch"
+    isLayoutValid={({ result, stock }) => validateTableCut(config, result, stock)}
+    onRun={run => {
+      const table = run.phase === 'capacity' || run.stock.kind === 'new-sheets' ? run.result : run.stock.baseline
+      if (table.validation.valid && !table.unplaced.length) onBaseline({ key: tableLayoutKey(config), result: table })
+    }}
+    getEngravings={part => tableCutEngravings(part, config)}
     render3D={(result, reset) => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ThreeAssembly config={config} dark={dark} resetToken={reset} mountFocusToken={0} nesting={result} /></Suspense>} />
 }

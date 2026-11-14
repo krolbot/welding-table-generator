@@ -1,5 +1,7 @@
 import { defaults, maxTabWidth, mmPerInch, presetValues, projectConfig, projectFields, readPart, tableProjectVersion, type Config, type CustomHole, type RemovedHole } from './model'
 
+import { parseToolSelections, toolSelectionsAtTableThickness } from './tools/project'
+
 export type NumericKey = { [K in keyof Config]: Config[K] extends number ? K : never }[keyof Config]
 export type BooleanKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config]
 
@@ -69,17 +71,17 @@ export const parseTableProject = (text: string): TableProjectLoad => {
   try { raw = JSON.parse(text) } catch { throw new TableProjectError('invalid-json', 'Project JSON is invalid.') }
   if (!record(raw)) throw new TableProjectError('invalid-json', 'A table project must be a JSON object.')
   const legacy = raw.schemaVersion === undefined
-  if (!legacy && raw.schemaVersion !== tableProjectVersion) throw new TableProjectError('unsupported-version', 'Unsupported table project version.', 'schemaVersion')
+  if (!legacy && raw.schemaVersion !== 2 && raw.schemaVersion !== tableProjectVersion) throw new TableProjectError('unsupported-version', 'Unsupported table project version.', 'schemaVersion')
   const allowed = new Set([...Object.keys(defaults), ...Object.values(projectFields), 'schemaVersion', ...(legacy ? ['skirtHoleLayout'] : [])])
   for (const field of Object.keys(raw)) if (!allowed.has(field)) throw new TableProjectError('unknown-field', `Unknown table project field: ${field}`, field)
-  const required = legacy ? ['length', 'width'] : Object.keys(projectConfig(defaults))
+  const required = legacy ? ['length', 'width'] : Object.keys(projectConfig(defaults)).filter(key => raw.schemaVersion !== 2 || key !== 'nestingTools')
   for (const field of required) if (!Object.hasOwn(raw, field)) throw new TableProjectError('missing-field', `Missing table project field: ${field}`, field)
   const value = { ...raw }
   for (const [key, field] of Object.entries(projectFields)) if (Object.hasOwn(raw, field)) {
     if (Object.hasOwn(raw, key) && raw[key] !== raw[field]) return invalid(field, 'conflicts with its internal field name')
     value[key] = raw[field]
   }
-  const config: Config = { ...defaults, customHoles: [], removedHoles: [] }
+  const config: Config = { ...defaults, customHoles: [], removedHoles: [], nestingTools: [] }
   for (const key of numericKeys) if (Object.hasOwn(value, key)) {
     const number = finite(value[key], key), { min, max } = numericBounds[key]
     if (number < min || number > max || integerKeys.includes(key) && !Number.isInteger(number)) return invalid(key, `must be ${min}–${max}${integerKeys.includes(key) ? ' and an integer' : ''}`)
@@ -111,6 +113,10 @@ export const parseTableProject = (text: string): TableProjectLoad => {
   if (legacy && value.skirtHoleLayout !== undefined && value.skirtHoleLayout !== 'canonical' && value.skirtHoleLayout !== 'compact') return invalid('skirtHoleLayout', 'unknown legacy layout')
   if (value.customHoles !== undefined) config.customHoles = customHoles(value.customHoles)
   if (value.removedHoles !== undefined) config.removedHoles = removedHoles(value.removedHoles)
+  if (value.nestingTools !== undefined) {
+    if (raw.schemaVersion !== tableProjectVersion) return invalid('nestingTools', 'requires the current cut-job schema')
+    config.nestingTools = toolSelectionsAtTableThickness(parseToolSelections(value.nestingTools), config.thickness)
+  }
   if (config.tabWidth > maxTabWidth(config)) return invalid('tabWidth', 'does not fit the selected height and stock')
 
   config.preset = 'Custom'
@@ -136,8 +142,8 @@ export const tableProjectFromQuery = (params: URLSearchParams): string | undefin
     return params.get('state') ?? ''
   }
   if (params.has('project')) throw new TableProjectError('unsupported-version', 'The retired combined tooling catalog project is not supported. Original data has not been replaced.', 'project')
-  if (params.has('toolProject')) return undefined
-  const fields = [...params.entries()].filter(([key]) => key !== 'workspace')
+  if (params.has('toolProject') && !params.has('schemaVersion') && !params.has('length')) return undefined
+  const fields = [...params.entries()].filter(([key]) => key !== 'workspace' && key !== 'toolProject')
   if (!fields.length) return undefined
   const value: Record<string, unknown> = {}
   const numbers = new Set<string>(numericKeys)
@@ -149,7 +155,7 @@ export const tableProjectFromQuery = (params: URLSearchParams): string | undefin
   for (const [key, text] of fields) {
     if (numbers.has(key) || key === 'schemaVersion') value[key] = text.trim() === '' ? null : Number(text)
     else if (booleans.has(key)) value[key] = text === 'true' ? true : text === 'false' ? false : text
-    else if (key === 'customHoles' || key === 'removedHoles') {
+    else if (key === 'customHoles' || key === 'removedHoles' || key === 'nestingTools') {
       try { value[key] = JSON.parse(text) } catch { return invalid(key, 'invalid JSON in URL') }
     } else value[key] = text
   }

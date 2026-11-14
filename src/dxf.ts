@@ -1,9 +1,11 @@
 import JSZip from 'jszip'
-import { assertFabricationReady, fabricationError, contourPoints, engravingLines, layoutParts, makeParts, type Contour, type FabricationPart, type Part, type Point } from './geometry'
+import { assertFabricationReady, contourPoints, engravingLines, layoutParts, makeParts, type Contour, type EngravingLine, type FabricationPart, type Part, type Point } from './geometry'
 import { projectConfig, type Config } from './model'
-import { nestingOptions, nestingParts } from './nestingSettings'
+import { nestingOptions } from './nestingSettings'
+import { assertTablePartsExport, tableCutInventory, tableCutEngravings, validateTableCut, TableCutJobError } from './tableCutJob'
+import type { NestingStock } from './nestingJob'
 import { nativeContourBounds } from './contourGeometry'
-import { transformNestingPoint, transformNestingContour, validateNesting, type NestingPlacement, type NestingResult } from './nesting'
+import { transformNestingPoint, transformNestingContour, type NestingPlacement, type NestingResult } from './nesting'
 
 const group = (code: number, value: string | number) => `${code}\n${value}\n`
 const line = (from: Point, to: Point, layer = 'OUTLINE') =>
@@ -52,7 +54,7 @@ export const nativeDxfForPart = (part: FabricationPart) => {
   return header(boundsFor([{ part, offset }])) + nativePartEntities(part, offset) + footer
 }
 
-export const nativeDxfForNestedSheet = (placements: readonly NestingPlacement[]) => {
+export const nativeDxfForNestedSheet = (placements: readonly NestingPlacement[], options: { engravings?: (part: FabricationPart) => EngravingLine[] } = {}) => {
   if (!placements.length) throw new Error('Cannot export an empty sheet')
   const boxes = placements.map(value => nativeContourBounds(transformNestingContour(value.part.contours[0], value)))
   const bounds = { minX: Math.min(...boxes.map(value => value.minX)), minY: Math.min(...boxes.map(value => value.minY)), maxX: Math.max(...boxes.map(value => value.maxX)), maxY: Math.max(...boxes.map(value => value.maxY)) }
@@ -63,6 +65,7 @@ export const nativeDxfForNestedSheet = (placements: readonly NestingPlacement[])
       ? line(transform(segment.from), transform(segment.to))
       : arc(transform(segment.center), segment.radius, normalize(segment.clockwise ? segment.end : segment.start), normalize(segment.clockwise ? segment.start : segment.end)),
     ).join('')).join('') + placement.part.holes.map(hole => circle(transform(hole), hole.d / 2)).join('')
+      + (options.engravings?.(placement.part) ?? []).map(mark => line(transform(mark.from), transform(mark.to), 'ENGRAVE')).join('')
   }).join('')
   return header(bounds) + entities + footer
 }
@@ -74,6 +77,7 @@ export const dxfForPart = (part: Part, c: Config) => {
 }
 
 export const fullDxf = (c: Config) => {
+  assertTablePartsExport(c)
   assertFabricationReady(c)
   const layout = layoutParts(c)
   const parts = layout.instances.map(item => ({ part: item.part, offset: item.position }))
@@ -82,66 +86,44 @@ export const fullDxf = (c: Config) => {
 
 export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlacement[]) => {
   assertFabricationReady(c)
-  if (!placements.length) throw new Error('Cannot export an empty sheet')
-  const sourceParts = nestingParts(c)
-  const boxes = placements.map(p => nativeContourBounds(transformNestingContour(p.part.contours[0], p)))
-  const bounds = { minX: Math.min(...boxes.map(b => b.minX)), minY: Math.min(...boxes.map(b => b.minY)), maxX: Math.max(...boxes.map(b => b.maxX)), maxY: Math.max(...boxes.map(b => b.maxY)) }
-  const entities = placements.map(placement => {
-    const transform = (value: Point) => transformNestingPoint(value, placement)
-    const normalize = (angle: number) => ((angle + placement.rotation) % 360 + 360) % 360
-    let result = placement.part.contours.map(contour => contour.map(segment => segment.type === 'line'
-      ? line(transform(segment.from), transform(segment.to))
-      : arc(transform(segment.center), segment.radius, normalize(segment.clockwise ? segment.end : segment.start), normalize(segment.clockwise ? segment.start : segment.end)),
-    ).join('')).join('')
-    result += placement.part.holes.map(hole => circle(transform(hole), hole.d / 2)).join('')
-    const sourcePart = sourceParts.find(part => part.name === placement.part.name)
-    if (!sourcePart) throw new Error(`Stale nesting part: ${placement.part.name}`)
-    result += engravingLines(sourcePart, c).map(mark => line(transform(mark.from), transform(mark.to), 'ENGRAVE')).join('')
-    return result
-  }).join('')
-  return header(bounds) + entities + footer
-}
-
-export const validateNestedExport = (c: Config, result: NestingResult) => {
-  if (fabricationError(c)) return false
-  const parts = nestingParts(c)
-  const keys = new Set<string>()
-  const options = nestingOptions(c)
-  if (result.unplaced.length || result.placements.length !== parts.reduce((sum, part) => sum + part.count, 0)) return false
-  for (const placement of result.placements) {
-    const part = parts.find(candidate => candidate.name === placement.part.name)
-    const key = `${placement.part.name}:${placement.instance}`
-    if (!part || JSON.stringify(placement.part) !== JSON.stringify(part) || !Number.isInteger(placement.instance) || placement.instance < 0 || placement.instance >= part.count || keys.has(key)) return false
-    keys.add(key)
+  const parts = new Map(tableCutInventory(c).parts.map(part => [part.name, part]))
+  for (const placement of placements) {
+    if (JSON.stringify(parts.get(placement.part.name)) !== JSON.stringify(placement.part))
+      throw new TableCutJobError('invalid-layout', `Stale nesting part: ${placement.part.name}`)
   }
-  const sheets = [...new Set(result.placements.map(p => p.sheet))].sort((a, b) => a - b)
-  if (sheets.some((index, i) => index !== i)) return false
-  return result.validation.valid && result.placements.length > 0 && validateNesting(result.placements, options).valid
+  return nativeDxfForNestedSheet(placements, { engravings: part => tableCutEngravings(part, c) })
 }
 
-export const nestedArchive = (c: Config, result: NestingResult) => {
-  if (!validateNestedExport(c, result)) throw new Error('The sheet layout is incomplete, stale or invalid')
+export const validateNestedExport = (c: Config, result: NestingResult, stock: NestingStock = { kind: 'new-sheets' }) => validateTableCut(c, result, stock)
+
+export const nestedArchive = (c: Config, result: NestingResult, stock: NestingStock = { kind: 'new-sheets' }) => {
+  if (!validateNestedExport(c, result, stock)) throw new TableCutJobError('invalid-layout', 'The sheet layout is incomplete, stale or invalid for the selected table and tools')
+  const inventory = tableCutInventory(c)
   const zip = new JSZip()
   const sheetIndexes = [...new Set(result.placements.map(placement => placement.sheet))].sort((a, b) => a - b)
   sheetIndexes.forEach(index => zip.file(`Sheet_${index + 1}.dxf`, dxfForNestedSheet(c, result.placements.filter(placement => placement.sheet === index))))
-  zip.file('README.txt', `Sheet size: ${c.sheetLength} x ${c.sheetWidth} mm\nMinimum edge gap: ${c.sheetEdgeGap} mm\nMinimum part gap: ${c.sheetPartGap} mm\nSheet count: ${sheetIndexes.length}\nAll parts placed: ${result.placements.length}\nCoordinates are nominal geometry. Kerf, lead-ins, clamps and cutting order require CAM verification.\n`)
-  zip.file('project.json', JSON.stringify(projectConfig(c), null, 2))
+  zip.file('README.txt', `Sheet size: ${c.sheetLength} x ${c.sheetWidth} mm\nMinimum edge gap: ${c.sheetEdgeGap} mm\nMinimum part gap: ${c.sheetPartGap} mm\nSheet count: ${sheetIndexes.length}\nAll parts placed: ${result.placements.length}\nStock: steel, ${c.thickness} mm (confirm grade before cutting)\nSelected tools: ${c.nestingTools.length}; copies apply to the entire job, not to each table.\n${stock.kind === 'table-offcuts' ? `No additional sheets: limit ${stock.baseline.sheets.length} from the verified table-only layout. Tables may be rearranged to fit complete tools.\n` : ''}Coordinates are nominal geometry. Kerf, lead-ins, clamps and cutting order require CAM verification.\n`)
+  zip.file('project.json', JSON.stringify(projectConfig({ ...c, nestingTools: inventory.selections }), null, 2))
   zip.file('layout.json', JSON.stringify({
-    schemaVersion: 1, engine: 'contour-nfp-v2', units: 'mm', tableCopies: c.nestingCopies,
+    schemaVersion: 2, engine: 'contour-nfp-v2', units: 'mm', tableCopies: c.nestingCopies,
     sheet: { length: c.sheetLength, width: c.sheetWidth, thickness: c.thickness },
     clearance: { edge: c.sheetEdgeGap, part: c.sheetPartGap, serializationReserve: 0.002 },
     allowedRotations: nestingOptions(c).rotations,
     search: result.stats, metrics: result.metrics, outlineArea: result.outlineArea,
-    parts: nestingParts(c),
-    placements: result.placements.map(p => ({ part: p.part.name, instance: p.instance, sheet: p.sheet, rotation: p.rotation, translation: p.translation })),
+    stock: inventory.stock,
+    selectedTools: inventory.selections,
+    capacity: stock.kind === 'table-offcuts' ? { policy: stock.kind, sheetLimit: stock.baseline.sheets.length, tableLayout: stock.baseline } : { policy: stock.kind },
+    parts: inventory.parts,
+    sources: inventory.sources,
+    placements: result.placements.map(p => ({ part: p.part.name, source: inventory.sources[p.part.name], copy: Math.floor(p.instance / inventory.sources[p.part.name].perCopy), instance: p.instance, sheet: p.sheet, rotation: p.rotation, translation: p.translation })),
     coordinateConvention: 'Millimetres, sheet lower-left origin, counterclockwise rotation about part origin followed by translation',
     holesNestable: false, nominalContours: true, globalOptimalityProven: false,
   }, null, 2))
   return zip
 }
 
-export const downloadNestedZip = async (c: Config, result: NestingResult) => {
-  const zip = nestedArchive(c, result)
+export const downloadNestedZip = async (c: Config, result: NestingResult, stock: NestingStock = { kind: 'new-sheets' }) => {
+  const zip = nestedArchive(c, result, stock)
   download(await zip.generateAsync({ type: 'blob' }), `WeldingTable_Sheets_${c.length}x${c.width}.zip`)
 }
 
@@ -158,6 +140,7 @@ export const downloadFull = (c: Config) =>
   download(new Blob([fullDxf(c)], { type: 'application/dxf' }), `WeldingTable_Assembly_${c.length}x${c.width}.dxf`)
 
 export const downloadZip = async (c: Config) => {
+  assertTablePartsExport(c)
   assertFabricationReady(c)
   const zip = new JSZip()
   makeParts(c).forEach((part, index) => {

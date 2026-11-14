@@ -1,6 +1,7 @@
 import { FabricationError, fixtureGridPoints, pointInContour as inside, type Contour, type FabricationPart, type Hole, type Point } from '../geometry'
-import { jointOutline, polygonContour as polygon, type EdgeJoint } from '../fabricationProfiles'
-import { nativeContourBounds, nativeContourDistance, nativePointContourDistance } from '../contourGeometry'
+import { jointOutline, polygonContour as polygon, roundedConvexPolygon, type EdgeJoint } from '../fabricationProfiles'
+import { nativePointContourDistance } from '../contourGeometry'
+import { validateToolPart } from './fabrication'
 
 export type ExtensionConfig = { length: number; width: number; height: number; thickness: number }
 export const extensionDefaults: ExtensionConfig = { length: 500, width: 200, height: 200, thickness: 6 }
@@ -28,8 +29,6 @@ const arcPoint = (center: Point, radius: number, degrees: number): Point => {
   const angle = degrees * Math.PI / 180
   return point(center.x + radius * Math.cos(angle), center.y + radius * Math.sin(angle))
 }
-const endpoint = (segment: Contour[number], end: 'from' | 'to') => segment.type === 'line'
-  ? segment[end] : arcPoint(segment.center, segment.radius, end === 'from' ? segment.start : segment.end)
 const rect = (x: number, y: number, width: number, height: number) => polygon([
   point(x, y), point(x + width, y), point(x + width, y + height), point(x, y + height),
 ])
@@ -37,27 +36,6 @@ const rect = (x: number, y: number, width: number, height: number) => polygon([
 const teeth = (centres: number[], width: number, depth: number): EdgeJoint[] => centres.map(centre => ({ centre, width, depth }))
 const stations = (span: number) => Array.from({ length: Math.floor((span - pitch) / pitch) }, (_, index) => (index + 1) * pitch)
 
-const roundedTriangle = (vertices: Point[], radius: number): Contour => {
-  const corners = vertices.map((vertex, index) => {
-    const previous = vertices[(index + vertices.length - 1) % vertices.length], next = vertices[(index + 1) % vertices.length]
-    const previousLength = distance(previous, vertex), nextLength = distance(next, vertex)
-    const a = point((previous.x - vertex.x) / previousLength, (previous.y - vertex.y) / previousLength)
-    const b = point((next.x - vertex.x) / nextLength, (next.y - vertex.y) / nextLength)
-    const angle = Math.acos(Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y)))
-    const tangent = radius / Math.tan(angle / 2), bisector = Math.hypot(a.x + b.x, a.y + b.y)
-    const centreDistance = radius / Math.sin(angle / 2)
-    const center = point(vertex.x + (a.x + b.x) * centreDistance / bisector, vertex.y + (a.y + b.y) * centreDistance / bisector)
-    return { entry: point(vertex.x + a.x * tangent, vertex.y + a.y * tangent), exit: point(vertex.x + b.x * tangent, vertex.y + b.y * tangent), center, tangent }
-  })
-  return corners.flatMap((corner, index): Contour => {
-    const next = corners[(index + 1) % corners.length]
-    if (corner.tangent + next.tangent >= distance(vertices[index], vertices[(index + 1) % vertices.length])) throw new FabricationError('cut-clearance', 'Extension access-window fillets do not fit')
-    return [
-      { type: 'arc', center: corner.center, radius, start: Math.atan2(corner.entry.y - corner.center.y, corner.entry.x - corner.center.x) * 180 / Math.PI, end: Math.atan2(corner.exit.y - corner.center.y, corner.exit.x - corner.center.x) * 180 / Math.PI },
-      line(corner.exit, next.entry),
-    ]
-  })
-}
 const verticalSlot = (x: number, y: number, length: number): Contour => {
   const radius = diameter / 2, travel = (length - diameter) / 2
   return [
@@ -105,23 +83,6 @@ const assertConfig = (config: ExtensionConfig) => {
     if (!Number.isFinite(value) || value < min || value > max) throw new FabricationError('invalid-dimensions', `Extension ${name} must be finite and ${min}–${max} mm. Stock must leave the fixed 25 mm row and 8 mm edge web.`, { field: name, min, max })
   }
 }
-const validatePart = (part: ExtensionPart) => {
-  const [outer, ...cuts] = part.contours
-  for (const contour of part.contours) {
-    if (!contour.length || contour.some((segment, index) => distance(endpoint(segment, 'to'), endpoint(contour[(index + 1) % contour.length], 'from')) > epsilon)) throw new FabricationError('contour-closure', `${part.name} contour is not closed`, { part: part.name })
-    const bounds = nativeContourBounds(contour)
-    if (Object.values(bounds).some(value => !Number.isFinite(value)) || bounds.minX < -epsilon || bounds.minY < -epsilon || bounds.maxX > part.width + epsilon || bounds.maxY > part.height + epsilon) throw new FabricationError('contour-bounds', `${part.name} contour is outside the blank`, { part: part.name })
-  }
-  for (const [index, cut] of cuts.entries()) {
-    if (!inside(endpoint(cut[0], 'from'), outer) || nativeContourDistance(cut, outer) < 3 - epsilon) throw new FabricationError('cut-clearance', `${part.name} cut violates the outer web`, { part: part.name })
-    for (const other of cuts.slice(index + 1)) if (nativeContourDistance(cut, other) < 3 - epsilon || inside(endpoint(cut[0], 'from'), other) || inside(endpoint(other[0], 'from'), cut)) throw new FabricationError('cut-clearance', `${part.name} cuts overlap or leave insufficient web`, { part: part.name })
-  }
-  for (const [index, hole] of part.holes.entries()) {
-    if (!inside(hole, outer) || nativePointContourDistance(hole, outer) < hole.d / 2 + holeWeb - epsilon
-      || cuts.some(cut => inside(hole, cut) || nativePointContourDistance(hole, cut) < hole.d / 2 + holeWeb - epsilon)
-      || part.holes.slice(index + 1).some(other => distance(hole, other) < (hole.d + other.d) / 2 + holeWeb - epsilon)) throw new FabricationError('hole-clearance', `${part.name} hole violates the material web`, { part: part.name, hole: hole.id })
-  }
-}
 
 /** Reference topology; unmeasured joint, window and mounting dimensions are proposed, not vendor drawings. */
 export const extensionParts = (config: ExtensionConfig = extensionDefaults): ExtensionPart[] => {
@@ -132,7 +93,7 @@ export const extensionParts = (config: ExtensionConfig = extensionDefaults): Ext
   const slope = (height - tipHeight) / length
   const windowTop = sideTop - 45, rootRail = 55, lowerRail = 30 * Math.hypot(1, slope)
   const windowTip = Math.min(length - 55, (windowTop - lowerRail) / slope)
-  const window = roundedTriangle([point(rootRail, slope * rootRail + lowerRail), point(windowTip, windowTop), point(rootRail, windowTop)], 6)
+  const window = roundedConvexPolygon([point(rootRail, slope * rootRail + lowerRail), point(windowTip, windowTop), point(rootRail, windowTop)], 6)
   const tipJoint = tipHeight * .45
   const ribSlot = (x: number) => rect(x - (thickness + clearance) / 2, sideTop - ribDepth / 2 - (ribEndTab + clearance) / 2, thickness + clearance, ribEndTab + clearance)
   const top = jointOutline([point(0, 0), point(length, 0), point(length, width), point(0, width)], [
@@ -171,7 +132,7 @@ export const extensionParts = (config: ExtensionConfig = extensionDefaults): Ext
     if (part.name !== 'crossRib') part.holes = grid(part, part.name === 'nearEnd' ? [pivot] : [])
     if (part.name !== 'crossRib' && part.name !== 'top' && !part.holes.some(hole => hole.kind === 'grid' && Math.abs(hole.y - (part.height - pitch / 2)) < epsilon))
       throw new FabricationError('missing-grid-row', `${part.name} has no safe hole in the fixed 25 mm row. Adjust dimensions; the grid will not shift.`, { part: part.name })
-    validatePart(part)
+    validateToolPart(part, { holeWeb, cutWeb: 3 })
   }
   return parts
 }

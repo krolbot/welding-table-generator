@@ -1,6 +1,6 @@
 # Sheet nesting
 
-The sheet planner packs complete sets of welding-table parts in the browser. It uses the same nominal contours as the assembly and DXF exporters. It does **not** change tab geometry, holes, weld joints, the old strip layout, or the original individual-part export.
+The sheet planner packs complete sets of welding-table parts and selected Tools in the browser. It uses the same nominal contours as the assembly and DXF exporters. Tool selection does **not** change table geometry, holes or weld joints. Table-only projects retain strip and individual-part exports; mixed jobs export only their verified complete sheet plan.
 
 ## Using it
 
@@ -11,6 +11,19 @@ The sheet planner packs complete sets of welding-table parts in the browser. It 
 5. **Download sheet DXFs (ZIP)** exports the best verified result available at that moment, even while the search continues. Missing parts, invalid geometry, stale settings, duplicates and clearance violations prevent export.
 
 The search automatically starts with 0°/90°/180°/270°, then explores every 15° orientation after up to 48 passes. If a part cannot fit the sheet at a quarter turn, it tries all orientations immediately. Current projects contain no rotation policy; unsupported obsolete fields are rejected rather than applied as a hidden alternate mode. No mirroring is performed. Limits: 256 part instances, 32 sheets, 24 orientations and 4,096 search passes. A numeric edit is debounced; changing theme or mm/in display does not restart the calculation.
+
+## Tools on table sheets
+
+1. Open **Tools**, choose and configure an existing product, and set **Tool copies in the cutting batch**. **Add to table cut job** saves those exact settings and opens the table's **Sheet nesting** view. Several tools, including separately configured copies of the same family, can be selected.
+2. **Tools in table cut job** lists saved selections. Change quantities or remove a selection there. Editing the separate Tools workspace does not silently change a saved selection; remove and add it again to replace its geometry. Tool quantities apply to the whole cutting job, not to every table copy.
+3. All current products use steel; every selected part must match the table's exact thickness. Compact extensions inherit that thickness and regenerate their locating joints when it changes; an unsafe combination rejects the change. Their other dimensions and quantities remain snapshots. Other tools retain independent thickness and explicit mismatch rejection. There is no extra stock group. The generator does not choose/verify a steel grade: use one appropriate grade for the physical sheet. The table's sheet dimensions and edge/part gaps override each tool's standalone sheet settings.
+4. The most recent verified table-only layout is reused while it matches the current fabrication parameters. If no such layout exists, the same nesting engine first evaluates 48 table-only orders. This **capacity** phase is not exportable. The full table + Tools inventory is then repacked, with the sheet count capped at that table-only layout's count. Table positions may change, but tools cannot cause another sheet to be added. The baseline is transient; reload or changed table geometry computes a fresh one.
+5. Export is all-or-nothing for the complete selected job. A partial tool may be visible during search, but no archive can be exported until all table parts and every copy of every selected tool are present. Incomplete search results identify the missing parts. Continue the search, reduce quantities, remove selections, or explicitly change the table's sheet settings. A failed heuristic search is **not** proof that a feasible layout cannot exist.
+6. Save/share/import and browser autosave preserve tool IDs, parameters and quantities in table project **schema 3**. Schema 2 files still import without changing their fixed grid, with no selected tools. Malformed selections and legacy tool grids are rejected rather than silently omitted or migrated. The retired catalog remains unsupported.
+
+The table's **2D Layout** and **3D Assembly** still show the table; **Sheet nesting** shows the combined cut in 2D and 3D. With selected tools, table-only ZIP/strip actions are replaced by **Open shared sheet cut** so an apparently successful export cannot silently omit the tools. The estimate includes the full selected cut-job inventory and table batch count; it is not a sheet-fit guarantee.
+
+Mixed exports retain native LINE/ARC/CIRCLE entities; table engraving does not leak onto a tool also named `top`. Manifest **schema 2** contains `selectedTools`, a per-part `sources` map, per-placement source/copy identity, stock, and the verified table-only layout and sheet-count limit under `capacity`. Export revalidates exact canonical geometry, unique instances, consistent sheet arrays, stock capacity and analytic clearance. It does not merely trust the worker's validity flag.
 
 ## Geometry and search
 
@@ -38,7 +51,7 @@ The ZIP contains:
 
 - `Sheet_N.dxf` — nominal cutting/engraving geometry for each sheet;
 - `layout.json` — versioned manifest with canonical part geometry, instance identity, zero-based sheet index, rigid translation, counterclockwise rotation, sheet settings, metrics and search statistics;
-- `project.json` — generator settings, including batch quantity;
+- `project.json` — generator settings, table batch quantity and exact selected tool projects;
 - `README.txt` — dimensions, clearances and CAM reminder.
 
 The coordinate origin is the lower-left corner of the sheet. Rotate about the source part origin, then translate. `layout.json` records the actual placements; replaying the same time budget on a slower computer can evaluate fewer orders. For deterministic comparisons use a fixed pass count.

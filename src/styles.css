@@ -51,6 +51,14 @@ p { font-size: 10px; line-height: 15px; color: var(--faint); margin: 8px 0 0; }
 :is(.settings-scroll, .table-settings) > section { padding: 0; margin: 24px 0 0; }
 :is(.settings-scroll, .table-settings) > .fixture-card { background: var(--soft); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 0; }
 .project-review { margin-bottom: 16px !important; }
+.table-tools ul { padding: 0; margin: 12px 0; list-style: none; }
+.table-tools li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.table-tool-heading { display: flex; align-items: flex-start; gap: 8px; }
+.table-tool-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.table-tool-heading button { flex: none; min-width: 36px; min-height: 36px; display: grid; place-items: center; }
+.table-tools .field, .tool-admission .field { margin-top: 12px; }
+.table-tools + .fixture-card { margin-top: 24px; }
+
 .fixture-card h3 { margin-bottom: 12px; }
 .preset { display: flex; gap: 8px; margin-bottom: 12px; }
 .preset button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: 1; padding: 8px 12px; border-radius: 8px; background: var(--control-bg); color: var(--control-text); font-size: 14px; line-height: 20px; font-weight: 500; }

@@ -12,16 +12,28 @@ const source=process.argv[2]
 if (!source) { await server.close(); throw new Error('Usage: npm run audit:nesting -- path/to/SheetArchive.zip') }
 try {
  const {parseTableProject}=await server.ssrLoadModule('/src/tableProject.ts')
- const {engravingLines}=await server.ssrLoadModule('/src/geometry.ts')
- const {nestingParts}=await server.ssrLoadModule('/src/nestingSettings.ts')
+ const {tableCutInventory,tableCutEngravings,validateTableCut}=await server.ssrLoadModule('/src/tableCutJob.ts')
  const {nativeContourBounds,nativeContourDistance}=await server.ssrLoadModule('/src/contourGeometry.ts')
  const zip=await JSZip.loadAsync(fs.readFileSync(source))
  const manifest=JSON.parse(await zip.file('layout.json').async('string'))
  const decoded=parseTableProject(await zip.file('project.json').async('string'))
  assert.equal(decoded.kind,'current','audit requires a current grid revision; legacy files must not be silently regenerated')
  const config=decoded.config
- assert.deepEqual(manifest.parts,nestingParts(config),'manifest must match the actual canonical project')
- assert.equal(manifest.schemaVersion,1)
+ const inventory=tableCutInventory(config)
+ assert.deepEqual(manifest.parts,inventory.parts,'manifest must match the actual canonical project')
+ assert.ok([1,2].includes(manifest.schemaVersion))
+ if(manifest.schemaVersion===2){
+  assert.deepEqual(manifest.sources,inventory.sources)
+  assert.deepEqual(manifest.selectedTools,config.nestingTools)
+  assert.deepEqual(manifest.stock,inventory.stock)
+  const placements=manifest.placements.map(p=>({...p,part:inventory.parts.find(part=>part.name===p.part)}))
+  const indices=[...new Set(placements.map(p=>p.sheet))].sort((a,b)=>a-b)
+  const result={placements,sheets:indices.map(index=>({index,placements:placements.filter(p=>p.sheet===index)})),unplaced:[],validation:{valid:true}}
+  const stock=manifest.capacity.policy==='table-offcuts'?{kind:'table-offcuts',baseline:manifest.capacity.tableLayout}:{kind:'new-sheets'}
+  assert.ok(validateTableCut(config,result,stock),'complete inventory and capacity must be independently verified')
+  if(stock.kind==='table-offcuts')assert.equal(manifest.capacity.sheetLimit,stock.baseline.sheets.length)
+  for(const p of manifest.placements){assert.deepEqual(p.source,inventory.sources[p.part]);assert.equal(p.copy,Math.floor(p.instance/p.source.perCopy))}
+ }
  assert.equal(manifest.placements.length,manifest.parts.reduce((sum,p)=>sum+p.count,0))
  assert.ok(manifest.placements.length>0)
  const parts=new Map(manifest.parts.map(p=>[p.name,p]))
@@ -70,7 +82,7 @@ try {
     if(ci===0){points.push(points[0]);polygons.push(points);nativeContours.push(native)}
    }
    for(const h of part.holes){const e=read('CIRCLE','HOLES'),p=transform(h);near(e.center.x,p.x);near(e.center.y,p.y);near(e.radius,h.d/2)}
-   for(const s of engravingLines(part,config)){const e=read('LINE','ENGRAVE'),a=transform(s.from),b=transform(s.to);near(e.vertices[0].x,a.x);near(e.vertices[0].y,a.y);near(e.vertices[1].x,b.x);near(e.vertices[1].y,b.y)}
+   for(const s of tableCutEngravings(part,config)){const e=read('LINE','ENGRAVE'),a=transform(s.from),b=transform(s.to);near(e.vertices[0].x,a.x);near(e.vertices[0].y,a.y);near(e.vertices[1].x,b.x);near(e.vertices[1].y,b.y)}
   }
   assert.equal(cursor,parsed.entities.length)
   let intersections=0,minGap=Infinity,minEdge=Infinity

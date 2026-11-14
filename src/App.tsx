@@ -26,6 +26,11 @@ import { NumberInput } from './NumberInput'
 import { AssemblyControls, Checkbox, GeneratorShell, NumberField, ProductionEstimate, ProjectActions, SliderField, VisualizationSettings, type ViewMode } from './GeneratorWorkspace'
 import { PartsLayout } from './PartsLayout'
 import { copyText, downloadFile } from './projectIO'
+import { tableCutInventory, type TableLayoutSnapshot } from './tableCutJob'
+import { compareNesting } from './nesting'
+import { fabricationEstimate } from './fabricationLayout'
+import { TableTools } from './tools/TableTools'
+import { toolSelectionsAtTableThickness, type ToolProject } from './tools/project'
 import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey } from './tableProject'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
@@ -88,11 +93,19 @@ export default function App() {
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
   const [view, setView] = useState<ViewMode>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
   const [notice, setNotice] = useState('')
+  const [tableLayout, setTableLayout] = useState<TableLayoutSnapshot>()
   const [reset3d, setReset3d] = useState(0)
   const [focusMount3d, setFocusMount3d] = useState(0)
   const [reset2dToken, setReset2dToken] = useState(0)
 
-  const summary = useMemo(() => totals(config), [config])
+  const cutJob = useMemo(() => {
+    if (!config.nestingTools.length) return null
+    try { return { inventory: tableCutInventory(config) } }
+    catch (error) { return { error: error instanceof Error ? error.message : 'Invalid cutting job' } }
+  }, [config])
+  const summary = useMemo(() => cutJob?.inventory
+    ? { ...fabricationEstimate(cutJob.inventory.parts, { length: config.sheetLength, width: config.sheetWidth }), engraving: totals(config).engraving * config.nestingCopies }
+    : totals(config), [config, cutJob])
   const layout = useMemo(() => layoutParts(config), [config])
   const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
   const ribAccess = useMemo(() => ribAccessHoleSpec(config), [config])
@@ -129,17 +142,20 @@ export default function App() {
     if (preset === 'Custom') setNotice('Enter any hole diameter, pitch and margin in the fields below.')
   }
   const setNumeric = (key: NumericKey, value: number) => {
-    if (!Number.isFinite(value)) return
-    setConfig(current => {
-      const next = { ...current, [key]: clampNumeric(key, value) }
-      if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key)) next.tabWidth = Math.min(next.tabWidth, maxTabWidth(next))
-      if (key === 'legBoltDiameter' || key === 'legPatternX' || key === 'legPatternY') {
-        next.legPatternX = Math.max(next.legPatternX, next.legBoltDiameter * 1.5)
-        next.legPatternY = Math.max(next.legPatternY, next.legBoltDiameter * 1.5)
-      }
-      if (key === 'holeDiameter' || key === 'pitch' || key === 'margin') next.preset = 'Custom'
-      return next
-    })
+    if (!Number.isFinite(value)) return false
+    const next = { ...config, [key]: clampNumeric(key, value) }
+    if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key)) next.tabWidth = Math.min(next.tabWidth, maxTabWidth(next))
+    if (key === 'thickness') {
+      try { next.nestingTools = toolSelectionsAtTableThickness(next.nestingTools, next.thickness) }
+      catch (error) { setNotice(`Table thickness was not changed: ${error instanceof Error ? error.message : 'Invalid selected tool geometry'}`); return false }
+    }
+    if (key === 'legBoltDiameter' || key === 'legPatternX' || key === 'legPatternY') {
+      next.legPatternX = Math.max(next.legPatternX, next.legBoltDiameter * 1.5)
+      next.legPatternY = Math.max(next.legPatternY, next.legBoltDiameter * 1.5)
+    }
+    if (key === 'holeDiameter' || key === 'pitch' || key === 'margin') next.preset = 'Custom'
+    setConfig(next)
+    return true
   }
   const numberLabel = (millimetres: number, precision = 2) => String(Number((millimetres / (config.units === 'mm' ? 1 : mmPerInch)).toFixed(config.units === 'mm' ? 4 : precision)))
   const numericInput = (key: NumericKey, label: string, min: number, max: number, step: number, precision = 0) => {
@@ -211,11 +227,30 @@ export default function App() {
     }
   }
 
-  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
+  const withSelectedTool = (project: ToolProject) => {
+    if (review) throw new Error('Resolve the table project review before adding tools.')
+    const next = { ...config, nestingTools: toolSelectionsAtTableThickness([...config.nestingTools, { id: crypto.randomUUID(), project }], config.thickness) }
+    tableCutInventory(next)
+    return next
+  }
+  const toolAdmissionError = (project: ToolProject) => {
+    try { withSelectedTool(project); return undefined }
+    catch (error) { return error instanceof Error ? error.message : 'Tool cannot be added to this table cut job' }
+  }
+  const addToTable = (project: ToolProject) => {
+    try {
+      setConfig(withSelectedTool(project)); setView('sheet'); selectWorkspace('table')
+      setNotice('Tool selected. Export remains blocked until the complete shared layout fits.')
+    } catch (error) { reportError(error) }
+  }
+  const rememberTableLayout = (snapshot: TableLayoutSnapshot) => setTableLayout(current => current?.key === snapshot.key && compareNesting(current.result, snapshot.result) <= 0 ? current : snapshot)
+
+  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
   return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
     settings={<>
           {review && <section role="alert" className="project-review"><h3>Project review required</h3><p className="socket-error">{reviewMessage(review)}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'welding-table-original.txt', 'text/plain')}>Download original data</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Apply {migrationPreset} origin ({presetValues[migrationPreset].margin} mm)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? `Keep saved origin (${review.config.margin} mm)` : 'Start a new table project'}</button></section>}
           <fieldset className="table-settings" disabled={Boolean(review)}>
+          <TableTools config={config} onChange={nestingTools => patch('nestingTools', nestingTools)} onChoose={() => selectWorkspace('tools')} onNotice={setNotice} />
           <section className="fixture-card">
             <h3>Fixture System</h3>
             <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={12} />}{preset}</button>)}</div>
@@ -294,12 +329,12 @@ export default function App() {
           <p>Grid geometry does not certify cross-brand fit. Confirm the fastener’s grip range for {numberLabel(config.thickness, 3)} {unitLabel} stock, hole finish/tolerance and actual accessory dimensions before cutting.</p>
           </fieldset>
     </>}
-    production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? reviewMessage(review) : geometryError?.message} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
-    actions={<ProjectActions onOpen={file => void open(file)} onSave={save} onShare={() => void share()} disabled={Boolean(review || geometryError)} onZip={() => void downloadZip(config).catch(reportError)} onDxf={() => { try { downloadFull(config) } catch (error) { reportError(error) } }} />}
+    production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? reviewMessage(review) : geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
+    actions={<ProjectActions onOpen={file => void open(file)} onSave={save} onShare={() => void share()} disabled={Boolean(review || geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => setView('sheet') } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
     seo={<article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose D16/50, D28/100 or a custom hole diameter, pitch and grid origin. Square and diagonal grids share fixed edge and working-surface datums across the top and skirts. Grid geometry alone does not certify accessory fit.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>}>
     {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly review the corrected grid in the sidebar.</div>
       : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
-      : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
+      : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} baseline={tableLayout} onBaseline={rememberTableLayout} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
       : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><AssemblyControls value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onReset={() => setReset3d(value => value + 1)} onFocus={cornerPlate ? () => setFocusMount3d(value => value + 1) : undefined} /></>}
   </GeneratorShell>
 }

@@ -5,12 +5,12 @@ import DxfParser from 'dxf-parser'
 import JSZip from 'jszip'
 import * as THREE from 'three'
 
-let server, bracket, projects, geometry, native, nesting, dxf, viewer
+let server, bracket, projects, geometry, native, nesting, dxf, viewer, toolExport
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
-  ;[bracket, projects, geometry, native, nesting, dxf, viewer] = await Promise.all([
+  ;[bracket, projects, geometry, native, nesting, dxf, viewer, toolExport] = await Promise.all([
     '/src/tools/cornerBracket.ts', '/src/tools/project.ts', '/src/geometry.ts', '/src/contourGeometry.ts',
-    '/src/nesting.ts', '/src/dxf.ts', '/src/tools/ToolAssembly3d.tsx',
+    '/src/nesting.ts', '/src/dxf.ts', '/src/tools/ToolAssembly3d.tsx', '/src/tools/export.ts',
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
@@ -166,7 +166,7 @@ test('corner native DXFs, real batch ZIP and assembly manifest agree and stale/t
   assert.equal(result.placements.length, 6)
   assert.equal(result.unplaced.length, 0)
   assert.equal(projects.validProjectLayout(project, result, key), true)
-  const archive = await JSZip.loadAsync(await projects.toolArchive(project, result, key).generateAsync({ type: 'nodebuffer' }))
+  const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key).generateAsync({ type: 'nodebuffer' }))
   for (const name of ['cornerBase', 'cornerHoleWall', 'cornerSlotWall']) assert.ok(archive.file(`parts/${name}_2pcs.dxf`))
   const manifest = JSON.parse(await archive.file('assembly.json').async('string'))
   assert.deepEqual(manifest.placements, projects.projectAssembly(project))
@@ -189,7 +189,7 @@ test('corner native DXFs, real batch ZIP and assembly manifest agree and stale/t
   const changed = tampered.placements.find(placement => placement.part.holes.length > 0)
   assert.ok(changed)
   changed.part.holes.pop()
-  assert.throws(() => projects.toolArchive(project, tampered, key), /stale or invalid/)
-  assert.throws(() => projects.toolArchive(project, { ...result, placements: result.placements.slice(1) }, key), /stale or invalid/)
+  assert.throws(() => toolExport.toolArchive(project, tampered, key), /stale or invalid/)
+  assert.throws(() => toolExport.toolArchive(project, { ...result, placements: result.placements.slice(1) }, key), /stale or invalid/)
   assert.match(await archive.file('README.txt').async('string'), /design assumptions/)
 })

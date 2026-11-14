@@ -1,3 +1,5 @@
+import type { ToolSelection } from './tools/project'
+
 export type Units = 'mm' | 'inch'
 export type Preset = 'D16' | 'D28' | 'Custom'
 export type Grid = 'square' | 'staggered'
@@ -52,6 +54,7 @@ export type Config = {
   sheetEdgeGap: number
   sheetPartGap: number
   nestingCopies: number
+  nestingTools: ToolSelection[]
   exploded: number
   showDimensions: boolean
   renderHoles: boolean
@@ -103,6 +106,7 @@ export const defaults: Config = {
   sheetEdgeGap: 10,
   sheetPartGap: 5,
   nestingCopies: 1,
+  nestingTools: [],
   exploded: 0,
   showDimensions: true,
   renderHoles: true,
@@ -144,7 +148,7 @@ export const projectParts: Record<PartName, string> = {
 export const readPart = (value: unknown): PartName | undefined =>
   (Object.keys(projectParts) as PartName[]).find(part => part === value || projectParts[part] === value)
 
-export const tableProjectVersion = 2
+export const tableProjectVersion = 3
 
 export function projectConfig(config: Config): Record<string, unknown> {
   const project: Record<string, unknown> = { schemaVersion: tableProjectVersion }

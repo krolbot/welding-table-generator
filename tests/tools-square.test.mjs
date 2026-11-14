@@ -5,12 +5,12 @@ import DxfParser from 'dxf-parser'
 import * as THREE from 'three'
 import JSZip from 'jszip'
 
-let server, square, projects, geometry, native, nesting, dxf, viewer
+let server, square, projects, geometry, native, nesting, dxf, viewer, toolExport
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
-  ;[square, projects, geometry, native, nesting, dxf, viewer] = await Promise.all([
+  ;[square, projects, geometry, native, nesting, dxf, viewer, toolExport] = await Promise.all([
     '/src/tools/square.ts', '/src/tools/project.ts', '/src/geometry.ts', '/src/contourGeometry.ts',
-    '/src/nesting.ts', '/src/dxf.ts', '/src/tools/ToolAssembly3d.tsx',
+    '/src/nesting.ts', '/src/dxf.ts', '/src/tools/ToolAssembly3d.tsx', '/src/tools/export.ts',
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
@@ -87,7 +87,7 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   assert.equal(result.placements.length, 3)
   assert.equal(result.unplaced.length, 0)
   assert.equal(projects.validProjectLayout(project, result, key), true)
-  const archive = await JSZip.loadAsync(await projects.toolArchive(project, result, key).generateAsync({ type: 'nodebuffer' }))
+  const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key).generateAsync({ type: 'nodebuffer' }))
   assert.ok(archive.file('parts/square_3pcs.dxf'))
   assert.deepEqual(JSON.parse(await archive.file('project.json').async('string')), project)
   const assembly = JSON.parse(await archive.file('assembly.json').async('string'))
@@ -110,7 +110,7 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   assert.equal(projects.validProjectLayout(projects.defaultToolProject, result, key), false)
   const tampered = structuredClone(result)
   tampered.placements[0].part.holes.pop()
-  assert.throws(() => projects.toolArchive(project, tampered, key), /stale or invalid/)
-  const strip = new DxfParser().parseSync(projects.toolStripDxf(project))
+  assert.throws(() => toolExport.toolArchive(project, tampered, key), /stale or invalid/)
+  const strip = new DxfParser().parseSync(toolExport.toolStripDxf(project))
   assert.equal(strip.entities.filter(entity => entity.type === 'CIRCLE').length, 3)
 })

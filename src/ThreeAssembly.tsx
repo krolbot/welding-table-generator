@@ -2,7 +2,7 @@ import { useCallback } from 'react'
 import * as THREE from 'three'
 import { AssemblyViewport, type AssemblyPartInfo, type AssemblyPartMesh, type AssemblyRuntime } from './AssemblyViewport'
 import { addDimensionLine, dimensionLabel, disposeObject3D, extrudedPartMesh } from './assemblyGeometry'
-import { display, type Config } from './model'
+import { display, readPart, type Config } from './model'
 import { framePositions, legCornerPlateSpec, makeParts, partWeight, skirtAssemblyY, type FabricationPart } from './geometry'
 import type { NestingResult } from './nesting'
 
@@ -27,8 +27,9 @@ const plate = (
   rotation: THREE.Euler,
   explodeDir: THREE.Vector3,
 ) => {
-  const width = part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * config.thickness : 0)
-  const height = part.height - (part.name === 'top' || (part.name.endsWith('Skirt') && config.legMounts && config.legMountStyle === 'cornerPlate') || part.name === 'legCornerPlate' || part.name === 'legJumper' || part.name === 'legMountPlate' ? 0 : config.thickness)
+  const tableName = readPart(part.name)
+  const width = part.width - (tableName === 'shortSkirt' || tableName?.endsWith('Rib') ? 2 * config.thickness : 0)
+  const height = part.height - (!tableName || part.name === 'top' || (part.name.endsWith('Skirt') && config.legMounts && config.legMountStyle === 'cornerPlate') || part.name === 'legCornerPlate' || part.name === 'legJumper' || part.name === 'legMountPlate' ? 0 : config.thickness)
   const metricWeight = Number(partWeight(part).toFixed(1))
   const unit = config.units === 'mm' ? 'mm' : 'in'
   const mesh: PartMesh = Object.assign(
@@ -159,7 +160,7 @@ export const rebuildAssembly = (runtime: AssemblyRuntime, config: Config) => {
   rebuildDimensions(runtime, config)
 }
 
-const rebuildSheets = (runtime: AssemblyRuntime, config: Config, nesting: NestingResult) => {
+export const rebuildSheets = (runtime: AssemblyRuntime, config: Config, nesting: NestingResult) => {
   disposeObject3D(runtime.assembly)
   runtime.assembly.clear()
   disposeObject3D(runtime.dimensions)

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { createServer } from 'vite'
 
-let server, codec, model, tools
+let server, codec, model, tools, toolExport
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
-  ;[codec, model, tools] = await Promise.all(['/src/tableProject.ts', '/src/model.ts', '/src/tools/project.ts'].map(path => server.ssrLoadModule(path)))
+  ;[codec, model, tools, toolExport] = await Promise.all(['/src/tableProject.ts', '/src/model.ts', '/src/tools/project.ts', '/src/tools/export.ts'].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
 const saved = (change = {}) => model.projectConfig({ ...model.defaults, ...change })
@@ -17,7 +17,7 @@ test('canonical table JSON and URL preserve exact fabrication data and omit reti
     removedHoles: ['top:-5.000:20.000', { id: 'old', part: 'shortSkirt', x: 25, y: 31, r: 8 }],
   }
   const project = model.projectConfig(config)
-  assert.equal(project.schemaVersion, 2)
+  assert.equal(project.schemaVersion, 3)
   for (const key of ['skirtHoleLayout', 'units', 'preset', 'exploded', 'showDimensions']) assert.equal(key in project, false)
   const result = load(project)
   assert.equal(result.kind, 'current')
@@ -31,6 +31,7 @@ test('legacy projects enter explicit review with origins and manual data preserv
   for (const layout of ['canonical', 'compact']) for (const margin of [25, 37, 50, 100]) {
     const original = saved({ margin, customHoles: [{ id: 'manual', part: 'top', x: 1.25, y: 3.75, d: 12 }], removedHoles: ['top:0.000:0.000'] })
     delete original.schemaVersion
+    delete original.nestingTools
     original.skirtHoleLayout = layout
     const result = load(original)
     assert.equal(result.kind, 'migration')
@@ -71,8 +72,8 @@ test('extension revision 2 requires explicit review; revision 3 preserves dimens
   const old = { ...tools.defaultToolProject, version: 2, size: { length: 460, width: 230, height: 175, thickness: 8 }, copies: 2 }
   const text = JSON.stringify(old)
   assert.throws(() => tools.parseToolProject(text), error => error.code === 'grid-migration')
-  assert.throws(() => tools.toolPartsArchive(old), error => error.code === 'grid-migration')
-  assert.throws(() => tools.toolStripDxf(old), error => error.code === 'grid-migration')
+  assert.throws(() => toolExport.toolPartsArchive(old), error => error.code === 'grid-migration')
+  assert.throws(() => toolExport.toolStripDxf(old), error => error.code === 'grid-migration')
   const reviewed = tools.readToolProject(text)
   assert.equal(reviewed.kind, 'migration')
   assert.deepEqual(reviewed.project, { ...old, version: 3 })
