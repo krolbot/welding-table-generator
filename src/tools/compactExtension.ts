@@ -12,7 +12,7 @@ export type CompactExtensionConfig = {
 export const compactExtensionDefaults: CompactExtensionConfig = {
   length: 500, width: 100, height: 100, thickness: 6,
   holeDiameter: 16, holePitch: 50, holeInset: 25,
-  tipHeight: 40, taperRun: 120, windowInset: 8, windowRadius: 3,
+  tipHeight: 50, taperRun: 120, windowInset: 16, windowRadius: 3,
   tabWidth: 20, clearance: 0.2,
 }
 export const compactExtensionLimits: Record<keyof CompactExtensionConfig, { min: number; max: number; step: number }> = {
@@ -20,7 +20,7 @@ export const compactExtensionLimits: Record<keyof CompactExtensionConfig, { min:
   height: { min: 80, max: 200, step: 10 }, thickness: { min: 4, max: 9, step: 1 },
   holeDiameter: { min: 10, max: 28, step: 1 }, holePitch: { min: 40, max: 100, step: 5 }, holeInset: { min: 20, max: 50, step: 1 },
   tipHeight: { min: 30, max: 100, step: 5 }, taperRun: { min: 50, max: 250, step: 10 },
-  windowInset: { min: 6, max: 15, step: 1 }, windowRadius: { min: 1, max: 8, step: 1 },
+  windowInset: { min: 6, max: 16, step: 1 }, windowRadius: { min: 1, max: 8, step: 1 },
   tabWidth: { min: 12, max: 30, step: 1 }, clearance: { min: 0, max: 1, step: 0.1 },
 }
 export type CompactExtensionPartName = 'compactTop' | 'compactSpine' | 'compactMount'

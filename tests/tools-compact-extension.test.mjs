@@ -45,17 +45,47 @@ test('compact reference has exactly three plates, one central spine, five window
   assert.ok(parts[1].contours.slice(1).every(c => c.some(s => s.type === 'arc')))
   const bottom = parts[1].contours[0][0]
   assert.deepEqual(bottom.to, { x: 380, y: 0 }, 'constant-depth root, not a full-length wedge')
-  assert.deepEqual(parts[1].contours[0][1].to, { x: 500, y: 60 }, 'only the free end tapers')
+  assert.deepEqual(parts[1].contours[0][1].to, { x: 500, y: 50 }, 'deeper free end retains room for the wider webs')
   assert.deepEqual([...new Set(parts[0].holes.map(h => h.y))], [25, 75])
   assert.deepEqual(parts[2].holes.map(h => [h.x, h.y]), [[25, 75], [75, 75], [25, 25], [75, 25]])
   assert.equal(compact.compactExtensionAssembly(c)[1].origin[1], 50)
   assert.equal(project.projectAssembly(project.defaultToolProject).length, 7, 'existing wedge is a separate retained product')
 })
 
-test('54 supported compact sizes retain noncrossing native contours and fixed datums across stock thickness', () => {
-  let checked = 0
-  for (const length of [350, 500, 800]) for (const width of [100, 200]) for (const height of [100, 150, 200]) for (const thickness of [4, 6, 8]) {
-    const c = { ...compact.compactExtensionDefaults, length, width, height, thickness }
+test('16/32 mm compact webs fit the deeper end without changing assembly joints or saved dimensions', () => {
+  assert.equal(compact.compactExtensionDefaults.windowInset, 16)
+  assert.equal(compact.compactExtensionDefaults.tipHeight, 50)
+  for (const thickness of [4, 6, 8]) {
+    const size = { ...compact.compactExtensionDefaults, thickness }
+    const previousSize = { ...size, windowInset: 8, tipHeight: 40 }
+    const parts = compact.compactExtensionParts(size), previous = compact.compactExtensionParts(previousSize)
+    assert.deepEqual([parts[0], parts[2]], [previous[0], previous[2]])
+    assert.deepEqual(parts[1].contours[0][0], previous[1].contours[0][0])
+    assert.deepEqual(parts[1].contours[0].slice(3), previous[1].contours[0].slice(3), 'top and mounting joints unchanged')
+    assert.deepEqual(parts[1].contours[0][1].to, { x: 500, y: 50 })
+    assert.deepEqual(parts[1].contours[0][2].from, { x: 500, y: 50 })
+    assert.deepEqual(compact.compactExtensionAssembly(size), compact.compactExtensionAssembly(previousSize))
+    const windows = parts[1].contours.slice(1)
+    assert.equal(windows.length, 5)
+    near(Math.min(...windows.map(cut => contours.nativeContourDistance(cut, parts[1].contours[0]))), 16)
+    near(Math.min(...windows.flatMap((cut, i) => windows.slice(i + 1).map(other => contours.nativeContourDistance(cut, other)))), 32)
+    windows.forEach((cut, i) => assert.ok(Math.abs(geometry.signedContourArea(cut)) < Math.abs(geometry.signedContourArea(previous[1].contours[i + 1]))))
+    for (const savedSize of [size, previousSize, { ...previousSize, windowInset: 12 }]) {
+      const saved = { ...project.defaultCompactExtensionProject, size: savedSize }
+      assert.deepEqual(project.parseToolProject(project.projectJson(saved)), saved)
+    }
+  }
+})
+
+test('compact size matrix preserves saved profiles and rejects combinations where window fillets cannot fit', () => {
+  let checked = 0, rejected = 0
+  for (const profile of [{ windowInset: 8, tipHeight: 40 }, { windowInset: 12, tipHeight: 40 }, { windowInset: 16, tipHeight: 50 }]) for (const length of [350, 500, 800]) for (const width of [100, 200]) for (const height of [100, 150, 200]) for (const thickness of [4, 6, 8]) {
+    const c = { ...compact.compactExtensionDefaults, ...profile, length, width, height, thickness }
+    if (length === 350 && (profile.windowInset === 12 || profile.windowInset === 16 && height === 200)) {
+      assert.throws(() => compact.compactExtensionParts(c), error => error?.code === 'cut-clearance')
+      rejected++
+      continue
+    }
     const parts = compact.compactExtensionParts(c)
     for (const part of parts) {
       for (const contour of part.contours) {
@@ -75,10 +105,14 @@ test('54 supported compact sizes retain noncrossing native contours and fixed da
         }
       }
     }
+    const windows = parts[1].contours.slice(1)
+    for (const cut of windows) assert.ok(contours.nativeContourDistance(parts[1].contours[0], cut) >= c.windowInset - 1e-5)
+    windows.forEach((cut, i) => windows.slice(i + 1).forEach(other => assert.ok(contours.nativeContourDistance(cut, other) >= c.windowInset * 2 - 1e-5)))
     assert.equal(Math.max(...parts[2].holes.map(h => h.y)), height - 25)
     checked++
   }
-  assert.equal(checked, 54)
+  assert.equal(checked, 54 + 36 + 48)
+  assert.equal(rejected, 18 + 6)
 })
 
 test('compact joints share world-space centres, flush faces and actual clearance without plate clashes', () => {
@@ -165,7 +199,7 @@ test('compact codec and native archives preserve exact settings, every instance,
 })
 
 test('invalid compact dimensions and crossed hole corridors fail explicitly instead of omitting geometry', () => {
-  for (const changes of [{ thickness: 10 }, { thickness: 9 }, { width: 150 }, { height: NaN }, { tipHeight: 100 }, { taperRun: 250 }, { holeDiameter: 28 }]) {
+  for (const changes of [{ thickness: 10 }, { thickness: 9 }, { width: 150 }, { height: NaN }, { tipHeight: 100 }, { tipHeight: 40 }, { tipHeight: 45, thickness: 8 }, { windowInset: 17 }, { taperRun: 250 }, { holeDiameter: 28 }]) {
     assert.throws(() => compact.compactExtensionParts({ ...compact.compactExtensionDefaults, ...changes }), error => error instanceof geometry.FabricationError)
   }
   for (const changes of [{ version: 2 }, { size: { ...compact.compactExtensionDefaults, unknown: 1 } }]) {

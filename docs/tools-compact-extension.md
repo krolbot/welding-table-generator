@@ -9,11 +9,11 @@ The five supplied views show one perforated working top, a central longitudinal 
 The defaults reproduce the labelled envelope, twenty holes in the working top and four in the mounting end. In the application, thickness is inherited from **Table generator → Metal Thickness**, not from the photo's 6 mm label. The Tools thickness field is read-only for this product; importing a tool uses the current table stock, while shared links preserve the host table configuration too. One copy is one extension; use two copies for the advertised pair.
 
 - Hole diameter: 16 mm. Proposed pitch and edge origin: 50 and 25 mm.
-- Proposed free-end depth: 40 mm; taper length: 120 mm.
-- Proposed window border inset: 8 mm; rounded corners: 3 mm radius. The five cells form an alternating diagonal truss. Exact window proportions are inferred, not factory measurements. Insetting both neighboring cells retains twice the inset across their shared diagonal.
+- Free-end depth defaults to 50 mm; taper length remains 120 mm. The deeper end accommodates the wider window borders and 3 mm radii at 4–8 mm stock, while retaining the 500 × 100 × 100 mm bounding envelope and locating joints.
+- Window border inset defaults to 16 mm, retaining 32 mm across adjacent diagonal webs; rounded corners remain 3 mm radius. The five cells form an alternating diagonal truss. Exact window proportions are inferred, not factory measurements; these dimensions are not a structural load rating. Saved projects retain their explicit geometry: first set **Free-end depth** to 50 mm, then **Window border inset** to 16 mm to apply this configuration to an existing tool. Replace any older snapshot selected in the table cut job afterward.
 - Proposed locating tabs: 20 mm wide, with 0.2 mm total mating clearance.
 
-All these parameters are editable. Invalid combinations are rejected with structured fabrication errors. In particular, a width or grid placing holes through the central spine is not repaired by silently removing holes or shifting their datum.
+All these parameters are editable. Invalid combinations are rejected with structured fabrication errors. The 16/32 mm webs require a deeper end than the former 40 mm default. With the new 50 mm end and R3 windows, the tested 350 mm long × 200 mm high variants still cannot accommodate the fillets. They are rejected, never repaired by shrinking a web, reducing the radius or dropping a window. Existing saved 8 mm and 12 mm inset configurations retain their former dimensions and validation. Likewise, a width or grid placing holes through the central spine is not repaired by silently removing holes or shifting their datum.
 
 ## Assembly interfaces
 
