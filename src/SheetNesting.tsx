@@ -8,13 +8,15 @@ import type { NestingJob, NestingRun } from './nestingJob'
 import { tableNestingJob, tableLayoutKey, tableCutEngravings, validateTableCut, type TableLayoutSnapshot } from './tableCutJob'
 import { NumberField } from './GeneratorWorkspace'
 import { Icon } from './Icon'
+import { DrawingViewport } from './DrawingViewport'
+import { drawingFeatures } from './drawingInteraction'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 export type SheetSettings = { length: number; width: number; edgeGap: number; partGap: number; copies: number }
 type Props = {
   jobKey: string; job: NestingJob; sheetSettings: SheetSettings; units: Config['units']
   onChange: (patch: Partial<SheetSettings>) => void | boolean; onNotice: (message: string) => void
-  render3D: (result: NestingResult, reset: number) => ReactNode
+  render3D: (result: NestingResult) => ReactNode
   onExport: (run: Extract<NestingRun, { phase: 'nesting' }>) => Promise<void>
   onRun?: (run: NestingRun) => void
   getEngravings?: (part: FabricationPart) => EngravingLine[]
@@ -30,7 +32,6 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const [budget, setBudget] = useState(30)
   const [sheetIndex, setSheetIndex] = useState(0)
   const [mode, setMode] = useState<'3d' | '2d'>('3d')
-  const [reset, setReset] = useState(0)
   const [retry, setRetry] = useState(0)
   const control = useRef<{ worker: Worker; running: boolean; busy: boolean; limit: number; elapsed: number; exhausted: boolean } | null>(null)
   const sourceRef = useRef(job)
@@ -90,6 +91,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const selected = Math.max(0, Math.min(sheetIndex, (result?.sheets.length ?? 1) - 1))
   const sheet = result?.sheets[selected]
   const metric = result?.metrics.sheets[selected]
+  const features = useMemo(() => drawingFeatures(sheet?.placements.map(item => ({ part: item.part, position: item.translation, rotation: item.rotation })) ?? []), [sheet])
   const focused = useMemo(() => result && sheet ? { ...result, sheets: [sheet], placements: sheet.placements } : undefined, [result, sheet])
   const units = unitSystem === 'mm' ? 'mm' : 'in'
   const complete = run?.phase === 'nesting' && result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(run, key))
@@ -100,9 +102,9 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
 
   return <div className="sheet-workspace">
     <div className="sheet-canvas">
-      {focused ? mode === '3d' ? render3D(focused, reset)
-        : <svg className="nested-plan" viewBox={`-30 -30 ${settings.length + 60} ${settings.width + 60}`} role="img" aria-label={`Sheet ${selected + 1} cutting layout`}>
-          <g transform={`translate(0 ${settings.width}) scale(1 -1)`}>
+      {focused ? mode === '3d' ? render3D(focused)
+        : <DrawingViewport bounds={{ width: settings.length, height: settings.width }} features={features} geometryKey={`${selected}:${JSON.stringify(features)}`} units={unitSystem} label={`Sheet ${selected + 1} cutting layout`}>
+          <g>
             <rect className="stock-outline" x={0} y={0} width={settings.length} height={settings.width} />
             <rect className="stock-margin" x={settings.edgeGap} y={settings.edgeGap} width={Math.max(0, settings.length - 2 * settings.edgeGap)} height={Math.max(0, settings.width - 2 * settings.edgeGap)} />
             {metric && metric.remnant.width > 0 && metric.remnant.height > 0 && <rect className="stock-remnant" {...metric.remnant} />}
@@ -113,12 +115,11 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
               {getEngravings?.(p.part).map((line, i) => <line key={i} className="nested-engraving" x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y} />)}
             </g>)}
           </g>
-        </svg>
+        </DrawingViewport>
         : <div className="three-loading" role="status">{status === 'error' ? 'Calculation failed' : result ? 'No parts placed' : 'Preparing a first layout…'}</div>}
       <div className="sheet-view-tools">
         <button aria-pressed={mode === '3d'} onClick={() => setMode('3d')}>3D</button>
         <button aria-pressed={mode === '2d'} onClick={() => setMode('2d')}>2D cut plan</button>
-        {mode === '3d' && <button onClick={() => setReset(value => value + 1)} aria-label="Reset sheet camera"><Icon name="maximize" size={14} /></button>}
       </div>
     </div>
     <section className="sheet-panel" aria-labelledby="nesting-title">
@@ -171,5 +172,5 @@ export function TableSheetNesting({ config, dark, onChange, onNotice, baseline, 
       if (table.validation.valid && !table.unplaced.length) onBaseline({ key: tableLayoutKey(config), result: table })
     }}
     getEngravings={part => tableCutEngravings(part, config)}
-    render3D={(result, reset) => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ThreeAssembly config={config} dark={dark} resetToken={reset} mountFocusToken={0} nesting={result} /></Suspense>} />
+    render3D={result => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ThreeAssembly config={config} dark={dark} resetToken={0} nesting={result} /></Suspense>} />
 }

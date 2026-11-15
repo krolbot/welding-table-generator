@@ -23,9 +23,10 @@ import { downloadFull, downloadZip } from './dxf'
 import { TableSheetNesting } from './SheetNesting'
 import { Icon } from './Icon'
 import { NumberInput } from './NumberInput'
-import { AssemblyControls, Checkbox, GeneratorShell, NumberField, ProductionEstimate, ProjectActions, SliderField, VisualizationSettings, type ViewMode } from './GeneratorWorkspace'
+import { Checkbox, GeneratorShell, NumberField, ProductionEstimate, ProjectActions, SliderField, VisualizationSettings } from './GeneratorWorkspace'
 import { PartsLayout } from './PartsLayout'
 import { copyText, downloadFile } from './projectIO'
+import { useWorkspaceNavigation } from './viewNavigation'
 import { tableCutInventory, type TableLayoutSnapshot } from './tableCutJob'
 import { compareNesting } from './nesting'
 import { fabricationEstimate } from './fabricationLayout'
@@ -76,23 +77,14 @@ const loadedTable = (): { config: Config; review: ProjectReview | null } => {
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<'table' | 'tools'>(() => { const params = new URLSearchParams(location.search); return params.has('toolProject') || params.get('workspace') === 'tools' ? 'tools' : 'table' })
-  const selectWorkspace = (next: 'table' | 'tools') => {
-    const url = new URL(location.href)
-    if (next === 'tools') url.searchParams.set('workspace', 'tools')
-    else { url.searchParams.delete('workspace'); url.searchParams.delete('toolProject') }
-    history.replaceState(null, '', url)
-    setWorkspace(next)
-  }
+  const [notice, setNotice] = useState('')
   const [initial] = useState(loadedTable)
   const [config, setConfig] = useState<Config>(initial.config)
   const [review, setReview] = useState<ProjectReview | null>(initial.review)
+  const navigation = useWorkspaceNavigation(setNotice, review ? { workspace: 'table', message: 'Resolve the table project review before opening Tools.' } : null)
+  const { workspace, view, selectWorkspace, selectView: setView } = navigation
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
-  const [view, setView] = useState<ViewMode>(() => { const saved = readStorage('tableGenUI').viewMode; return saved === '3d' || saved === 'sheet' ? saved : '2d' })
-  const [notice, setNotice] = useState('')
   const [tableLayout, setTableLayout] = useState<TableLayoutSnapshot>()
-  const [reset3d, setReset3d] = useState(0)
-  const [focusMount3d, setFocusMount3d] = useState(0)
   const [reset2dToken, setReset2dToken] = useState(0)
 
   const cutJob = useMemo(() => {
@@ -116,18 +108,22 @@ export default function App() {
   useEffect(() => {
     try {
       if (!review) localStorage.setItem('tableGenParams', JSON.stringify(projectConfig(config)))
-      localStorage.setItem('tableGenUI', JSON.stringify({ viewMode: view, renderHoles3D: config.renderHoles, enableHoverEffect: config.highlighting, explodeFactor: config.exploded, showDims: config.showDimensions, units: config.units === 'inch' ? 'in' : 'mm', theme: dark ? 'dark' : 'light' }))
+      localStorage.setItem('tableGenUI', JSON.stringify({ viewMode: workspace === 'table' ? view : readStorage('tableGenUI').viewMode ?? '2d', renderHoles3D: config.renderHoles, enableHoverEffect: config.highlighting, explodeFactor: config.exploded, showDims: config.showDimensions, units: config.units === 'inch' ? 'in' : 'mm', theme: dark ? 'dark' : 'light' }))
     } catch { setNotice('Browser autosave is unavailable. Use Save to keep your project.') }
-  }, [config, dark, view, review])
+  }, [config, dark, view, workspace, review])
 
   useEffect(() => {
     if (review) return
     const url = new URL(location.href)
-    if (url.searchParams.has('toolProject') || !['state', 'length', 'schemaVersion'].some(key => url.searchParams.has(key))) return
+    if (!['state', 'length', 'schemaVersion'].some(key => url.searchParams.has(key))) return
     const selectedWorkspace = url.searchParams.get('workspace')
+    const selectedView = url.searchParams.get('view')
+    const originalTool = url.searchParams.get('toolProject')
     url.search = tableProjectQuery(config).toString()
+    if (originalTool !== null) url.searchParams.set('toolProject', originalTool)
     if (selectedWorkspace) url.searchParams.set('workspace', selectedWorkspace)
-    history.replaceState(null, '', url)
+    if (selectedView) url.searchParams.set('view', selectedView)
+    history.replaceState(history.state, '', url)
   }, [config, review])
 
   const applyTableConfig = (next: Config) => {
@@ -190,8 +186,11 @@ export default function App() {
   const replaceProject = (candidate: Config) => {
     const next = preserveView(candidate, config)
     const url = new URL(location.href)
+    const originalTool = url.searchParams.get('toolProject')
     url.search = tableProjectQuery(next).toString()
-    history.replaceState(null, '', url)
+    if (originalTool) url.searchParams.set('toolProject', originalTool)
+    url.searchParams.set('workspace', workspace); url.searchParams.set('view', view)
+    history.replaceState(history.state, '', url)
     setConfig(next)
     setReview(null)
     reset2d()
@@ -218,6 +217,7 @@ export default function App() {
   const share = async () => {
     const url = new URL(location.href)
     url.search = tableProjectQuery(config).toString()
+    url.searchParams.set('workspace', 'table'); url.searchParams.set('view', view)
     try {
       await copyText(url.toString())
       setNotice('Full metric project link copied to clipboard.')
@@ -238,13 +238,13 @@ export default function App() {
   }
   const addToTable = (project: ToolProject) => {
     try {
-      setConfig(withSelectedTool(project)); setView('sheet'); selectWorkspace('table')
+      setConfig(withSelectedTool(project)); navigation.navigate({ workspace: 'table', view: 'sheet' })
       setNotice('Tool selected. Export remains blocked until the complete shared layout fits.')
     } catch (error) { reportError(error) }
   }
   const rememberTableLayout = (snapshot: TableLayoutSnapshot) => setTableLayout(current => current?.key === snapshot.key && compareNesting(current.result, snapshot.result) <= 0 ? current : snapshot)
 
-  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
+  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace view={view} onView={setView} onNavigationGuard={navigation.setGuard} notice={notice} onDismissNotice={() => setNotice('')} tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
   return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
     settings={<>
           {review && <section role="alert" className="project-review"><h3>Project review required</h3><p className="socket-error">{review.message}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'welding-table-original.txt', 'text/plain')}>Download original data</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Apply {migrationPreset} origin ({presetValues[migrationPreset].margin} mm)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? review.change === 'table-grid' ? `Keep saved origin (${review.config.margin} mm)` : 'Apply corrected tool geometry' : 'Start a new table project'}</button></section>}
@@ -316,7 +316,7 @@ export default function App() {
               <div className="hole-part"><select aria-label="Part" value={hole.part} onChange={event => updateHole(hole.id, 'part', event.target.value)}>{partNames.map(name => <option key={name} value={name}>{partLabels[name]}</option>)}</select><button title="Remove this hole" aria-label="Remove hole" onClick={() => patch('customHoles', config.customHoles.filter(item => item.id !== hole.id))}><Icon name="trash" size={12} /></button></div>
               <div className="fields three">{(['x', 'y', 'd'] as const).map(key => <label className="field" key={key}><span>{key === 'd' ? 'Ø' : key.toUpperCase()}</span><NumberInput aria-label={key === 'd' ? 'Diameter' : key.toUpperCase()} step={(key === 'd' ? 1 : 5) / (config.units === 'mm' ? 1 : mmPerInch)} min={key === 'd' ? 0.1 / (config.units === 'mm' ? 1 : mmPerInch) : undefined} value={numberLabel(hole[key], 3)} onValue={value => updateHole(hole.id, key, String(value))} /></label>)}</div>
             </div>)}
-            <button className="secondary full" onClick={addHole}><Icon name="plus" size={14} />Add hole</button>{config.customHoles.length > 0 && <p>Use the ruler in the 2D view to check the position before exporting.</p>}
+            <button className="secondary full" onClick={addHole}><Icon name="plus" size={14} />Add hole</button>{config.customHoles.length > 0 && <p>Use Measure in 2D to check hole positions.</p>}
           </section>
           <section className="removed-holes"><h3><Icon name="trash" size={14} />Removed Holes{config.removedHoles.length > 0 && <small>{config.removedHoles.length}</small>}</h3>
             {config.removedHoles.length ? <><ul className="removed">{config.removedHoles.map((hole, index) => <li key={typeof hole === 'string' ? hole : hole.id}>
@@ -334,6 +334,6 @@ export default function App() {
     {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly review the corrected geometry in the sidebar.</div>
       : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
       : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} baseline={tableLayout} onBaseline={rememberTableLayout} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
-      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><AssemblyControls value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onReset={() => setReset3d(value => value + 1)} onFocus={cornerPlate ? () => setFocusMount3d(value => value + 1) : undefined} /></>}
+      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}
   </GeneratorShell>
 }

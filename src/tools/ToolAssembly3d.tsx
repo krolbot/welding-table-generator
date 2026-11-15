@@ -195,7 +195,7 @@ export function ToolAssembly3d({
     errorClassName="three-loading"
     renderHoles={nesting ? true : renderHoles}
     highlighting={highlighting}
-    cameraKey={nesting ?? project.tool}
+    cameraKey={nesting ? 'sheet' : project.tool}
     onThemeChange={theme}
     up={[0, 0, 1]}
   />

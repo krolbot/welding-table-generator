@@ -1,16 +1,17 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { AssemblyControls, GeneratorShell, NumberField, ProductionEstimate, ProjectActions, VisualizationSettings, type ViewMode, type VisualSettings } from '../GeneratorWorkspace'
+import { GeneratorShell, NumberField, ProductionEstimate, ProjectActions, VisualizationSettings, type ViewMode, type VisualSettings } from '../GeneratorWorkspace'
 import { PartsLayout } from '../PartsLayout'
 import { SheetNesting } from '../SheetNesting'
 import { arrangeParts, fabricationEstimate } from '../fabricationLayout'
 import { display, mmPerInch, readDisplay, type Config } from '../model'
 import { copyText, downloadFile } from '../projectIO'
 import { tableProjectQuery } from '../tableProject'
-import { extensionDimensions, extensionLimits, type ExtensionConfig } from './extension'
+import type { NavigationGuard } from '../viewNavigation'
+import { extensionLimits, type ExtensionConfig } from './extension'
 import { squareLimits, type SquareConfig } from './square'
 import { compactExtensionLimits, type CompactExtensionConfig } from './compactExtension'
 import { viseModuleLimits, viseSlotSetback, type ViseModuleConfig } from './viseModule'
-import { cornerBracketDimensions, cornerBracketLimits, type CornerBracketConfig } from './cornerBracket'
+import { cornerBracketLimits, type CornerBracketConfig } from './cornerBracket'
 import { defaultToolProject, toolDefaults, toolIds, isToolId, parseToolProject, readToolProject, projectJson, projectKey, projectModelParts, projectAtTable, projectNestingOptions, toolLabels, toolUsesTableStock, validProjectLayout, type ToolId, type ToolProject } from './project'
 
 import { downloadToolArchive, downloadToolParts, downloadToolStrip } from './export'
@@ -18,6 +19,8 @@ import { downloadToolArchive, downloadToolParts, downloadToolStrip } from './exp
 const ToolAssembly3d = lazy(() => import('./ToolAssembly3d').then(module => ({ default: module.ToolAssembly3d })))
 export type ToolsWorkspaceProps = {
   dark: boolean; onTheme: () => void; onBack: () => void
+  view: ViewMode; onView: (view: ViewMode) => void; onNavigationGuard: (guard: NavigationGuard) => void
+  notice: string; onDismissNotice: () => void
   units: Config['units']; onUnits: (units: Config['units']) => void
   visual: VisualSettings; onVisual: (changes: Partial<VisualSettings>) => void
   tableConfig: Config; tableAdmissionError: (project: ToolProject) => string | undefined; onAddToTable: (project: ToolProject) => void
@@ -44,7 +47,7 @@ const toolSummaries: Record<ToolId, string> = {
   viseModule: 'Five plates · eight radial vise slots · table-matched mounting grid',
 }
 
-export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, onVisual, tableConfig, tableAdmissionError, onAddToTable }: ToolsWorkspaceProps) {
+export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigationGuard, notice, onDismissNotice, units, onUnits, visual, onVisual, tableConfig, tableAdmissionError, onAddToTable }: ToolsWorkspaceProps) {
   const [initial] = useState(() => {
     let saved: string | null = null
     try {
@@ -62,9 +65,11 @@ export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, 
   const [rejected, setRejected] = useState(initial.rejected)
   const [migration, setMigration] = useState<ToolProject | null>(initial.migration)
   const [reset, setReset] = useState(0)
-  const [view, setView] = useState<ViewMode>(() => {
-    try { const saved = localStorage.getItem('weldingToolsView'); return saved === '3d' || saved === 'sheet' ? saved : '2d' } catch { return '2d' }
-  })
+  useEffect(() => {
+    onNavigationGuard(rejected ? { workspace: 'tools', message: 'Resolve the pending project review before leaving Tools.' } : null)
+    return () => onNavigationGuard(null)
+  }, [rejected, onNavigationGuard])
+  useEffect(() => { try { localStorage.setItem('weldingToolsView', view) } catch { setMessage('View preference could not be saved.') } }, [view])
   const key = projectKey(project)
   const fabrication = useMemo(() => {
     try { return { parts: projectModelParts(project), error: null } }
@@ -80,8 +85,6 @@ export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, 
   const layout = useMemo(() => parts && arrangeParts(parts), [parts])
   const summary = useMemo(() => parts && fabricationEstimate(parts, project.sheet), [parts, project.sheet])
   const admissionError = rejected ? loadError : fabrication.error ?? tableAdmissionError(project)
-  const dimensions = project.tool === 'extension' ? extensionDimensions(project.size) : null
-  const cornerDimensions = project.tool === 'cornerBracket' ? cornerBracketDimensions(project.size) : null
   const factor = units === 'mm' ? 1 : mmPerInch, unitLabel = units === 'mm' ? 'mm' : 'in'
 
   const apply = (candidate: ToolProject) => {
@@ -90,7 +93,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, 
       const next = parseToolProject(projectJson(projectAtTable(candidate, tableConfig)))
       if (projectKey(next) === key) return true
       const url = new URL(location.href)
-      if (url.searchParams.has('toolProject')) { url.searchParams.set('toolProject', projectJson(next)); history.replaceState(null, '', url) }
+      if (url.searchParams.has('toolProject')) { url.searchParams.set('toolProject', projectJson(next)); history.replaceState(history.state, '', url) }
       setProject(next)
       return true
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Invalid Tools project'); return false }
@@ -130,6 +133,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, 
     const url = new URL(location.href)
     url.search = tableProjectQuery(tableConfig).toString()
     url.searchParams.set('toolProject', projectJson(project))
+    url.searchParams.set('workspace', 'tools'); url.searchParams.set('view', view)
     try { await copyText(url.toString()); setMessage('Tools project link copied.') }
     catch { setMessage('Clipboard denied. Use Save to preserve this project.') }
   }
@@ -139,7 +143,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, 
     catch { setLoadError('Could not preserve the previous project in browser storage. Download the original JSON first.'); return }
     const url = new URL(location.href)
     url.searchParams.delete('toolProject'); url.searchParams.set('workspace', 'tools')
-    history.replaceState(null, '', url)
+    history.replaceState(history.state, '', url)
     setProject(next); setRejected(''); setMigration(null); setLoadError(''); setReset(value => value + 1)
   }
   const open = async (file: File) => {
@@ -151,18 +155,17 @@ export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, 
     }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Project could not be opened') }
   }
-  return <GeneratorShell workspace="tools" onWorkspace={value => { if (value === 'table' && rejected) setMessage('Resolve the pending project review before leaving Tools.'); else if (value === 'table') onBack() }} dark={dark} onTheme={onTheme} units={units} onUnits={onUnits} view={view}
-    onView={value => { setView(value); try { localStorage.setItem('weldingToolsView', value) } catch { setMessage('View preference could not be saved.') } }} notice={message} onDismissNotice={() => setMessage('')}
+  return <GeneratorShell workspace="tools" onWorkspace={value => { if (value === 'table') onBack() }} dark={dark} onTheme={onTheme} units={units} onUnits={onUnits} view={view}
+    onView={onView} notice={message || notice} onDismissNotice={() => { setMessage(''); onDismissNotice() }}
     settings={<>
       {loadError && <section role="alert"><p className="socket-error">{loadError}</p>{rejected && <><button className="secondary full" onClick={() => downloadFile(rejected, 'welding-tool-original.json')}>Download original JSON</button><button className="secondary full" onClick={startCorrected}>{migration ? 'Apply corrected geometry' : 'Start new design'}</button></>}</section>}
       <>
         <section className="fixture-card"><h3>Tools</h3><label className="field"><span>Choose a tool</span><select disabled={Boolean(rejected)} aria-label="Select tool" value={project.tool} onChange={event => { const value = event.target.value; if (isToolId(value)) selectTool(value) }}>{toolIds.map(id => <option key={id} value={id}>{toolLabels[id]}</option>)}</select></label><p className="grid-summary">{toolSummaries[project.tool]}</p></section>
         <section><h3>Dimensions ({unitLabel})</h3><div className="fields">{sizeField('length')}{sizeField('width')}{project.tool === 'square' ? sizeField('armWidth') : sizeField('height')}{sizeField('thickness')}</div>{toolUsesTableStock(project.tool) && <p>Thickness follows the table, including imported projects. Change Metal Thickness in Table generator; all joints and cut parts are recalculated.</p>}</section>
-        {project.tool === 'viseModule' && <><section><h3>Table mounting grid ({unitLabel})</h3><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Diameter, pitch, edge origin and {project.size.grid} pattern follow Table generator. The mounting wall contains the complete matching grid, measured down from the working face; holes are never shifted or omitted to fit. Lower side rows are limited by the curved profile.</p></section><section><h3>Vise slots & locating joints ({unitLabel})</h3><div className="fields">{sizeField('slotWidth')}{sizeField('slotInnerRadius')}{sizeField('tipHeight')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Eight separate rounded slots at 45° intervals, plus a central round hole. Every outer rounded tip stops {display(viseSlotSetback, units, 3)} {unitLabel} before the plate boundary along its ray; square-top diagonals end that distance from the corners. Slot lengths recalculate with the plate size. This is not perpendicular side clearance. Check your vise base and fasteners.</p></section></>}
+        {project.tool === 'viseModule' && <><section><h3>Table mounting grid ({unitLabel})</h3><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Diameter, pitch, edge origin and {project.size.grid} pattern follow Table generator. The mounting wall contains the complete matching grid, measured down from the working face; holes are never shifted or omitted to fit. Lower side rows are limited by the curved profile.</p></section><section><h3>Vise slots & locating joints ({unitLabel})</h3><div className="fields">{sizeField('slotWidth')}{sizeField('slotInnerRadius')}{sizeField('tipHeight')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Eight separate rounded slots at 45° intervals, plus a central round hole. Every outer rounded tip stops {display(viseSlotSetback, units, 3)} {unitLabel} before the plate boundary along its ray; square-top diagonals end that distance from the corners. Slot lengths recalculate with the plate size. Measured along each slot axis, not perpendicular to the side.</p></section></>}
         {project.tool === 'square' && <section><h3>Mounting holes ({unitLabel})</h3><div className="fields">{sizeField('holeDiameter')}{sizeField('endOffset')}</div><p>One hole at the elbow and one near each free end. The elbow centre is half the arm width from both outside edges. Check the resulting centre distances against your table.</p></section>}
         {project.tool === 'compactExtension' && <><section><h3>Tooling grid ({unitLabel})</h3><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Fixed edge origins on the working top and mounting end. The first end row is measured down from the assembled working face. Conflicting holes are rejected, not shifted or removed.</p></section><section><h3>Spine & locating joints ({unitLabel})</h3><div className="fields">{sizeField('tipHeight')}{sizeField('taperRun')}{sizeField('windowInset')}{sizeField('windowRadius')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Window border inset sets the perimeter web. Diagonal webs between adjacent windows: {display(project.size.windowInset * 2, units, 3)} {unitLabel}. Saved projects keep their chosen inset.</p></section></>}
         {project.tool === 'cornerBracket' && <><section><h3>Mounting holes & slot ({unitLabel})</h3><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('slotLength')}</div><p>Nine base holes in a triangular grid with the elbow position omitted; three holes in one wall, one rounded slot in the other. The slot width equals the hole diameter.</p></section><section><h3>Profile & locating joints ({unitLabel})</h3><div className="fields">{sizeField('cornerCut')}{sizeField('tipWidth')}{sizeField('tabWidth')}{sizeField('clearance')}</div></section></>}
-        <section><h3>Design assumptions</h3>{project.tool === 'viseModule' ? <><p>Reference envelope: 250 × 250 × 100 mm. Five flat plates: one slotted top, one full-depth mounting wall, one shallow free-end wall and two curved sides; no bottom plate or bending. Thickness and mounting grid follow the host table, not the reference’s 8 mm label.</p><p>The top star is eight separate rounded slots, not one connected cut. Slot width and inner radius, curved-side shape, free-end depth and locating joints are proposed, not factory measurements. Wall tabs seat flush in the top notches; side tabs locate in the end-wall notches. Fixture, tack and check the assembly before welding.</p><p>Mounting coordinates match the table’s unmodified grid when working faces and edge datums align. Check actual retained table holes, fastener access/grip, vise base and loads. <a href="https://umetalli.com/products/vise-mount-01-250x250x100-6-mm" target="_blank" rel="noreferrer">Manufacturer example of the radial-slot mounting pattern</a>; it supplies no slot dimensions.</p></> : project.tool === 'compactExtension' ? <><p>The five reference views show three plates: one perforated working top, one central spine with five rounded windows and one mounting end. The underside and free end are open. Only the free-end section tapers; this is not the seven-part wedge.</p><p>Reference label: 500 × 100 × 100 mm, 6 mm steel, D16, Ст3, pair of two. The reference's 6 mm is not a thickness setting: this model uses the table's stock. One copy here is one extension; set two copies for a pair. The default model has 20 top holes and four mounting holes.</p><p>Pitch, fixed edge origin, exact window profiles, taper and all locating joints are editable design assumptions, not factory measurements. Two spine tabs enter the top mortises; two root tabs enter the mounting end; its upper tabs seat in the top edge notches. Check the fit, fixture, tack and measure before welding.</p></> : project.tool === 'cornerBracket' && cornerDimensions ? <><p>The assembled and flat-kit references show one chamfered triangular base and two perpendicular walls. Nominal envelope: 210 × 210 × 60 mm, stock: 8 mm. The top and diagonal side are open; no bend is required.</p><p>Hole diameter, pitch and origins, slot size, corner cuts and all joints are proposed, not factory measurements. Base grid origin: {display(cornerDimensions.holeOrigin.x, units, 3)} × {display(cornerDimensions.holeOrigin.y, units, 3)} {unitLabel}. Two tabs on each wall seat in matching base notches, flush underneath. Fixture, tack and check the angle before welding.</p></> : project.tool === 'extension' && dimensions ? <><p>The high slotted end mounts to the table. The perforated top is horizontal; tapered sides, large windows and two narrow cross ties leave the underside open.</p><p>Free-end height: {display(dimensions.tipHeight, units, 3)} {unitLabel}. Cross ties: {display(dimensions.ribDepth, units, 3)} {unitLabel}. Locating tabs: {display(dimensions.tabWidth, units, 3)} {unitLabel}; matching cuts add {display(dimensions.clearance, units, 3)} {unitLabel} total clearance. These joints, windows and mounting slots are proposed dimensions, not a CAS manufacturing drawing.</p></> : <><p>The reference shows a 250 × 250 mm flat square with three round holes. Arm width, stock thickness, hole diameter and offsets are editable assumptions, not measured Keepler-Stan dimensions.</p><p>This is one flat-cut part, not angle iron. Nominal perpendicular edges do not guarantee a precision square: check flatness, finish and measure the working edges after cutting.</p></>}<p>Before fabrication: confirm actual table/hardware fit, steel grade, loads, weld sequence/distortion where relevant and CAM kerf, lead-ins, clamps and cut order.</p></section>
         <section className="tool-admission"><h3>Add to table sheets</h3><p>Cut this configured tool together with the table, using only the table’s existing sheet capacity. Same steel grade and {display(tableConfig.thickness, units, 3)} {unitLabel} thickness required.</p><NumberField label="Tool copies in the cutting batch" value={project.copies} min={1} max={10} step={1} disabled={Boolean(rejected)} onValue={copies => apply({ ...project, copies })} />{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}<button className="secondary full" disabled={Boolean(admissionError)} onClick={() => onAddToTable(project)}>Add to table cut job</button><p>This adds a saved copy of the tool settings. Later dimension edits here do not change tools already selected for the table. Compact-extension and vise-module thickness remain linked to the table; the vise mounting grid follows it too. The table’s sheet size and clearances apply; all tool copies must fit before export.</p></section>
         <VisualizationSettings value={visual} onChange={onVisual} />
       </>
@@ -172,9 +175,9 @@ export function ToolsWorkspace({ dark, onTheme, onBack, units, onUnits, visual, 
     {rejected ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly start the corrected design.</div>
       : fabrication.error ? <div className="three-loading socket-error" role="alert">{fabrication.error} Change the table thickness or the tool dimensions before fabrication.</div>
       : view === '2d' ? layout && <PartsLayout layout={layout} units={units} label={`Interactive 2D ${toolLabels[project.tool]} parts layout`} resetToken={reset} />
-      : view === '3d' ? <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div><AssemblyControls value={visual} onChange={onVisual} onReset={() => setReset(value => value + 1)} /></>
+      : view === '3d' ? <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div></>
       : batchParts && <SheetNesting jobKey={key} job={{ parts: batchParts, options: projectNestingOptions(project), stock: { kind: 'new-sheets' } }} sheetSettings={{ ...project.sheet, copies: project.copies }} units={units} maxGap={100}
         onChange={({ copies, ...sheet }) => apply({ ...project, sheet: { ...project.sheet, ...sheet }, copies: copies ?? project.copies })} onNotice={setMessage} onExport={({ result }) => downloadToolArchive(project, result, key)} isLayoutValid={({ result }, key) => validProjectLayout(project, result, key)}
-        render3D={(result, reset) => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={reset} {...visual} nesting={result} /></Suspense>} />}
+        render3D={result => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={0} {...visual} nesting={result} /></Suspense>} />}
   </GeneratorShell>
 }

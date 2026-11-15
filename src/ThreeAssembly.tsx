@@ -6,7 +6,7 @@ import { display, readPart, type Config } from './model'
 import { framePositions, legCornerPlateSpec, makeParts, partWeight, skirtAssemblyY, type FabricationPart } from './geometry'
 import type { NestingResult } from './nesting'
 
-type Props = { config: Config; resetToken: number; mountFocusToken: number; dark: boolean; nesting?: NestingResult }
+type Props = { config: Config; resetToken: number; dark: boolean; nesting?: NestingResult }
 type Part = FabricationPart
 type PartInfo = AssemblyPartInfo
 type PartMesh = AssemblyPartMesh
@@ -209,7 +209,7 @@ const focusCornerMount = (runtime: AssemblyRuntime, config: Config) => {
   runtime.controls.update()
 }
 
-export function ThreeAssembly({ config, resetToken, mountFocusToken, dark, nesting }: Props) {
+export function ThreeAssembly({ config, resetToken, dark, nesting }: Props) {
   const build = useCallback((runtime: AssemblyRuntime) => {
     if (nesting) rebuildSheets(runtime, config, nesting)
     else rebuildAssembly(runtime, config)
@@ -242,9 +242,8 @@ export function ThreeAssembly({ config, resetToken, mountFocusToken, dark, nesti
     errorClassName="three-loading"
     renderHoles={nesting ? true : config.renderHoles}
     highlighting={config.highlighting}
-    cameraKey={nesting}
-    focusToken={mountFocusToken}
-    focusCamera={focus}
+    cameraKey={nesting ? 'sheet' : 'assembly'}
+    focusCamera={!nesting && legCornerPlateSpec(config) ? focus : undefined}
     onThemeChange={theme}
   />
 }

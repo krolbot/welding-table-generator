@@ -139,14 +139,15 @@ export const tableProjectQuery = (config: Config) => {
 /** URL values are decoded once at the text boundary, then use the same JSON validator. */
 export const tableProjectFromQuery = (params: URLSearchParams): string | undefined => {
   const keys = [...params.keys()]
+  const navigationParameters = new Set(['workspace', 'view', 'toolProject'])
   if (new Set(keys).size !== keys.length) return invalid('query', 'duplicate URL parameter')
   if (params.has('state')) {
-    if (keys.some(key => key !== 'state' && key !== 'workspace')) return invalid('state', 'cannot be mixed with other project parameters')
+    if (keys.some(key => key !== 'state' && !navigationParameters.has(key))) return invalid('state', 'cannot be mixed with other project parameters')
     return params.get('state') ?? ''
   }
   if (params.has('project')) throw new TableProjectError('unsupported-version', 'The retired combined tooling catalog project is not supported. Original data has not been replaced.', 'project')
   if (params.has('toolProject') && !params.has('schemaVersion') && !params.has('length')) return undefined
-  const fields = [...params.entries()].filter(([key]) => key !== 'workspace' && key !== 'toolProject')
+  const fields = [...params.entries()].filter(([key]) => !navigationParameters.has(key))
   if (!fields.length) return undefined
   const value: Record<string, unknown> = {}
   const numbers = new Set<string>(numericKeys)

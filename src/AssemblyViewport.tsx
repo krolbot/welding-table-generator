@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { Icon } from './Icon'
+import { PanControls, ZoomControls } from './ViewportControls'
 import { assemblyColors, disposeObject3D, fitCameraToBounds, type AssemblyColors } from './assemblyGeometry'
 
 export type AssemblyPartInfo = {
@@ -47,8 +49,7 @@ type Props = {
   errorClassName: string
   renderHoles?: boolean
   highlighting?: boolean
-  cameraKey?: unknown
-  focusToken?: number
+  cameraKey?: string
   focusCamera?: (runtime: AssemblyRuntime) => void
   onThemeChange?: (runtime: AssemblyRuntime) => void
   up?: readonly [number, number, number]
@@ -67,7 +68,6 @@ export function AssemblyViewport({
   renderHoles = true,
   highlighting = true,
   cameraKey,
-  focusToken = 0,
   focusCamera,
   onThemeChange,
   up = [0, 1, 0],
@@ -96,6 +96,38 @@ export function AssemblyViewport({
     state.controls.update()
     fittedBounds.current = bounds
   }
+  const [navigation, setNavigation] = useState<'orbit' | 'pan'>('orbit')
+  const navigationRef = useRef(navigation)
+  navigationRef.current = navigation
+  const [preset, setPreset] = useState('iso')
+  const moveView = (x: number, y: number) => runtime.current?.controls.pan(x, y)
+  const zoomView = (factor: number) => runtime.current?.controls.dollyIn(1 / factor)
+  const fitView = () => { const state = runtime.current; if (state) fit(state, true) }
+  const orient = (view: 'iso' | 'top' | 'front' | 'right') => {
+    const state = runtime.current
+    if (!state) return
+    const damping = state.controls.enableDamping
+    state.controls.enableDamping = false
+    state.controls.update()
+    if (view === 'iso') latest.current.resetCamera(state)
+    else {
+      const zUp = up[2] === 1
+      const direction = view === 'top' ? new THREE.Vector3(...up)
+        : view === 'right' ? new THREE.Vector3(1, 0, 0) : zUp ? new THREE.Vector3(0, -1, 0) : new THREE.Vector3(0, 0, 1)
+      state.camera.position.copy(state.controls.target).addScaledVector(direction, Math.max(1, state.camera.position.distanceTo(state.controls.target)))
+      state.controls.update()
+    }
+    fit(state, true)
+    state.controls.enableDamping = damping
+    setPreset(view)
+  }
+  useEffect(() => {
+    const controls = runtime.current?.controls
+    if (!controls) return
+    controls.mouseButtons.LEFT = navigation === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN
+    controls.touches.ONE = navigation === 'pan' ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
+  }, [navigation])
   const [error, setError] = useState('')
   const [hover, setHover] = useState<{ info: AssemblyPartInfo; x: number; y: number } | null>(null)
 
@@ -113,8 +145,35 @@ export function AssemblyViewport({
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.08
-    controls.minDistance = 250
-    controls.maxDistance = 18000
+    controls.minDistance = Math.max(1, initialExtent * 0.02)
+    controls.maxDistance = Math.max(18000, initialExtent * 30)
+    controls.zoomToCursor = true
+    controls.screenSpacePanning = true
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN
+    controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
+    renderer.domElement.tabIndex = 0
+    renderer.domElement.setAttribute('aria-label', ariaLabel)
+    const focus = () => { renderer.domElement.focus({ preventScroll: true }); setHover(null) }
+    const key = (event: KeyboardEvent) => {
+      const value = event.key.toLowerCase()
+      if (value === ' ' && !event.repeat) { event.preventDefault(); controls.mouseButtons.LEFT = THREE.MOUSE.PAN }
+      else if (value === 'f' || value === 'home') { event.preventDefault(); fit(state, true) }
+      else if (value === '+' || value === '=') { event.preventDefault(); controls.dollyIn(1 / 1.25) }
+      else if (value === '-') { event.preventDefault(); controls.dollyIn(1.25) }
+      else if (value.startsWith('arrow')) {
+        event.preventDefault()
+        if (event.shiftKey) {
+          if (value === 'arrowleft' || value === 'arrowright') controls.rotateLeft(value === 'arrowleft' ? 0.12 : -0.12)
+          else controls.rotateUp(value === 'arrowup' ? 0.12 : -0.12)
+        } else controls.pan(value === 'arrowleft' ? -48 : value === 'arrowright' ? 48 : 0, value === 'arrowup' ? -48 : value === 'arrowdown' ? 48 : 0)
+      }
+    }
+    const releaseSpace = () => { controls.mouseButtons.LEFT = navigationRef.current === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE }
+    const keyUp = (event: KeyboardEvent) => { if (event.key === ' ') releaseSpace() }
+    renderer.domElement.addEventListener('pointerdown', focus)
+    renderer.domElement.addEventListener('keydown', key)
+    renderer.domElement.addEventListener('keyup', keyUp)
+    renderer.domElement.addEventListener('blur', releaseSpace)
     scene.add(new THREE.AmbientLight(0xffffff, 0.6))
     const light = new THREE.DirectionalLight(0xffffff, 0.8)
     light.position.set(initialExtent, initialExtent, initialExtent / 2)
@@ -145,7 +204,7 @@ export function AssemblyViewport({
     const pointer = new THREE.Vector2()
     const move = (event: PointerEvent) => {
       const active = runtime.current
-      if (!active || !active.highlighting) return
+      if (!active || !active.highlighting || event.buttons || event.pointerType === 'touch') { setHover(null); return }
       const bounds = active.renderer.domElement.getBoundingClientRect()
       pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -(event.clientY - bounds.top) / bounds.height * 2 + 1)
       raycaster.setFromCamera(pointer, active.camera)
@@ -160,6 +219,13 @@ export function AssemblyViewport({
     }
     renderer.domElement.addEventListener('pointermove', move)
     renderer.domElement.addEventListener('pointerleave', leave)
+    controls.addEventListener('start', leave)
+    let orientation = camera.quaternion.clone()
+    const changed = () => {
+      if (orientation.angleTo(camera.quaternion) > 1e-6) setPreset('custom')
+      orientation = camera.quaternion.clone()
+    }
+    controls.addEventListener('change', changed)
     const resize = () => {
       const width = mount.clientWidth
       const height = mount.clientHeight
@@ -186,6 +252,12 @@ export function AssemblyViewport({
     return () => {
       cancelAnimationFrame(frame)
       observer.disconnect()
+      renderer.domElement.removeEventListener('pointerdown', focus)
+      renderer.domElement.removeEventListener('keydown', key)
+      renderer.domElement.removeEventListener('keyup', keyUp)
+      renderer.domElement.removeEventListener('blur', releaseSpace)
+      controls.removeEventListener('start', leave)
+      controls.removeEventListener('change', changed)
       renderer.domElement.removeEventListener('pointermove', move)
       renderer.domElement.removeEventListener('pointerleave', leave)
       disposeObject3D(assembly)
@@ -225,18 +297,20 @@ export function AssemblyViewport({
 
   useEffect(() => {
     const state = runtime.current
-    if (state) { latest.current.resetCamera(state); fit(state, true) }
+    if (state) { latest.current.resetCamera(state); fit(state, true); setPreset('iso') }
   // resetToken is the user-facing reset action; cameraKey identifies a different view mode.
   }, [resetToken, cameraKey])
 
-  useEffect(() => {
-    const state = runtime.current
-    if (state && focusToken > 0) latest.current.focusCamera?.(state)
-  // focusToken represents a deliberate camera action; later model edits preserve the orbit.
-  }, [focusToken])
-
-  return error ? <div className={errorClassName} role="alert">{error}</div> : <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+  return error ? <div className={errorClassName} role="alert">{error}</div> : <div className="assembly-viewport" data-navigation={navigation}>
+    <div className="viewport-toolbar" aria-label="3D navigation">
+      <div className="viewport-group"><button aria-pressed={navigation === 'orbit'} onClick={() => setNavigation('orbit')}><Icon name="orbit" />Orbit</button><button aria-pressed={navigation === 'pan'} onClick={() => setNavigation('pan')}><Icon name="hand" />Pan</button></div>
+      <ZoomControls onZoom={zoomView} onFit={fitView} />
+      <details className="viewport-help"><summary aria-label="3D controls help"><Icon name="info" /></summary><div>Drag to orbit or pan in the selected mode. Right/middle drag or Space + drag pans. Scroll to zoom at the pointer. Two fingers pan and pinch. Arrows pan; Shift + arrows orbit; F fits the model.</div></details>
+    </div>
+    <div className="assembly-surface">
     <div className={hostClassName} ref={host} aria-label={ariaLabel} />
+    <div className="camera-presets" aria-label="Camera direction">{(['iso', 'top', 'front', 'right'] as const).map(view => <button key={view} aria-pressed={preset === view} onClick={() => orient(view)}>{view === 'iso' ? 'ISO' : view[0].toUpperCase() + view.slice(1)}</button>)}{focusCamera && <button onClick={() => { if (runtime.current) latest.current.focusCamera?.(runtime.current) }}>Mount detail</button>}</div>
+    <PanControls onPan={moveView} />
     {hover && <div className="part-tooltip" style={{ left: Math.max(8, Math.min(hover.x + 15, (host.current?.clientWidth ?? 280) - 270)), top: Math.max(8, Math.min(hover.y + 15, (host.current?.clientHeight ?? 130) - 125)) }}>
       <strong>{hover.info.name}</strong><dl>
         <dt>Dimensions:</dt><dd>{hover.info.dims}</dd>
@@ -244,5 +318,7 @@ export function AssemblyViewport({
         <dt>Holes:</dt><dd>{hover.info.holesCount} pcs</dd>
       </dl>
     </div>}
+    </div>
+    <div className="viewport-status"><span>{navigation === 'orbit' ? 'Drag to orbit' : 'Drag to pan'} · Right drag to pan · Scroll / pinch to zoom</span></div>
   </div>
 }
