@@ -13,7 +13,7 @@ before(async () => {
 after(async () => { await server?.close() })
 
 const config = (values = {}) => ({
-  ...model.defaults, length: 1450, width: 1150, height: 150,
+  ...model.defaults, length: 1450, width: 1150, height: 150, tabWidth: 30,
   legMounts: true, legMountStyle: 'cornerPlate', engraving: false, ...values,
 })
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-7, `${actual} != ${expected}`)
@@ -85,7 +85,7 @@ test('every rib bay has one circle with native clearance from the entire mating 
     { height: 150, thickness: 8, ribAccessHoleDiameter: 80 },
     { height: 200, thickness: 12, ribSpacing: 600, ribAccessHoleDiameter: 100 },
   ]) for (const dogBones of [false, true]) {
-    const c = config({ ...values, legMounts: false, ribAccessHoles: true, dogBones, dogBoneDiameter: 5, clearance: 2.5 })
+    const c = config({ ...values, tabWidth: Math.min(30, Math.floor((values.height - values.thickness) / 2) - 5), legMounts: false, ribAccessHoles: true, dogBones, dogBoneDiameter: 5, clearance: 2.5 })
     const spec = geometry.ribAccessHoleSpec(c)
     assert.ok(spec.valid, JSON.stringify({ values, dogBones, spec }))
     const frame = geometry.framePositions(c)

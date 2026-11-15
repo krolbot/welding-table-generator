@@ -11,7 +11,7 @@ export const numericBounds: Record<NumericKey, { min: number; max: number }> = {
   length: { min: 500, max: 200 * mmPerInch }, width: { min: 400, max: 200 * mmPerInch },
   height: { min: 50, max: 20 * mmPerInch }, ribSpacing: { min: 200, max: 24 * mmPerInch },
   ribAccessHoleDiameter: { min: 1, max: 1000 }, thickness: { min: 1, max: 40 },
-  tabWidth: { min: 0, max: Math.floor((20 * mmPerInch - 1) / 2) - 5 },
+  tabWidth: { min: 5, max: Math.floor((20 * mmPerInch - 1) / 2) - 5 },
   clearance: { min: 0, max: 2.5 }, dogBoneDiameter: { min: 0.5, max: 5 },
   legBoltDiameter: { min: 1, max: 100 }, legPatternX: { min: 0, max: 1000 }, legPatternY: { min: 0, max: 1000 },
   legCols: { min: 1, max: 4 }, legRows: { min: 1, max: 4 },
@@ -116,7 +116,7 @@ export const parseTableProject = (text: string): TableProjectLoad => {
   if (value.removedHoles !== undefined) config.removedHoles = removedHoles(value.removedHoles)
   if (value.nestingTools !== undefined) {
     if (raw.schemaVersion !== tableProjectVersion) return invalid('nestingTools', 'requires the current cut-job schema')
-    const loaded = readToolSelections(value.nestingTools)
+    const loaded = readToolSelections(value.nestingTools, config)
     if (loaded.kind === 'migration') messages.push(loaded.message)
     config.nestingTools = toolSelectionsAtTable(loaded.selections, config)
   }

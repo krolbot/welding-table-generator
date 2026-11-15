@@ -162,7 +162,7 @@ export const legCornerPlateSpec = (c: Config): LegCornerPlateSpec | undefined =>
   }
 }
 
-export type FabricationErrorCode = 'invalid-grid' | 'grid-spacing' | 'grid-origin' | 'skirt-clearance' | 'leg-plates' | 'rib-access' | 'custom-hole' | 'invalid-dimensions' | 'contour-closure' | 'contour-bounds' | 'cut-clearance' | 'hole-clearance' | 'missing-grid-row'
+export type FabricationErrorCode = 'invalid-grid' | 'grid-spacing' | 'grid-origin' | 'skirt-clearance' | 'tab-width' | 'leg-bolt-clearance' | 'leg-plates' | 'rib-access' | 'custom-hole' | 'invalid-dimensions' | 'contour-closure' | 'contour-bounds' | 'cut-clearance' | 'hole-clearance' | 'missing-grid-row'
 export class FabricationError extends Error {
   readonly name = 'FabricationError'
   constructor(readonly code: FabricationErrorCode, message: string, readonly details: Record<string, string | number> = {}) { super(message) }
@@ -222,8 +222,6 @@ const legMountHoles = (part: PartName, width: number, height: number, c: Config,
       }
     }
   }
-  const bodyWidth = width - (part === 'shortSkirt' ? 2 * c.thickness : 0)
-  if (pattern.some(p => Math.abs(p.x) + diameter / 2 > bodyWidth / 2 || Math.abs(p.y) + diameter / 2 > (height - c.thickness) / 2)) return
   pattern.forEach(p => pushHole(holes, part, p.x, p.y, diameter, 'mount'))
 }
 
@@ -272,6 +270,7 @@ const relievedPolygon = (vertices: Point[], c: Config, radiusCap?: (vertex: Poin
 }
 
 const topEdgeCenters = (span: number, c: Config, shortSide = false) => {
+  if (!Number.isFinite(c.tabWidth) || c.tabWidth <= 0) throw new FabricationError('tab-width', 'Locating tabs need a positive width.')
   const inset = 80 + (shortSide ? c.thickness : 0)
   const regularCount = Math.round((span - 2 * inset) / 250) + 1
   const fittingCount = Math.floor((span - (shortSide ? 2 * c.thickness : 0)) / c.tabWidth)
@@ -415,13 +414,27 @@ export const fabricationError = (c: Config): FabricationError | undefined => {
     return new FabricationError('grid-origin', 'The grid origin must leave a safe edge web and at least one row on the top plate.', { margin: c.margin })
   if (c.skirtHoles && (c.margin < c.thickness + c.holeDiameter / 2 + minimumHoleWeb - epsilon || 2 * c.margin > c.height))
     return new FabricationError('skirt-clearance', 'The fixed skirt grid does not fit this stock or height. Increase the grid origin or skirt height, or reduce the stock thickness. Rows will not be shifted automatically.', { margin: c.margin, minimum: c.thickness + c.holeDiameter / 2 + minimumHoleWeb, height: c.height })
+  if (!Number.isFinite(c.tabWidth) || c.tabWidth < 5 || c.tabWidth > Math.floor(Math.min(c.height - c.thickness, c.length, c.width) / 2) - 5)
+    return new FabricationError('tab-width', 'The locating tabs do not fit the selected table height and stock. Increase the height, reduce the stock thickness or adjust the tab width.')
   if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return new FabricationError('leg-plates', 'The leg plates, joints or mounting holes do not fit the frame. Adjust the conflicting dimensions before fabrication export.')
   const access = ribAccessHoleSpec(c)
   if (access && !access.valid) return new FabricationError('rib-access', `Rib access holes do not fit. Maximum diameter is ${access.maxDiameter.toFixed(2)} mm for the current ribs. Reduce the hole diameter or increase the available rib web. Fabrication export is disabled.`, { maximum: access.maxDiameter })
+  const parts = makeParts(c)
+  if (c.legMounts && c.legMountStyle === 'boltPattern') {
+    for (const part of parts.filter(part => part.name === 'longSkirt' || part.name === 'shortSkirt')) {
+      for (const [index, hole] of part.holes.entries()) {
+        if (hole.kind !== 'mount') continue
+        if (!pointInContour(hole, part.contours[0]) || nativePointContourDistance(hole, part.contours[0]) < hole.d / 2 + mountHoleWeb - epsilon
+          || part.contours.slice(1).some(cut => pointInContour(hole, cut) || nativePointContourDistance(hole, cut) < hole.d / 2 + mountHoleWeb - epsilon)
+          || part.holes.some((other, otherIndex) => otherIndex !== index && distance(hole, other) < (hole.d + other.d) / 2 + mountHoleWeb - epsilon))
+          return new FabricationError('leg-bolt-clearance', `${part.label} bolt pattern violates the material web or another cut. Adjust the pattern before fabrication export.`, { hole: hole.id })
+      }
+    }
+  }
   if (c.customHoles.length) {
     if (new Set(c.customHoles.map(hole => String(hole.id))).size !== c.customHoles.length)
       return new FabricationError('custom-hole', 'Custom holes require unique serialized IDs.')
-    const parts = makeParts(c)
+
     for (const custom of c.customHoles) {
       const hole: Hole = { ...custom, id: `custom:${String(custom.id)}`, kind: 'custom' }
       if (!removeConfiguredHoles(custom.part, [hole], c).length) continue

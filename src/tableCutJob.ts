@@ -19,7 +19,10 @@ export const tableCutInventory = (config: Config) => {
   const tableParts = nestingParts(config)
   const sources: Record<string, CutPartSource> = Object.fromEntries(tableParts.map(part => [part.name, { kind: 'table', part: part.name, perCopy: part.count / config.nestingCopies }]))
   const parts: FabricationPart[] = [...tableParts]
-  const selections = toolSelectionsAtTable(parseToolSelections(config.nestingTools), config)
+  const savedSelections = parseToolSelections(config.nestingTools)
+  const mismatched = savedSelections.find(row => row.project.size.thickness !== config.thickness)
+  if (mismatched) throw new TableCutJobError('thickness-mismatch', `Selected tool ${mismatched.id} has different stock thickness. Reopen and review the project before exporting.`, mismatched.id)
+  const selections = toolSelectionsAtTable(savedSelections, config)
   selections.forEach(({ id, project }, index) => {
     for (const source of projectModelParts(project)) {
       if (source.thickness !== config.thickness) throw new TableCutJobError('thickness-mismatch', `${toolLabels[project.tool]} #${index + 1} uses ${source.thickness} mm stock; the table uses ${config.thickness} mm. Change the tool explicitly or remove it from this cut job.`, id)

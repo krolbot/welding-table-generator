@@ -27,12 +27,13 @@ export const fitCameraToBounds = (camera: THREE.PerspectiveCamera, target: THREE
 
 export const holeCurveSegments = 24
 
-export type AssemblyColors = { part: number; edge: number; dim: number }
+export type AssemblyColors = { part: number; edge: number; dim: number; background: number }
 
 export const assemblyColors = (dark: boolean): AssemblyColors => ({
-  part: dark ? 0x64748b : 0x9aa7b8,
-  edge: dark ? 0x020617 : 0x1e293b,
-  dim: dark ? 0x60a5fa : 0x1d4ed8,
+  part: dark ? 0xa6afb5 : 0xb5bfc4,
+  edge: dark ? 0x15191d : 0x354048,
+  dim: dark ? 0x9bb8ff : 0x315cbd,
+  background: dark ? 0x202225 : 0xeeefec,
 })
 
 export const contourPath = (contour: Contour, path: THREE.Path = new THREE.Path()) => {
@@ -126,28 +127,34 @@ export const addDimensionLine = (
   normal: THREE.Vector3,
   color: number,
 ) => {
-  const material = new THREE.LineBasicMaterial({ color, depthTest: false })
+  const material = new THREE.LineBasicMaterial({ color, depthTest: false, toneMapped: false })
   group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]), material))
   ;[from, to].forEach(anchor => group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
     anchor.clone().addScaledVector(normal, 20), anchor.clone().addScaledVector(normal, -20),
   ]), material)))
 }
 
-export const dimensionLabel = (value: string, position: THREE.Vector3, color: number, width = 300) => {
+export const dimensionLabel = (value: string, position: THREE.Vector3, colors: AssemblyColors) => {
   const canvas = document.createElement('canvas')
-  canvas.width = 512
-  canvas.height = 128
+  canvas.height = 96
   const context = canvas.getContext('2d')
   if (!context) return undefined
-  context.font = 'bold 64px Inter, sans-serif'
+  const font = '600 56px monospace'
+  context.font = font
+  canvas.width = Math.ceil(context.measureText(value).width) + 48
+  context.font = font
   context.textAlign = 'center'
   context.textBaseline = 'middle'
-  context.fillStyle = `#${color.toString(16).padStart(6, '0')}`
-  context.fillText(value, 256, 64)
+  context.fillStyle = `#${colors.background.toString(16).padStart(6, '0')}`
+  context.beginPath()
+  context.roundRect(0, 0, canvas.width, canvas.height, 12)
+  context.fill()
+  context.fillStyle = `#${colors.dim.toString(16).padStart(6, '0')}`
+  context.fillText(value, canvas.width / 2, canvas.height / 2)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false, toneMapped: false }))
   sprite.position.copy(position)
-  sprite.scale.set(width, width / 4, 1)
+  sprite.scale.set(canvas.width / canvas.height, 1, 1)
   return sprite
 }

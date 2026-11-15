@@ -5,6 +5,10 @@ import { Icon } from './Icon'
 import { PanControls, ZoomControls } from './ViewportControls'
 import { assemblyColors, disposeObject3D, fitCameraToBounds, type AssemblyColors } from './assemblyGeometry'
 
+const cameraPresets = ['iso', 'top', 'front', 'right'] as const
+type CameraPreset = typeof cameraPresets[number]
+const dimensionSpriteHeight = 28
+
 export type AssemblyPartInfo = {
   part: string
   isPart: true
@@ -99,11 +103,11 @@ export function AssemblyViewport({
   const [navigation, setNavigation] = useState<'orbit' | 'pan'>('orbit')
   const navigationRef = useRef(navigation)
   navigationRef.current = navigation
-  const [preset, setPreset] = useState('iso')
+  const [preset, setPreset] = useState<CameraPreset | 'custom'>('iso')
   const moveView = (x: number, y: number) => runtime.current?.controls.pan(x, y)
   const zoomView = (factor: number) => runtime.current?.controls.dollyIn(1 / factor)
   const fitView = () => { const state = runtime.current; if (state) fit(state, true) }
-  const orient = (view: 'iso' | 'top' | 'front' | 'right') => {
+  const orient = (view: CameraPreset) => {
     const state = runtime.current
     if (!state) return
     const damping = state.controls.enableDamping
@@ -174,10 +178,10 @@ export function AssemblyViewport({
     renderer.domElement.addEventListener('keydown', key)
     renderer.domElement.addEventListener('keyup', keyUp)
     renderer.domElement.addEventListener('blur', releaseSpace)
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6))
-    const light = new THREE.DirectionalLight(0xffffff, 0.8)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9))
+    const light = new THREE.DirectionalLight(0xffffff, 1.7)
     light.position.set(initialExtent, initialExtent, initialExtent / 2)
-    const fill = new THREE.DirectionalLight(0xffffff, 0.3)
+    const fill = new THREE.DirectionalLight(0xffffff, 0.6)
     fill.position.set(-initialExtent, 0, -initialExtent)
     scene.add(light, fill)
     const assembly = new THREE.Group()
@@ -191,8 +195,8 @@ export function AssemblyViewport({
       assembly,
       dimensions,
       colors: assemblyColors(dark),
-      metal: new THREE.MeshStandardMaterial({ color: 0x9aa7b8, metalness: 0.6, roughness: 0.4, side: THREE.DoubleSide }),
-      highlighted: new THREE.MeshStandardMaterial({ color: 0x9aa7b8, emissive: 0x2563eb, metalness: 0.6, roughness: 0.4, side: THREE.DoubleSide }),
+      metal: new THREE.MeshStandardMaterial({ color: assemblyColors(dark).part, metalness: 0.25, roughness: 0.65, side: THREE.DoubleSide }),
+      highlighted: new THREE.MeshStandardMaterial({ color: assemblyColors(dark).part, emissive: 0x123675, metalness: 0.25, roughness: 0.65, side: THREE.DoubleSide }),
       meshes: [],
       renderHoles,
       highlighting,
@@ -246,6 +250,10 @@ export function AssemblyViewport({
         mesh.position.copy(mesh.userData.basePos).addScaledVector(mesh.userData.explodeDir, state.factor)
       })
       controls.update()
+      const labelHeight = dimensionSpriteHeight * 2 / (Math.max(1, mount.clientHeight) * camera.projectionMatrix.elements[5])
+      dimensions.traverse(item => {
+        if (item instanceof THREE.Sprite) item.scale.set(labelHeight * item.scale.x / item.scale.y, labelHeight, 1)
+      })
       renderer.render(scene, camera)
     }
     render()
@@ -285,8 +293,8 @@ export function AssemblyViewport({
   useEffect(() => {
     const state = runtime.current
     if (!state) return
-    state.scene.background = new THREE.Color(dark ? 0x0f172a : 0xe2e8f0)
     state.colors = assemblyColors(dark)
+    state.scene.background = new THREE.Color(state.colors.background)
     state.metal.color.setHex(state.colors.part)
     state.highlighted.color.setHex(state.colors.part)
     state.assembly.traverse(item => {
@@ -303,14 +311,15 @@ export function AssemblyViewport({
 
   return error ? <div className={errorClassName} role="alert">{error}</div> : <div className="assembly-viewport" data-navigation={navigation}>
     <div className="viewport-toolbar" aria-label="3D navigation">
-      <div className="viewport-group"><button aria-pressed={navigation === 'orbit'} onClick={() => setNavigation('orbit')}><Icon name="orbit" />Orbit</button><button aria-pressed={navigation === 'pan'} onClick={() => setNavigation('pan')}><Icon name="hand" />Pan</button></div>
-      <ZoomControls onZoom={zoomView} onFit={fitView} />
+      <div className="viewport-group"><button aria-label="Orbit" title="Orbit" aria-pressed={navigation === 'orbit'} onClick={() => setNavigation('orbit')}><Icon name="orbit" /><span>Orbit</span></button><button aria-label="Pan" title="Pan" aria-pressed={navigation === 'pan'} onClick={() => setNavigation('pan')}><Icon name="hand" /><span>Pan</span></button></div>
       <details className="viewport-help"><summary aria-label="3D controls help"><Icon name="info" /></summary><div>Drag to orbit or pan in the selected mode. Right/middle drag or Space + drag pans. Scroll to zoom at the pointer. Two fingers pan and pinch. Arrows pan; Shift + arrows orbit; F fits the model.</div></details>
+    </div>
+    <div className="camera-presets" aria-label="Camera direction">
+      <select className="camera-preset-select" aria-label="Camera direction" value={preset} onChange={event => { const view = cameraPresets.find(value => value === event.target.value); if (view) orient(view) }}><option value="custom" disabled>Custom view</option>{cameraPresets.map(view => <option key={view} value={view}>{view === 'iso' ? 'Isometric' : view[0].toUpperCase() + view.slice(1)}</option>)}</select>
+      {cameraPresets.map(view => <button key={view} aria-pressed={preset === view} onClick={() => orient(view)}>{view === 'iso' ? 'ISO' : view[0].toUpperCase() + view.slice(1)}</button>)}{focusCamera && <button className="mount-detail" onClick={() => { if (runtime.current) latest.current.focusCamera?.(runtime.current) }}>Mount detail</button>}
     </div>
     <div className="assembly-surface">
     <div className={hostClassName} ref={host} aria-label={ariaLabel} />
-    <div className="camera-presets" aria-label="Camera direction">{(['iso', 'top', 'front', 'right'] as const).map(view => <button key={view} aria-pressed={preset === view} onClick={() => orient(view)}>{view === 'iso' ? 'ISO' : view[0].toUpperCase() + view.slice(1)}</button>)}{focusCamera && <button onClick={() => { if (runtime.current) latest.current.focusCamera?.(runtime.current) }}>Mount detail</button>}</div>
-    <PanControls onPan={moveView} />
     {hover && <div className="part-tooltip" style={{ left: Math.max(8, Math.min(hover.x + 15, (host.current?.clientWidth ?? 280) - 270)), top: Math.max(8, Math.min(hover.y + 15, (host.current?.clientHeight ?? 130) - 125)) }}>
       <strong>{hover.info.name}</strong><dl>
         <dt>Dimensions:</dt><dd>{hover.info.dims}</dd>
@@ -319,6 +328,6 @@ export function AssemblyViewport({
       </dl>
     </div>}
     </div>
-    <div className="viewport-status"><span>{navigation === 'orbit' ? 'Drag to orbit' : 'Drag to pan'} · Right drag to pan · Scroll / pinch to zoom</span></div>
+    <div className="viewport-status"><PanControls onPan={moveView} /><span>{navigation === 'orbit' ? 'Drag to orbit' : 'Drag to pan'} · Scroll to zoom</span><ZoomControls onZoom={zoomView} onFit={fitView} /></div>
   </div>
 }

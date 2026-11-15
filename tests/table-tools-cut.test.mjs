@@ -66,11 +66,16 @@ test('schema 3 round-trips selected tools exactly; v2 imports empty tools withou
   assert.deepEqual(model.projectConfig(reviewed.config), saved)
 })
 
-test('compact thickness inherits the table across geometry, selection and project links without changing other tools', () => {
+test('all five tools inherit table stock; unreviewed saved mismatches cannot reach fabrication', () => {
   const source = selection('compact', 'compactExtension', { copies: 2, size: { thickness: 6 } })
   const original = structuredClone(source)
   for (const thickness of [4, 6, 8]) {
-    const c = table({ thickness, nestingTools: [source] })
+    const unresolved = table({ thickness, nestingTools: [source] })
+    const imported = codec.parseTableProject(JSON.stringify(model.projectConfig(unresolved)))
+    assert.equal(imported.kind, thickness === source.project.size.thickness ? 'current' : 'migration')
+    if (thickness === source.project.size.thickness) assert.doesNotThrow(() => cut.tableCutInventory(unresolved))
+    else assert.throws(() => cut.tableCutInventory(unresolved), error => error.code === 'thickness-mismatch')
+    const c = table({ thickness, nestingTools: tools.toolSelectionsAtTable([source], unresolved) })
     const inventory = cut.tableCutInventory(c), resolved = inventory.selections[0]
     assert.equal(resolved.id, source.id)
     assert.equal(resolved.project.copies, 2)
@@ -90,9 +95,12 @@ test('compact thickness inherits the table across geometry, selection and projec
     assert.equal(codec.tableProjectFromQuery(new URLSearchParams({ toolProject: tools.projectJson(source.project) })), undefined)
   }
   assert.deepEqual(source, original, 'inherited stock never mutates an input snapshot')
-  for (const id of tools.toolIds.filter(id => !tools.toolUsesTableStock(id))) {
+  for (const id of tools.toolIds) {
     const project = tools.toolDefaults[id]
-    assert.strictEqual(tools.projectAtTable(project, table({ thickness: 4 })), project)
+    const resolved = tools.projectAtTable(project, table({ thickness: 4 }))
+    assert.equal(resolved.size.thickness, 4)
+    assert.equal(resolved.tool, id)
+    assert.ok(tools.projectModelParts(resolved).every(part => part.thickness === 4))
   }
   for (const thickness of [3, 9, 10]) {
     assert.throws(() => tools.toolSelectionsAtTable([source], table({ thickness })))
@@ -103,16 +111,18 @@ test('compact thickness inherits the table across geometry, selection and projec
 test('vise inherits the entire mounting interface across saved tools, table JSON and mixed archives', async () => {
   const source = selection('vise', 'viseModule', { copies: 2, size: { thickness: 6 } }), original = structuredClone(source)
   for (const thickness of [4, 6, 8]) for (const grid of ['square', 'staggered']) {
-    const c = table({ thickness, grid, nestingTools: [source] }), inventory = cut.tableCutInventory(c)
+    const c = table({ thickness, grid }), selected = tools.toolSelectionsAtTable([source], c)
+    const inventory = cut.tableCutInventory({ ...c, nestingTools: selected })
     const resolved = inventory.selections[0].project
     assert.deepEqual(resolved.size, { ...source.project.size, thickness, holeDiameter: c.holeDiameter, holePitch: c.pitch, holeInset: c.margin, grid })
     assert.equal(resolved.copies, 2)
-    const loaded = codec.parseTableProject(JSON.stringify(model.projectConfig(c))).config
+    const loaded = codec.parseTableProject(JSON.stringify(model.projectConfig({ ...c, nestingTools: selected }))).config
     assert.deepEqual(loaded.nestingTools, inventory.selections)
     assert.deepEqual(codec.parseTableProject(codec.tableProjectFromQuery(codec.tableProjectQuery(loaded))).config.nestingTools, inventory.selections)
   }
   assert.deepEqual(source, original)
-  const c = table({ grid: 'staggered', nestingTools: [source] }), run = finish(c)
+  const host = table({ grid: 'staggered' })
+  const c = { ...host, nestingTools: tools.toolSelectionsAtTable([source], host) }, run = finish(c)
   const zip = await JSZip.loadAsync(await dxf.nestedArchive(c, run.result, run.stock).generateAsync({ type: 'nodebuffer' }))
   const saved = JSON.parse(await zip.file('project.json').async('string'))
   const manifest = JSON.parse(await zip.file('layout.json').async('string'))
@@ -128,7 +138,8 @@ test('vise inherits the entire mounting interface across saved tools, table JSON
   const wider = { ...source, project: { ...source.project, size: { ...source.project.size, width: 600 } } }
   for (const [changes, selected] of [[{ height: 50, tabWidth: 10 }, source], [{ length: 500, width: 500 }, wider]]) {
     assert.throws(() => tools.toolSelectionsAtTable([selected], table(changes)), error => error.code === 'mounting-grid-mismatch')
-    assert.throws(() => cut.tableCutInventory(table({ ...changes, nestingTools: [selected] })), /complete vise mounting grid/)
+    const host = table(changes)
+    assert.throws(() => cut.tableCutInventory({ ...host, nestingTools: tools.toolSelectionsAtTable([selected], host) }), /complete vise mounting grid/)
     assert.throws(() => codec.parseTableProject(JSON.stringify(model.projectConfig(table({ ...changes, nestingTools: [selected] })))), /complete vise mounting grid/)
   }
   assert.deepEqual(source, original, 'rejected changes never mutate the retained selection')
@@ -157,7 +168,8 @@ test('saved table vise selections require geometry review without losing table s
 })
 
 test('compact shared export records inherited stock and refuses the previous layout after a thickness change', async () => {
-  const c = table({ nestingTools: [selection('compact', 'compactExtension', { copies: 2, size: { thickness: 6 } })] })
+  const host = table()
+  const c = { ...host, nestingTools: tools.toolSelectionsAtTable([selection('compact', 'compactExtension', { copies: 2, size: { thickness: 6 } })], host) }
   const run = finish(c)
   assert.equal(cut.validateTableCut(c, run.result, run.stock), true)
   const zip = await JSZip.loadAsync(await dxf.nestedArchive(c, run.result, run.stock).generateAsync({ type: 'nodebuffer' }))

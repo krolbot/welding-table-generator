@@ -172,7 +172,7 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
   const result = nesting.nestParts(tools.projectParts(p), { ...tools.projectNestingOptions(p), attempts: 12 })
   assert.equal(result.placements.length, 10); assert.equal(result.unplaced.length, 0)
   assert.equal(tools.validProjectLayout(p, result, tools.projectKey(p)), true)
-  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, tools.projectKey(p)).generateAsync({ type: 'nodebuffer' }))
+  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, tools.projectKey(p), { thickness: p.size.thickness }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(JSON.parse(await zip.file('project.json').async('string')), p)
   const assembly = JSON.parse(await zip.file('assembly.json').async('string'))
   assert.equal(assembly.placements.length, 5)
@@ -193,7 +193,7 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, sheet.placements.reduce((n, p) => n + p.part.contours.flat().filter(s => s.type === 'arc').length, 0))
   }
   assert.equal(tools.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, tools.projectKey(p)), false)
-  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, slotInnerRadius: 31 } }, result, tools.projectKey(p)), error => error.code === 'invalid-layout')
+  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, slotInnerRadius: 31 } }, result, tools.projectKey(p), { thickness: p.size.thickness }), error => error.code === 'invalid-layout')
 })
 
 test('vise rejects unsafe grid, slots, stock and overlapping cuts instead of losing mandatory holes', () => {
@@ -207,8 +207,8 @@ test('equal-length vise projects retain their original data and require review b
   const old = { ...tools.defaultViseModuleProject, version: 1, copies: 2, size: { ...vise.viseModuleDefaults, slotLength: 75 } }
   const original = tools.projectJson(old)
   assert.throws(() => tools.parseToolProject(original), error => error.code === 'geometry-migration')
-  assert.throws(() => exporter.toolPartsArchive(old), error => error.code === 'geometry-migration')
-  assert.throws(() => exporter.toolStripDxf(old), error => error.code === 'geometry-migration')
+  assert.throws(() => exporter.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'geometry-migration')
+  assert.throws(() => exporter.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'geometry-migration')
   const loaded = tools.readToolProject(original)
   assert.equal(loaded.kind, 'migration'); assert.match(loaded.message, /15 mm/)
   assert.deepEqual(loaded.project, { ...tools.defaultViseModuleProject, copies: 2 })

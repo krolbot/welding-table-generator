@@ -23,7 +23,7 @@ import { downloadFull, downloadZip } from './dxf'
 import { TableSheetNesting } from './SheetNesting'
 import { Icon } from './Icon'
 import { NumberInput } from './NumberInput'
-import { Checkbox, GeneratorShell, NumberField, ProductionEstimate, ProjectActions, SliderField, VisualizationSettings } from './GeneratorWorkspace'
+import { Checkbox, GeneratorShell, NumberField, ParameterGroup, ProductionEstimate, ProjectActions, SliderField, VisualizationSettings } from './GeneratorWorkspace'
 import { PartsLayout } from './PartsLayout'
 import { copyText, downloadFile } from './projectIO'
 import { useWorkspaceNavigation } from './viewNavigation'
@@ -144,6 +144,10 @@ export default function App() {
   const setNumeric = (key: NumericKey, value: number) => {
     if (!Number.isFinite(value)) return false
     const next = { ...config, [key]: clampNumeric(key, value) }
+    if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key) && maxTabWidth(next) < numericBounds.tabWidth.min) {
+      setNotice('Table height and stock leave no room for locating tabs. Increase the height or reduce thickness.')
+      return false
+    }
     if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key)) next.tabWidth = Math.min(next.tabWidth, maxTabWidth(next))
     if (key === 'legBoltDiameter' || key === 'legPatternX' || key === 'legPatternY') {
       next.legPatternX = Math.max(next.legPatternX, next.legBoltDiameter * 1.5)
@@ -249,13 +253,19 @@ export default function App() {
     settings={<>
           {review && <section role="alert" className="project-review"><h3>Project review required</h3><p className="socket-error">{review.message}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'welding-table-original.txt', 'text/plain')}>Download original data</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Apply {migrationPreset} origin ({presetValues[migrationPreset].margin} mm)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? review.change === 'table-grid' ? `Keep saved origin (${review.config.margin} mm)` : 'Apply corrected tool geometry' : 'Start a new table project'}</button></section>}
           <fieldset className="table-settings" disabled={Boolean(review)}>
-          <TableTools config={config} onChange={nestingTools => patch('nestingTools', nestingTools)} onChoose={() => selectWorkspace('tools')} onNotice={setNotice} />
-          <section className="fixture-card">
-            <h3>Fixture System</h3>
+          <ParameterGroup title={<>Dimensions ({unitLabel})</>} defaultOpen>
+            {slider('length', 'Length (L)', 500, 5000, 50)}
+            {slider('width', 'Width (W)', 400, 5000, 50)}
+            {slider('height', 'Table Height (H)', 50, 500, 10)}
+          </ParameterGroup>
+          <ParameterGroup title={<>Fixture System</>} defaultOpen>
+
             <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={12} />}{preset}</button>)}</div>
             <div className="fields three">{numericInput('holeDiameter', 'Hole Ø', numericBounds.holeDiameter.min, numericBounds.holeDiameter.max, 1)}{numericInput('pitch', 'Pitch', config.holeDiameter + 10, numericBounds.pitch.max, 5)}{numericInput('margin', 'Grid origin', config.holeDiameter / 2 + 5, Math.min(config.length, config.width) / 2 - 10, 5)}</div>
+            <details className="field-help"><summary>Grid origin & compatibility</summary>
             <p className="grid-summary">Ø{numberLabel(config.holeDiameter, 3)} / {numberLabel(config.pitch, 3)} {unitLabel} pitch. Origin: {numberLabel(config.margin, 3)} {unitLabel} from the top plate’s −X / −Z edges; skirt rows start {numberLabel(config.margin, 3)} {unitLabel} below the working surface.</p>
             <p>Origins do not move when dimensions change. Any remainder stays at the far edges. Joint cuts and manual hole edits can interrupt the grid. Displaying inches does not select a 5/8″ fixture system.</p>
+            </details>
             <div className="hole-pattern"><span>Hole Pattern</span><div className="grid-buttons"><button className={config.grid === 'square' ? 'active' : ''} onClick={() => patch('grid', 'square')}>Square grid</button><button className={config.grid === 'staggered' ? 'active' : ''} onClick={() => patch('grid', 'staggered')}>Diagonal grid</button></div>{config.grid === 'staggered' && <p>Square grid plus cell-centre holes: half-pitch rows and alternating half-pitch column offsets, identical on the top and skirts.</p>}</div>
             <div className="fixture-options">{toggle('skirtHoles', 'Skirt Holes')}
 
@@ -263,13 +273,8 @@ export default function App() {
               {config.engraving && <div className="engraving-options"><span>Engraving layout</span><div className="grid-buttons"><button title="Lines run through the hole centres" className={config.engravingMode === 'through' ? 'active' : ''} onClick={() => patch('engravingMode', 'through')}>Through holes</button><button title="Lines run between the holes, forming cells" className={config.engravingMode === 'between' ? 'active' : ''} onClick={() => patch('engravingMode', 'between')}>Between (cells)</button></div></div>}
               {toggle('nameMarking', 'Part Name Marking')}
             </div>
-          </section>
-          <section><h3>Dimensions ({unitLabel})</h3>
-            {slider('length', 'Length (L)', 500, 5000, 50)}
-            {slider('width', 'Width (W)', 400, 5000, 50)}
-            {slider('height', 'Table Height (H)', 50, 500, 10)}
-          </section>
-          <section className="internal-frame"><h3><Icon name="frame" size={14} />Internal Frame</h3>{toggle('ribs', 'Generate Support Ribs')}
+          </ParameterGroup>
+          <ParameterGroup title={<>Internal Frame</>}>{toggle('ribs', 'Generate Support Ribs')}
             {config.ribs && <div className="indented">
               {slider('ribSpacing', `Rib Spacing (${unitLabel})`, 200, 600, 50)}
               {toggle('ribAccessHoles', 'Rib access holes')}
@@ -278,8 +283,8 @@ export default function App() {
                 <p>One circular opening in every bay of each long and short rib. At least {numberLabel(ribAccess?.web ?? 0, 2)} {unitLabel} of material remains around the opening, clear of the cross-lap slots. This geometric spacing is not a load rating.</p>
               </>}
             </div>}
-          </section>
-          <section><h3><Icon name="frame" size={14} />Tabs & Slots (Joints)</h3>
+          </ParameterGroup>
+          <ParameterGroup title={<>Tabs & Slots (Joints)</>}>
             <div className="joint-fields">
               {numericInput('thickness', `Metal Thickness (${unitLabel})`, numericBounds.thickness.min, numericBounds.thickness.max, 1)}
               {numericInput('tabWidth', `Tab Width (${unitLabel})`, numericBounds.tabWidth.min, maxTabWidth(config), 5)}
@@ -288,8 +293,8 @@ export default function App() {
                 {config.dogBones && <div className="indented relief-control">{slider('dogBoneDiameter', `Diameter (${unitLabel})`, 0.5, 5, 0.5)}</div>}
               </div>
             </div>
-          </section>
-          <section className="ergonomics"><h3><Icon name="settings" size={14} />Ergonomics (Construction)</h3>
+          </ParameterGroup>
+          <ParameterGroup title={<>Ergonomics (Construction)</>}>
             {toggle('legMounts', 'Leg Mounts')}
             {config.legMounts && <div className="leg-options">
               <div className="grid-buttons leg-style"><button className={config.legMountStyle === 'boltPattern' ? 'active' : ''} onClick={() => patch('legMountStyle', 'boltPattern')}>Bolt pattern</button><button className={config.legMountStyle === 'cornerPlate' ? 'active' : ''} onClick={() => patch('legMountStyle', 'cornerPlate')}>Corner plates</button></div>
@@ -310,28 +315,28 @@ export default function App() {
               </>}
             </div>}
             {toggle('liftingHoles', 'Lifting Holes')}
-          </section>
-          <section><h3><Icon name="target" size={14} />Custom Holes</h3><p>X and Y are measured from the centre of the part — the same origin the exported DXF uses. A hole is added to every copy of the selected part.</p>
+          </ParameterGroup>
+          <ParameterGroup title={<>Custom Holes</>}><p>X and Y are measured from the centre of the part — the same origin the exported DXF uses. A hole is added to every copy of the selected part.</p>
             {config.customHoles.map(hole => <div className="hole-row" key={hole.id}>
               <div className="hole-part"><select aria-label="Part" value={hole.part} onChange={event => updateHole(hole.id, 'part', event.target.value)}>{partNames.map(name => <option key={name} value={name}>{partLabels[name]}</option>)}</select><button title="Remove this hole" aria-label="Remove hole" onClick={() => patch('customHoles', config.customHoles.filter(item => item.id !== hole.id))}><Icon name="trash" size={12} /></button></div>
               <div className="fields three">{(['x', 'y', 'd'] as const).map(key => <label className="field" key={key}><span>{key === 'd' ? 'Ø' : key.toUpperCase()}</span><NumberInput aria-label={key === 'd' ? 'Diameter' : key.toUpperCase()} step={(key === 'd' ? 1 : 5) / (config.units === 'mm' ? 1 : mmPerInch)} min={key === 'd' ? 0.1 / (config.units === 'mm' ? 1 : mmPerInch) : undefined} value={numberLabel(hole[key], 3)} onValue={value => updateHole(hole.id, key, String(value))} /></label>)}</div>
             </div>)}
             <button className="secondary full" onClick={addHole}><Icon name="plus" size={14} />Add hole</button>{config.customHoles.length > 0 && <p>Use Measure in 2D to check hole positions.</p>}
-          </section>
-          <section className="removed-holes"><h3><Icon name="trash" size={14} />Removed Holes{config.removedHoles.length > 0 && <small>{config.removedHoles.length}</small>}</h3>
+          </ParameterGroup>
+          <ParameterGroup title={<>Removed Holes{config.removedHoles.length > 0 && <small>{config.removedHoles.length}</small>}</>}>
             {config.removedHoles.length ? <><ul className="removed">{config.removedHoles.map((hole, index) => <li key={typeof hole === 'string' ? hole : hole.id}>
               {typeof hole === 'string' ? <code>{hole}</code> : <><span>{partLabels[hole.part]}</span><code>{numberLabel(hole.x, 2)} : {numberLabel(hole.y, 2)}</code></>}
               <button title="Restore this hole" aria-label="Restore hole" onClick={() => patch('removedHoles', config.removedHoles.filter((_, item) => item !== index))}><Icon name="plus" size={12} /></button>
-            </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Restore all</button><p>A removed hole disappears from every copy of that part. Coordinates are relative to the part centre.</p></> : <p>Switch on the Holes tool above the 2D drawing, then click any hole to remove it. Removed holes are listed here and can be restored.</p>}
-          </section>
-          <VisualizationSettings value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} />
-          <p>Grid geometry does not certify cross-brand fit. Confirm the fastener’s grip range for {numberLabel(config.thickness, 3)} {unitLabel} stock, hole finish/tolerance and actual accessory dimensions before cutting.</p>
+            </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Restore all</button><p>A removed hole disappears from every copy of that part. Coordinates are relative to the part centre.</p></> : <p>In Parts, choose Remove holes and click a hole. Removed holes are listed here and can be restored.</p>}
+          </ParameterGroup>
+          <TableTools config={config} onChange={nestingTools => patch('nestingTools', nestingTools)} onChoose={() => selectWorkspace('tools')} onNotice={setNotice} />
           </fieldset>
     </>}
+    visualization={<VisualizationSettings value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} />}
     production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? review.message : geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
-    actions={<ProjectActions onOpen={file => void open(file)} onSave={save} onShare={() => void share()} disabled={Boolean(review || geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => setView('sheet') } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
+    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={save} onShare={() => { onClose(); void share() }} disabled={Boolean(review || geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => { onClose(); setView('sheet') } } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
     seo={<article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose D16/50, D28/100 or a custom hole diameter, pitch and grid origin. Square and diagonal grids share fixed edge and working-surface datums across the top and skirts. Grid geometry alone does not certify accessory fit.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>}>
-    {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly review the corrected geometry in the sidebar.</div>
+    {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then review the corrected geometry in Parameters.</div>
       : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
       : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} baseline={tableLayout} onBaseline={rememberTableLayout} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
       : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}

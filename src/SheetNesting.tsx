@@ -6,7 +6,7 @@ import { nestingKey, type NestingRequest, type NestingResponse } from './nesting
 import type { NestingResult } from './nesting'
 import type { NestingJob, NestingRun } from './nestingJob'
 import { tableNestingJob, tableLayoutKey, tableCutEngravings, validateTableCut, type TableLayoutSnapshot } from './tableCutJob'
-import { NumberField } from './GeneratorWorkspace'
+import { NumberField, useWideWorkspace, WorkspaceDialog } from './GeneratorWorkspace'
 import { Icon } from './Icon'
 import { DrawingViewport } from './DrawingViewport'
 import { drawingFeatures } from './drawingInteraction'
@@ -33,6 +33,9 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const [sheetIndex, setSheetIndex] = useState(0)
   const [mode, setMode] = useState<'3d' | '2d'>('3d')
   const [retry, setRetry] = useState(0)
+  const wide = useWideWorkspace()
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  useEffect(() => setInspectorOpen(false), [wide])
   const control = useRef<{ worker: Worker; running: boolean; busy: boolean; limit: number; elapsed: number; exhausted: boolean } | null>(null)
   const sourceRef = useRef(job)
   sourceRef.current = job
@@ -91,7 +94,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const selected = Math.max(0, Math.min(sheetIndex, (result?.sheets.length ?? 1) - 1))
   const sheet = result?.sheets[selected]
   const metric = result?.metrics.sheets[selected]
-  const features = useMemo(() => drawingFeatures(sheet?.placements.map(item => ({ part: item.part, position: item.translation, rotation: item.rotation })) ?? []), [sheet])
+  const features = useMemo(() => sheet?.placements.map(item => drawingFeatures([{ part: item.part, position: item.translation, rotation: item.rotation }])) ?? [], [sheet])
   const focused = useMemo(() => result && sheet ? { ...result, sheets: [sheet], placements: sheet.placements } : undefined, [result, sheet])
   const units = unitSystem === 'mm' ? 'mm' : 'in'
   const complete = run?.phase === 'nesting' && result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(run, key))
@@ -100,21 +103,55 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
     aria-label={label} value={display(settings[field], unitSystem, 2)} min={0} max={Number(display(maxGap, unitSystem, 2))} step={unitSystem === 'mm' ? 0.5 : 0.01}
     onValue={value => { if (value !== Number(display(settings[field], unitSystem, 2))) return onChange({ [field]: Math.max(0, Math.min(maxGap, readDisplay(value, unitSystem))) }) }} />
 
+  const statusLabel = status === 'running' ? 'Optimizing' : status === 'pausing' ? 'Finishing pass' : status === 'paused' ? 'Paused' : status === 'error' ? 'Stopped' : 'Finished'
+  const inspector = <>
+      <header>{wide && <h3 id="nesting-title">Sheet nesting</h3>}<span className="nesting-status">{statusLabel}</span></header>
+      <p className="nesting-summary" role="status">{run?.phase === 'capacity' ? 'Calculating table-only capacity. Selected tools are not yet placed; export is disabled.' : result ? !result.validation.valid ? 'Validation failed. Export is disabled.' : result.unplaced.length ? `${result.unplaced.length} parts not placed. Export is disabled.` : `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Calculating the first verified layout…'}</p>
+      {error && <p role="alert" className="nesting-error" data-error-code={error.code}>{error.message}</p>}
+      {result && !result.validation.valid && <p className="nesting-error">{result.validation.violations[0]?.message}</p>}
+      {run?.phase === 'nesting' && run.stock.kind === 'table-offcuts' && <p className="nesting-hint">Table-only capacity: {run.stock.baseline.sheets.length} sheet(s). No extra sheets for tools. Table parts may be rearranged. Export requires every selected tool in full.</p>}
+      {result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>Not placed in this search. Continue improving, change quantities or remove tools; no partial job can be exported.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
+      <button className="nesting-export" disabled={!complete} onClick={() => { if (run?.phase === 'nesting') void onExport({ ...run, result: { ...run.result, stats: stats.search ?? run.result.stats } }).catch(error => onNotice(error instanceof Error ? error.message : 'Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet ZIP</button>
+      {result && result.sheets.length > 0 && <>
+        <label className="field"><span>Preview sheet</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Sheet {i + 1} · {s.placements.length} parts</option>)}</select></label>
+        <dl className="nesting-metrics">
+          <div><dt>Outline coverage</dt><dd>{(100 * result.outlineArea / (result.sheets.length * settings.length * settings.width)).toFixed(1)}%</dd></div>
+          <div><dt>Area lower bound</dt><dd>{result.metrics.sheetLowerBound} sheet{result.metrics.sheetLowerBound === 1 ? '' : 's'}</dd></div>
+          {metric && <div><dt>Clear edge strip, this sheet</dt><dd>{display(metric.remnant.width, unitSystem, 1)} × {display(metric.remnant.height, unitSystem, 1)} {units}</dd></div>}
+        </dl>
+      </>}
+      <div className="nesting-search">
+        <label className="field"><span>Search budget per run</span><select value={budget} onChange={event => setBudget(Number(event.target.value))}><option value={30}>30 seconds</option><option value={60}>1 minute</option><option value={180}>3 minutes</option></select></label>
+        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Pause search</button> : <button disabled={status === 'done' || status === 'error'} onClick={resume}>Continue improving</button>}<button onClick={() => setRetry(value => value + 1)}>Restart</button></div>
+        <p>{stats.attempts} orders evaluated · {(stats.elapsedMs / 1000).toFixed(1)} s compute time.</p>
+      </div>
+      <details><summary>Spacing & batch</summary>
+        <div className="fields">{spacingField('edgeGap', 'Sheet edge gap')}{spacingField('partGap', 'Part gap')}</div>
+        <NumberField label={batchLabel} min={1} max={10} step={1} value={settings.copies} onValue={value => onChange({ copies: Math.max(1, Math.min(10, Math.floor(value))) })} />
+        <p>Rotations are chosen automatically: quarter turns first, then 15° refinements within the search budget. Batch affects sheet nesting only, not the assembled model or individual part geometry. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
+      </details>
+      <details><summary>Layout & cutting notes</summary>
+        {result && <p className="nesting-hint">Coverage includes holes. Green in 2D marks an empty edge strip, not all reusable offcuts. {complete && result.sheets.length === result.metrics.sheetLowerBound ? 'Sheet count meets the area lower bound; offcut shape can still improve.' : 'The lower bound is not a promise that this sheet count is feasible.'}</p>}
+      <p className="nesting-hint">Native LINE / ARC / CIRCLE output, placement manifest and project settings. Contour search is heuristic, not a global optimum proof. Confirm kerf, lead-ins, clamps and cutting order in CAM.</p>
+        <p>Pausing or reaching the budget finishes the current pass. Export keeps the best verified layout.</p>
+      </details>
+  </>
+
   return <div className="sheet-workspace">
     <div className="sheet-canvas">
       {focused ? mode === '3d' ? render3D(focused)
-        : <DrawingViewport bounds={{ width: settings.length, height: settings.width }} features={features} geometryKey={`${selected}:${JSON.stringify(features)}`} units={unitSystem} label={`Sheet ${selected + 1} cutting layout`}>
-          <g>
+        : <DrawingViewport bounds={{ width: settings.length, height: settings.width }} parts={features} geometryKey={`${selected}:${JSON.stringify(features)}`} units={unitSystem} label={`Sheet ${selected + 1} cutting layout`} initialFocus="overview">
+          {focusedPart => <g>
             <rect className="stock-outline" x={0} y={0} width={settings.length} height={settings.width} />
             <rect className="stock-margin" x={settings.edgeGap} y={settings.edgeGap} width={Math.max(0, settings.length - 2 * settings.edgeGap)} height={Math.max(0, settings.width - 2 * settings.edgeGap)} />
             {metric && metric.remnant.width > 0 && metric.remnant.height > 0 && <rect className="stock-remnant" {...metric.remnant} />}
-            {sheet!.placements.map(p => <g key={`${p.part.name}:${p.instance}`} className="nested-part" transform={`translate(${p.translation.x} ${p.translation.y}) rotate(${p.rotation})`}>
+            {sheet!.placements.map((p, index) => (focusedPart === null || focusedPart === index) && <g key={`${p.part.name}:${p.instance}`} className="nested-part" transform={`translate(${p.translation.x} ${p.translation.y}) rotate(${p.rotation})`}>
               <title>{p.part.label} · {p.instance + 1} · {p.rotation}°</title>
               <path d={p.part.contours.map(svgContourPath).join(' ')} fillRule="evenodd" />
               {p.part.holes.map(hole => <circle key={hole.id} cx={hole.x} cy={hole.y} r={hole.d / 2} />)}
               {getEngravings?.(p.part).map((line, i) => <line key={i} className="nested-engraving" x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y} />)}
             </g>)}
-          </g>
+          </g>}
         </DrawingViewport>
         : <div className="three-loading" role="status">{status === 'error' ? 'Calculation failed' : result ? 'No parts placed' : 'Preparing a first layout…'}</div>}
       <div className="sheet-view-tools">
@@ -122,35 +159,10 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
         <button aria-pressed={mode === '2d'} onClick={() => setMode('2d')}>2D cut plan</button>
       </div>
     </div>
-    <section className="sheet-panel" aria-labelledby="nesting-title">
-      <header><h3 id="nesting-title">Sheet nesting</h3><span className="nesting-status">{status === 'running' ? 'Optimizing' : status === 'pausing' ? 'Finishing pass' : status === 'paused' ? 'Paused' : status === 'error' ? 'Stopped' : 'Finished'}</span></header>
-      <p className="nesting-summary" role="status">{run?.phase === 'capacity' ? 'Calculating table-only capacity. Selected tools are not yet placed; export is disabled.' : result ? !result.validation.valid ? 'Validation failed. Export is disabled.' : result.unplaced.length ? `${result.unplaced.length} parts not placed. Export is disabled.` : `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Calculating the first verified layout…'}</p>
-      {error && <p role="alert" className="nesting-error" data-error-code={error.code}>{error.message}</p>}
-      {result && !result.validation.valid && <p className="nesting-error">{result.validation.violations[0]?.message}</p>}
-      {run?.phase === 'nesting' && run.stock.kind === 'table-offcuts' && <p className="nesting-hint">Table-only capacity: {run.stock.baseline.sheets.length} sheet(s). No extra sheets for tools. Table parts may be rearranged. Export requires every selected tool in full.</p>}
-      {result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>Not placed in this search. Continue improving, change quantities or remove tools; no partial job can be exported.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
-      {result && result.sheets.length > 0 && <>
-        <label className="field"><span>Preview sheet</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Sheet {i + 1} · {s.placements.length} parts</option>)}</select></label>
-        <dl className="nesting-metrics">
-          <div><dt>Blank-outline coverage</dt><dd>{(100 * result.outlineArea / (result.sheets.length * settings.length * settings.width)).toFixed(1)}%</dd></div>
-          <div><dt>Area lower bound</dt><dd>{result.metrics.sheetLowerBound} sheet(s)</dd></div>
-          {metric && <div><dt>Clear edge strip, this sheet</dt><dd>{display(metric.remnant.width, unitSystem, 1)} × {display(metric.remnant.height, unitSystem, 1)} {units}</dd></div>}
-        </dl>
-        <p className="nesting-hint">Coverage includes holes. Green in 2D marks an empty edge strip, not all reusable offcuts. {complete && result.sheets.length === result.metrics.sheetLowerBound ? 'Sheet count meets the area lower bound; offcut shape can still improve.' : 'The lower bound is not a promise that this sheet count is feasible.'}</p>
-      </>}
-      <div className="nesting-search">
-        <label className="field"><span>Search budget per run</span><select value={budget} onChange={event => setBudget(Number(event.target.value))}><option value={30}>30 seconds</option><option value={60}>1 minute</option><option value={180}>3 minutes</option></select></label>
-        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Pause search</button> : <button disabled={status === 'done' || status === 'error'} onClick={resume}>Continue improving</button>}<button onClick={() => setRetry(value => value + 1)}>Restart</button></div>
-        <p>{stats.attempts} orders evaluated · {(stats.elapsedMs / 1000).toFixed(1)} s compute time. Pausing or reaching the budget finishes the current pass. Export keeps the best verified layout.</p>
-      </div>
-      <details><summary>Spacing & batch</summary>
-        <div className="fields">{spacingField('edgeGap', 'Sheet edge gap')}{spacingField('partGap', 'Part gap')}</div>
-        <NumberField label={batchLabel} min={1} max={10} step={1} value={settings.copies} onValue={value => onChange({ copies: Math.max(1, Math.min(10, Math.floor(value))) })} />
-        <p>Rotations are chosen automatically: quarter turns first, then 15° refinements within the search budget. Batch affects sheet nesting only, not the assembled model or individual part geometry. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
-      </details>
-      <button className="nesting-export" disabled={!complete} onClick={() => { if (run?.phase === 'nesting') void onExport({ ...run, result: { ...run.result, stats: stats.search ?? run.result.stats } }).catch(error => onNotice(error instanceof Error ? error.message : 'Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet DXFs (ZIP)</button>
-      <p className="nesting-hint">Native LINE / ARC / CIRCLE output, placement manifest and project settings. Contour search is heuristic, not a global optimum proof. Confirm kerf, lead-ins, clamps and cutting order in CAM.</p>
-    </section>
+    {wide ? <section className="sheet-panel" aria-labelledby="nesting-title">{inspector}</section> : <>
+      <button className="sheet-mobile-summary" aria-haspopup="dialog" aria-controls="sheet-dialog" onClick={() => setInspectorOpen(true)}><span><strong>{complete && result ? `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Sheet nesting'}</strong><small>{statusLabel} · Settings & export</small></span><Icon name="chevron" /></button>
+      <WorkspaceDialog id="sheet-dialog" title="Sheet nesting" className="sheet-dialog" open={inspectorOpen} onClose={() => setInspectorOpen(false)}><div className="sheet-inspector">{inspector}</div></WorkspaceDialog>
+    </>}
   </div>
 }
 

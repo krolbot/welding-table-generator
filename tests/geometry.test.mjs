@@ -110,7 +110,7 @@ test('lifting and name-marking contracts hold across boundary configurations and
 
   for (const values of cases) {
     // Small lifting/marking fixtures do not accommodate the corner-leg assembly.
-    const config = { ...fullConfig(), ...values, engraving: false, legMounts: false }
+    const config = { ...fullConfig(), ...values, tabWidth: Math.min(50, Math.floor((values.height - values.thickness) / 2) - 5), engraving: false, legMounts: false }
     const parts = geometry.makeParts(config)
     const skirt = parts.find(part => part.name === 'longSkirt')
     assert.ok(skirt)

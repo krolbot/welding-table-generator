@@ -64,7 +64,7 @@ const rebuildDimensions = (runtime: AssemblyRuntime, project: ToolProject, showD
   if (!showDimensions) return
   const { length, width, height } = projectEnvelope(project)
   const label = (value: number) => `${Number(display(value, units, 2))} ${units === 'mm' ? 'mm' : 'in'}`
-  const labelSize = Math.max(length, width, height) * 0.22
+
   const offset = Math.max(length, width, height) * 0.08
   const x = -offset
   const y = -offset
@@ -73,10 +73,14 @@ const rebuildDimensions = (runtime: AssemblyRuntime, project: ToolProject, showD
   addDimensionLine(runtime.dimensions, new THREE.Vector3(0, y, z), new THREE.Vector3(length, y, z), new THREE.Vector3(0, 1, 0), runtime.colors.dim)
   addDimensionLine(runtime.dimensions, new THREE.Vector3(x, 0, z), new THREE.Vector3(x, width, z), new THREE.Vector3(1, 0, 0), runtime.colors.dim)
   addDimensionLine(runtime.dimensions, new THREE.Vector3(x, y, 0), new THREE.Vector3(x, y, height), verticalNormal, runtime.colors.dim)
+  // The compact height callout sits below the model, away from its two horizontal callouts on narrow screens.
+  const heightLabelAnchor = project.tool === 'compactExtension'
+    ? new THREE.Vector3(x, y, 0).addScaledVector(verticalNormal, Math.max(width, height) * 0.9)
+    : new THREE.Vector3(x, y, height / 2).addScaledVector(verticalNormal, 40)
   ;[
-    dimensionLabel(label(length), new THREE.Vector3(length / 2, y - 40, z), runtime.colors.dim, labelSize),
-    dimensionLabel(label(width), new THREE.Vector3(x - 40, width / 2, z), runtime.colors.dim, labelSize),
-    dimensionLabel(label(height), new THREE.Vector3(x, y, height / 2).addScaledVector(verticalNormal, 40), runtime.colors.dim, labelSize),
+    dimensionLabel(label(length), new THREE.Vector3(length / 2, y - 40, z), runtime.colors),
+    dimensionLabel(label(width), new THREE.Vector3(x - 40, width / 2, z), runtime.colors),
+    dimensionLabel(label(height), heightLabelAnchor, runtime.colors),
   ].forEach(sprite => { if (sprite) runtime.dimensions.add(sprite) })
 }
 

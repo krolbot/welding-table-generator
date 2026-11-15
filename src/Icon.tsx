@@ -25,6 +25,7 @@ const paths = {
   archive: <path d="M3 4h18v4H3ZM5 8v12h14V8m-9 4h4" />,
   scale: <><path d="M12 3v18m-6 0h12M4 7h16M5 7l-4 8h8ZM19 7l-4 8h8Z" /></>,
   minus: <path d="M4 12h16" />,
+  move: <path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4" />,
   hand: <><path d="M8 13V6a2 2 0 0 1 4 0v6m0-6a2 2 0 0 1 4 0v6m0-3a2 2 0 0 1 4 0v7c0 4-3 6-7 6-3 0-5-2-7-5l-3-4a2 2 0 0 1 3-2l2 2Z" /></>,
   orbit: <><ellipse cx="12" cy="12" rx="10" ry="5" transform="rotate(-30 12 12)" /><circle cx="12" cy="12" r="3" /><path d="m19 3 3 2-1 4" /></>,
 

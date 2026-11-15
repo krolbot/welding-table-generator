@@ -21,7 +21,7 @@ const onLattice = (x, depth, config) => {
   const column = (x - config.margin - (config.grid === 'staggered' && Math.round(row) % 2 ? config.pitch / 2 : 0)) / config.pitch
   near(column, Math.round(column), 'column phase')
 }
-const table = (values = {}) => ({ ...model.defaults, length: 1460, width: 1160, tabWidth: 30, ribs: false, legPlateSize: 240, legPlateHoleSpacing: 140, ...values })
+const table = (values = {}) => ({ ...model.defaults, length: 1460, width: 1160, tabWidth: 30, ribs: false, legPlateSize: 240, legPlateHoleSpacing: 140, legBottomOffset: 20, legPatternY: 35, ...values })
 
 test('D16/D28 fixed top and skirt datums survive dimensions, stock, mounts and both lattices', () => {
   let checked = 0

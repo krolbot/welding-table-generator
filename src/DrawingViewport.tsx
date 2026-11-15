@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 import { Icon } from './Icon'
 import { display, type Config } from './model'
 import type { Point } from './geometry'
@@ -9,12 +9,12 @@ type DrawingTool = 'pan' | 'measure' | 'holes'
 type Draft = { kind: 'new'; start: SnapPoint; end: SnapPoint } | { kind: 'edit'; id: string; endpoint: 'start' | 'end'; start: SnapPoint; end: SnapPoint }
 type Pointer = { start: Point; last: Point; intent: 'pan' | 'pick'; moved: boolean; target: EventTarget | null }
 type Props = {
-  bounds: DrawingBounds; features: DrawingFeatures; geometryKey: string; label: string; units: Config['units']
-  children: ReactNode; resetToken?: number; onPickHole?: (target: EventTarget | null) => void
+  bounds: DrawingBounds; parts: DrawingFeatures[]; geometryKey: string; label: string; units: Config['units']; initialFocus: 'overview' | 'first-part'
+  children: (focusedPart: number | null) => ReactNode; resetToken?: number; onPickHole?: (target: EventTarget | null) => void
 }
 const snapLabels = { free: 'Free point', vertex: 'Endpoint', midpoint: 'Midpoint', centre: 'Centre', edge: 'On edge' }
 
-export function DrawingViewport({ bounds, features, geometryKey, label, units, children, resetToken = 0, onPickHole }: Props) {
+export function DrawingViewport({ bounds, parts, geometryKey, label, units, initialFocus, children, resetToken = 0, onPickHole }: Props) {
   const area = useRef<HTMLDivElement>(null), svg = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState<DrawingBounds>({ width: 1, height: 1 })
   const [camera, setCamera] = useState<DrawingCamera>({ scale: 1, x: 0, y: 0 })
@@ -22,6 +22,9 @@ export function DrawingViewport({ bounds, features, geometryKey, label, units, c
   cameraRef.current = camera; sizeRef.current = size; boundsRef.current = bounds
   const framing = useRef(bounds)
   const [focusedPart, setFocusedPart] = useState('all')
+  const features = useMemo(() => ({ anchors: parts.flatMap(part => part.anchors), edges: parts.flatMap(part => part.edges), targets: parts.flatMap(part => part.targets) }), [parts])
+  const visibleFeatures = focusedPart === 'all' ? features : parts[Number(focusedPart)] ?? features
+  const visibleBounds = features.targets[Number(focusedPart)]?.bounds ?? bounds
   const [tool, setTool] = useState<DrawingTool>('pan'), [snap, setSnap] = useState(true)
   const [measurements, setMeasurements] = useState<Measurement[]>([]), [draft, setDraft] = useState<Draft | null>(null)
   const [cursor, setCursor] = useState<SnapPoint | null>(null), [selected, setSelected] = useState<string | null>(null)
@@ -30,7 +33,7 @@ export function DrawingViewport({ bounds, features, geometryKey, label, units, c
   const format = (value: number) => display(value, units, units === 'mm' ? 2 : 4)
   const unit = units === 'mm' ? 'mm' : 'in'
   const commitCamera = (value: DrawingCamera) => { cameraRef.current = value; setCamera(value) }
-  const fit = () => { setFocusedPart('all'); framing.current = boundsRef.current; commitCamera(fitDrawing(framing.current, sizeRef.current)) }
+  const fit = () => commitCamera(fitDrawing(framing.current, sizeRef.current))
   const pan = (x: number, y: number) => commitCamera({ ...cameraRef.current, x: cameraRef.current.x + x, y: cameraRef.current.y + y })
   const zoom = (factor: number, anchor = { x: sizeRef.current.width / 2, y: sizeRef.current.height / 2 }) => {
     const base = fitDrawing(boundsRef.current, sizeRef.current).scale
@@ -50,9 +53,12 @@ export function DrawingViewport({ bounds, features, geometryKey, label, units, c
     return () => resize.disconnect()
   }, [])
   useEffect(() => {
+    const firstPart = initialFocus === 'first-part' ? features.targets[0] : undefined
+    framing.current = firstPart?.bounds ?? boundsRef.current
+    setFocusedPart(firstPart ? '0' : 'all')
     fit(); setMeasurements([]); setDraft(null); setCursor(null); setSelected(null)
     pointers.current.clear(); pinch.current = null
-  }, [geometryKey, resetToken])
+  }, [geometryKey, resetToken, initialFocus])
   useEffect(() => {
     const element = svg.current
     if (!element) return
@@ -71,7 +77,7 @@ export function DrawingViewport({ bounds, features, geometryKey, label, units, c
   }
   const pick = (point: Point, precision: 'snap' | 'free'): SnapPoint => {
     const world = drawingPoint(point, cameraRef.current)
-    return snap && precision === 'snap' ? snapDrawingPoint(world, features, 10 / cameraRef.current.scale) : { ...world, kind: 'free', label: '' }
+    return snap && precision === 'snap' ? snapDrawingPoint(world, visibleFeatures, 10 / cameraRef.current.scale) : { ...world, kind: 'free', label: '' }
   }
   const updateEnd = (point: SnapPoint) => setDraft(current => !current ? current : current.kind === 'edit' ? { ...current, [current.endpoint]: point } : { ...current, end: point })
   const finishPoint = (point: SnapPoint) => {
@@ -147,24 +153,26 @@ export function DrawingViewport({ bounds, features, geometryKey, label, units, c
   }} onKeyUp={event => { if (event.key === ' ') space.current = false }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { space.current = false; pointers.current.clear(); pinch.current = null } }}>
     <div className="viewport-toolbar" aria-label="Drawing tools">
       <div className="viewport-group">
-        <button aria-pressed={tool === 'pan'} onClick={() => chooseTool('pan')} title="Pan (H)"><Icon name="hand" />Pan</button>
-        <button aria-pressed={tool === 'measure'} onClick={() => chooseTool('measure')} title="Measure two points (M)"><Icon name="ruler" />Measure</button>
-        {onPickHole && <button aria-pressed={tool === 'holes'} onClick={() => chooseTool('holes')} title="Remove a hole"><Icon name="trash" /><span>Holes</span></button>}
+        <button aria-label="Pan" aria-pressed={tool === 'pan'} onClick={() => chooseTool('pan')} title="Pan (H)"><Icon name="hand" /><span>Pan</span></button>
+        <button aria-label="Measure" aria-pressed={tool === 'measure'} onClick={() => chooseTool('measure')} title="Measure two points (M)"><Icon name="ruler" /><span>Measure</span></button>
+        {onPickHole && <button aria-label="Remove holes" aria-pressed={tool === 'holes'} onClick={() => chooseTool('holes')} title="Remove a hole"><Icon name="trash" /><span>Holes</span></button>}
       </div>
-      <ZoomControls onZoom={zoom} onFit={fit} />
+      <details className="viewport-help"><summary aria-label="Drawing controls help"><Icon name="info" /></summary><div>Drag to pan. Scroll or pinch to zoom at the pointer. In Measure, choose two points; hold Space or the middle/right mouse button to pan. Alt bypasses snapping. F fits the view; arrows pan; Esc cancels the current point.</div></details>
+    </div>
+    <div className="drawing-context">
       <select className="part-focus" aria-label="Focus part" value={focusedPart} onChange={event => {
         const value = event.target.value; setFocusedPart(value)
         const target = value === 'all' ? bounds : features.targets[Number(value)]?.bounds
         if (target) { framing.current = target; commitCamera(fitDrawing(target, sizeRef.current)) }
-      }}><option value="all">All parts</option>{features.targets.map((target, index) => <option key={index} value={index}>{index + 1}. {target.label}</option>)}</select>
-      <details className="viewport-help"><summary aria-label="Drawing controls help"><Icon name="info" /></summary><div>Drag to pan. Scroll or pinch to zoom at the pointer. In Measure, choose two points; hold Space or the middle/right mouse button to pan. Alt bypasses snapping. F fits the view; arrows pan; Esc cancels the current point.</div></details>
+      }}><option value="all">All parts · {features.targets.length}</option>{features.targets.map((target, index) => <option key={index} value={index}>{index + 1}. {target.label}</option>)}</select>
+      <span className="drawing-size">{format(visibleBounds.width)} × {format(visibleBounds.height)} {unit}</span>
     </div>
     <div className="drawing-surface" ref={area}>
       <svg ref={svg} className="layout" viewBox={`0 0 ${size.width} ${size.height}`} aria-label={label} role="application" tabIndex={0}
         onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={release}
         onLostPointerCapture={event => { pointers.current.delete(event.pointerId); pinch.current = null }}
         onPointerLeave={() => { if (!pointers.current.size) setCursor(null) }} onContextMenu={event => event.preventDefault()}>
-        <g data-drawing-transform transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale} ${-camera.scale})`}>{children}</g>
+        <g data-drawing-transform transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale} ${-camera.scale})`}>{children(focusedPart === 'all' ? null : Number(focusedPart))}</g>
         <g className="dimension-overlay">
           {measurements.filter(item => draft?.kind !== 'edit' || item.id !== draft.id).map((item, index) => {
             const start = screenPoint(item.start, camera), end = screenPoint(item.end, camera)
@@ -181,19 +189,18 @@ export function DrawingViewport({ bounds, features, geometryKey, label, units, c
           {cursor && tool === 'measure' && (() => { const p = screenPoint(cursor, camera); return <g className="snap-marker" data-snap={cursor.kind}><rect x={p.x - 6} y={p.y - 6} width={12} height={12} /><path d={`M${p.x - 12},${p.y}h24M${p.x},${p.y - 12}v24`} /></g> })()}
         </g>
       </svg>
-      <PanControls onPan={pan} />
     </div>
     {(tool === 'measure' || measurements.length > 0) && <aside className="measure-panel" aria-label="Measurements">
         <header><strong>Measurements{measurements.length > 0 ? ` · ${measurements.length}` : ''}</strong><button aria-label="Clear measurements" disabled={!measurements.length && !draft} onClick={() => { setMeasurements([]); setDraft(null); setSelected(null) }}><Icon name="trash" /></button></header>
         {tool === 'measure' && <><label className="snap-toggle"><input type="checkbox" checked={snap} onChange={event => setSnap(event.target.checked)} />Snap to geometry</label><p role="status">{draft?.kind === 'edit' ? `Choose new point ${draft.endpoint === 'start' ? 'A' : 'B'}` : draft ? 'Choose point B' : 'Choose point A'}{cursor ? ` · ${snapLabels[cursor.kind]}` : ''}</p></>}
         {values && <div className="measure-result"><output aria-label="Measured distance">{format(values.length)} <small>{unit}</small></output><span>ΔX {format(values.dx)} · ΔY {format(values.dy)} {unit} · {values.angle.toFixed(1)}°</span></div>}
-        {measurements.length > 0 && <ol>{measurements.map((item, index) => <li key={item.id} data-selected={selected === item.id}>
+        {measurements.length > 0 && <details className="measurement-history" open={size.width >= 700}><summary>Saved measurements <span>{measurements.length}</span><Icon name="chevron" size={14} /></summary><ol>{measurements.map((item, index) => <li key={item.id} data-selected={selected === item.id}>
           <button onClick={() => setSelected(item.id)} aria-label={`Select measurement ${index + 1}`}>{index + 1}. {format(measurementValues(item).length)} {unit}</button>
           <button onClick={() => edit(item, 'start')} aria-label={`Edit measurement ${index + 1} start`}>A</button><button onClick={() => edit(item, 'end')} aria-label={`Edit measurement ${index + 1} end`}>B</button>
           <button onClick={() => remove(item.id)} aria-label={`Delete measurement ${index + 1}`}><Icon name="close" size={14} /></button>
-        </li>)}</ol>}
+        </li>)}</ol></details>}
         {draft && <button className="measure-cancel" onClick={() => setDraft(null)}>Cancel point</button>}
       </aside>}
-    <div className="viewport-status"><span>{tool === 'holes' ? 'Click a hole to remove it' : tool === 'measure' ? 'Two points · Space + drag to pan' : 'Drag to pan · Scroll / pinch to zoom'}</span><span>{format(bounds.width)} × {format(bounds.height)} {unit}</span></div>
+    <div className="viewport-status"><PanControls onPan={pan} /><span>{tool === 'holes' ? 'Click a hole to remove it' : tool === 'measure' ? 'Two points · Space + drag to pan' : 'Drag to pan · Scroll to zoom'}</span><ZoomControls onZoom={zoom} onFit={fit} /></div>
   </div>
 }

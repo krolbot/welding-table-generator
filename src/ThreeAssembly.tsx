@@ -79,9 +79,9 @@ const rebuildDimensions = (runtime: AssemblyRuntime, config: Config) => {
   addDimensionLine(runtime.dimensions, new THREE.Vector3(x, 0, z), new THREE.Vector3(x, -config.height, z), verticalNormal, runtime.colors.dim)
   const unit = config.units === 'mm' ? 'mm' : 'in'
   ;[
-    dimensionLabel(`${display(config.length, config.units, 0)} ${unit}`, new THREE.Vector3(0, 0, z + 40), runtime.colors.dim),
-    dimensionLabel(`${display(config.width, config.units, 0)} ${unit}`, new THREE.Vector3(x + 40, 0, 0), runtime.colors.dim),
-    dimensionLabel(`${display(config.height, config.units, 0)} ${unit}`, new THREE.Vector3(x, -config.height / 2, z).addScaledVector(verticalNormal, 40), runtime.colors.dim),
+    dimensionLabel(`${display(config.length, config.units, 0)} ${unit}`, new THREE.Vector3(0, 0, z + 40), runtime.colors),
+    dimensionLabel(`${display(config.width, config.units, 0)} ${unit}`, new THREE.Vector3(x + 40, 0, 0), runtime.colors),
+    dimensionLabel(`${display(config.height, config.units, 0)} ${unit}`, new THREE.Vector3(x, -config.height / 2, z).addScaledVector(verticalNormal, 40), runtime.colors),
   ].forEach(sprite => { if (sprite) runtime.dimensions.add(sprite) })
 }
 

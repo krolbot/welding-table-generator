@@ -80,7 +80,7 @@ test('progress is deterministic, monotonically improving and resumable at a pass
 })
 
 test('automatic rotations and batch count share export validation and preserve presentation-only changes', async () => {
-  const c={...defaults,length:800,width:500,height:100,ribs:false,dogBones:false,nestingCopies:2}
+  const c={...defaults,length:800,width:500,height:100,tabWidth:30,ribs:false,dogBones:false,nestingCopies:2}
   const parts=settings.nestingParts(c)
   const rotations=settings.nestingOptions(c).rotations
   assert.equal(rotations.length,24)

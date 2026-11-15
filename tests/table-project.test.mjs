@@ -68,19 +68,19 @@ test('invalid JSON, future versions, unknown fields, coercions, aliases and dupl
   assert.equal(codec.tableProjectFromQuery(new URLSearchParams('workspace=tools&toolProject=%7B%7D')), undefined)
 })
 
-test('extension revision 2 requires explicit review; revision 3 preserves dimensions/copies and gates every export', () => {
+test('extension revision 2 requires explicit review; revision 4 preserves dimensions/copies and gates every export', () => {
   const old = { ...tools.defaultToolProject, version: 2, size: { length: 460, width: 230, height: 175, thickness: 8 }, copies: 2 }
   const text = JSON.stringify(old)
   assert.throws(() => tools.parseToolProject(text), error => error.code === 'grid-migration')
-  assert.throws(() => toolExport.toolPartsArchive(old), error => error.code === 'grid-migration')
-  assert.throws(() => toolExport.toolStripDxf(old), error => error.code === 'grid-migration')
+  assert.throws(() => toolExport.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'grid-migration')
+  assert.throws(() => toolExport.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'grid-migration')
   const reviewed = tools.readToolProject(text)
   assert.equal(reviewed.kind, 'migration')
-  assert.deepEqual(reviewed.project, { ...old, version: 3 })
+  assert.deepEqual(reviewed.project, { ...old, version: 4 })
   assert.equal(tools.readToolProject(tools.projectJson(reviewed.project)).kind, 'current')
   assert.throws(() => tools.readToolProject(JSON.stringify({ ...old, size: { ...old.size, thickness: 10 } })), error => error.code === 'invalid-dimensions')
   for (const project of [tools.defaultSquareProject, tools.defaultCornerBracketProject]) {
     assert.equal(tools.readToolProject(tools.projectJson(project)).kind, 'current')
-    assert.equal(project.version, 2)
+    assert.equal(project.version, 3)
   }
 })

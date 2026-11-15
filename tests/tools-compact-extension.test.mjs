@@ -179,7 +179,7 @@ test('compact codec and native archives preserve exact settings, every instance,
   const result = nesting.nestParts(project.projectParts(p), { ...project.projectNestingOptions(p), attempts: 12 })
   assert.equal(result.placements.length, 6); assert.equal(result.unplaced.length, 0)
   assert.equal(project.validProjectLayout(p, result, project.projectKey(p)), true)
-  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, project.projectKey(p)).generateAsync({ type: 'nodebuffer' }))
+  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, project.projectKey(p), { thickness: p.size.thickness }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(JSON.parse(await zip.file('project.json').async('string')), p)
   assert.equal(JSON.parse(await zip.file('assembly.json').async('string')).placements.length, 3)
   const parser = new DxfParser()
@@ -195,7 +195,7 @@ test('compact codec and native archives preserve exact settings, every instance,
     assert.equal(parsed.entities.filter(e => e.type === 'CIRCLE').length, sheet.placements.reduce((n, p) => n + p.part.holes.length, 0))
   }
   assert.equal(project.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, project.projectKey(p)), false)
-  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, windowRadius: 2 } }, result, project.projectKey(p)), error => error.code === 'invalid-layout')
+  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, windowRadius: 2 } }, result, project.projectKey(p), { thickness: p.size.thickness }), error => error.code === 'invalid-layout')
 })
 
 test('invalid compact dimensions and crossed hole corridors fail explicitly instead of omitting geometry', () => {
