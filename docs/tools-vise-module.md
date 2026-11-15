@@ -10,9 +10,11 @@ The supplied kit photographs establish the envelope, five-piece construction, pe
 
 The following are proposed, editable design dimensions, not factory measurements:
 
-- Eight slots at 45° intervals, 16 mm wide and 80 mm overall length. The closest slot tip is 30 mm from the top centre. Both ends are semicircles; slot length includes them.
+- Eight slots at 45° intervals, default width 16 mm and inner tip 30 mm from the top centre. Both ends are semicircles. Width and inner-tip radius remain editable.
 - A 50 mm free-end depth and an upward-curving lower side profile. The curve is a circular arc tangent to the root underside.
 - Two 20 mm locating tabs per wall/top interface and one per side/end interface, with 0.2 mm total longitudinal joint clearance.
+
+The owner-specified outer setback is **15 mm along each ray**, measured from the outermost rounded tip to the nominal plate boundary. On a square top, diagonal rays meet the corners. Each slot length is derived from this boundary, the setback and the inner-tip radius; it is no longer an independent setting. At 250 × 250 mm with the defaults, the four axial slots are **80 mm** long and the four diagonal slots are **131.776695 mm** long. Their closest perpendicular side clearance is approximately **8.263456 mm**, not 15 mm. At rectangular sizes, the same 45° rays meet a side rather than necessarily a corner. A ray that approaches a locating notch or another cut too closely is rejected, never shortened or moved to hide a conflict.
 
 The central hole and peripheral fixture holes use the inherited table-hole diameter. Slots retain their separate width setting because their function is bolting the vise, not accepting table-grid pins. Check the vise base and fasteners before choosing slot dimensions.
 
@@ -41,7 +43,7 @@ These are locating joints for a welded assembly, not a locking fastening system 
 
 ## Shared outputs and checks
 
-Four canonical part definitions expand to five physical instances. They drive the existing 2D layout, assembled/exploded Three.js view, estimates, shared nesting worker, native DXF and ZIP. Rounded slot ends and curved side profiles remain DXF arcs rather than polylines. The version-1 `viseModule` project preserves settings in JSON, browser storage and share links. Existing tool schemas are unchanged.
+Four canonical part definitions expand to five physical instances. They drive the existing 2D layout, assembled/exploded Three.js view, estimates, shared nesting worker, native DXF and ZIP. Rounded slot ends and curved side profiles remain DXF arcs rather than polylines. The version-2 `viseModule` project preserves settings in JSON, browser storage and share links. Version-1 equal-length projects require explicit geometry review before use: the obsolete `slotLength` field is removed only from the reviewed candidate, while the original JSON remains available. This also applies to modules saved inside table cut jobs; dimensions, selected IDs, quantities and other tools are retained. Autosave and fabrication export stay blocked until acceptance. The equal-length generator is not retained. Other tool schemas are unchanged.
 
 **Add to table cut job** retains dimensions and job quantity while stock and mounting-grid settings continue to follow the table. The entire kit must fit the same verified table-only sheet-count ceiling through the existing engine. Save/share/import, layout invalidation and assembly/layout manifests use the resolved dimensions. Incomplete, stale or invalid layouts cannot export.
 

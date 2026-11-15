@@ -55,10 +55,15 @@ test('schema 3 round-trips selected tools exactly; v2 imports empty tools withou
   assert.equal(loaded.kind, 'current'); assert.deepEqual(loaded.config.nestingTools, [])
   assert.deepEqual(geometry.makeParts(loaded.config), geometry.makeParts(table()))
   const rows = saved.nestingTools
-  for (const invalid of [null, [{ ...rows[0], unknown: true }], [rows[0], rows[0]], [{ ...rows[0], id: '../bad' }], [{ ...rows[0], project: { ...rows[0].project, version: 2 } }]]) {
+  for (const invalid of [null, [{ ...rows[0], unknown: true }], [rows[0], rows[0]], [{ ...rows[0], id: '../bad' }], [{ ...rows[0], project: { ...rows[0].project, version: 99 } }]]) {
     assert.throws(() => codec.parseTableProject(JSON.stringify({ ...saved, nestingTools: invalid })))
   }
   assert.throws(() => codec.parseTableProject(JSON.stringify({ ...v2, nestingTools: rows })))
+  const oldExtension = structuredClone(saved)
+  oldExtension.nestingTools[0].project.version = 2
+  const reviewed = codec.parseTableProject(JSON.stringify(oldExtension))
+  assert.equal(reviewed.kind, 'migration')
+  assert.deepEqual(model.projectConfig(reviewed.config), saved)
 })
 
 test('compact thickness inherits the table across geometry, selection and project links without changing other tools', () => {
@@ -127,6 +132,28 @@ test('vise inherits the entire mounting interface across saved tools, table JSON
     assert.throws(() => codec.parseTableProject(JSON.stringify(model.projectConfig(table({ ...changes, nestingTools: [selected] })))), /complete vise mounting grid/)
   }
   assert.deepEqual(source, original, 'rejected changes never mutate the retained selection')
+})
+
+test('saved table vise selections require geometry review without losing table settings, IDs or quantities', () => {
+  const old = selection('vise', 'viseModule', { copies: 2 })
+  old.project.version = 1; old.project.size.slotLength = 80
+  const c = table({ length: 1000, width: 700, nestingTools: [old, selection('square', 'square')] })
+  const saved = model.projectConfig(c), original = JSON.stringify(saved)
+  assert.throws(() => tools.parseToolSelections(c.nestingTools), error => error.code === 'geometry-migration')
+  assert.throws(() => cut.tableCutInventory(c), error => error.code === 'geometry-migration')
+  const loaded = codec.parseTableProject(original)
+  assert.equal(loaded.kind, 'migration'); assert.equal(loaded.change, 'tool-geometry'); assert.match(loaded.message, /15 mm/)
+  const expected = structuredClone(saved)
+  expected.nestingTools[0].project.version = 2
+  delete expected.nestingTools[0].project.size.slotLength
+  assert.deepEqual(model.projectConfig(loaded.config), expected)
+  const shared = codec.parseTableProject(codec.tableProjectFromQuery(codec.tableProjectQuery(c)))
+  assert.deepEqual(shared, loaded)
+  assert.equal(codec.parseTableProject(JSON.stringify(expected)).kind, 'current')
+  assert.equal(JSON.stringify(saved), original)
+  assert.equal(cut.tableCutInventory(loaded.config).selections[0].project.version, 2)
+  for (const rows of [[old, old], [{ ...old, extra: 1 }], [{ ...old, id: 'bad/id' }]])
+    assert.throws(() => codec.parseTableProject(JSON.stringify({ ...saved, nestingTools: rows })))
 })
 
 test('compact shared export records inherited stock and refuses the previous layout after a thickness change', async () => {

@@ -31,7 +31,7 @@ import { compareNesting } from './nesting'
 import { fabricationEstimate } from './fabricationLayout'
 import { TableTools } from './tools/TableTools'
 import { toolSelectionsAtTable, type ToolProject } from './tools/project'
-import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey } from './tableProject'
+import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey, type TableProjectLoad } from './tableProject'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 const ToolsWorkspace = lazy(() => import('./tools/ToolsWorkspace').then(module => ({ default: module.ToolsWorkspace })))
@@ -49,10 +49,7 @@ const readStorage = (key: string): Record<string, unknown> => {
   } catch { return {} }
 }
 
-type ProjectReview = { kind: 'migration'; original: string; config: Config } | { kind: 'rejected'; original: string; message: string }
-const reviewMessage = (review: ProjectReview) => review.kind === 'migration'
-  ? 'This project used a centred grid. The corrected grid is anchored to the table edges and working surface. Saved origins and manual hole coordinates are retained; select a standard origin explicitly if needed. Review hole removals and mating parts before cutting. The old geometry is not exported.'
-  : review.message
+type ProjectReview = (Extract<TableProjectLoad, { kind: 'migration' }> & { original: string }) | { kind: 'rejected'; original: string; message: string }
 const preserveView = (next: Config, current: Config): Config => ({ ...next, units: current.units, exploded: current.exploded, showDimensions: current.showDimensions, renderHoles: current.renderHoles, highlighting: current.highlighting })
 const loadedTable = (): { config: Config; review: ProjectReview | null } => {
   const ui = readStorage('tableGenUI')
@@ -71,7 +68,7 @@ const loadedTable = (): { config: Config; review: ProjectReview | null } => {
     if (!original) return { config, review: null }
     const parsed = parseTableProject(original)
     return parsed.kind === 'migration'
-      ? { config, review: { kind: 'migration', original, config: parsed.config } }
+      ? { config, review: { ...parsed, original } }
       : { config: preserveView(parsed.config, config), review: null }
   } catch (error) {
     return { config, review: { kind: 'rejected', original, message: error instanceof Error ? error.message : 'The saved/shared project could not be read. It has not been overwritten.' } }
@@ -199,13 +196,13 @@ export default function App() {
     setReview(null)
     reset2d()
   }
-  const migrationPreset = review?.kind === 'migration' ? (['D16', 'D28'] as const).find(name => review.config.holeDiameter === presetValues[name].holeDiameter && review.config.pitch === presetValues[name].pitch && review.config.margin !== presetValues[name].margin) : undefined
+  const migrationPreset = review?.kind === 'migration' && review.change === 'table-grid' ? (['D16', 'D28'] as const).find(name => review.config.holeDiameter === presetValues[name].holeDiameter && review.config.pitch === presetValues[name].pitch && review.config.margin !== presetValues[name].margin) : undefined
   const acceptReview = (candidate: Config) => {
     if (!review) return
     try { localStorage.setItem('tableGenParams.previous', review.original) }
     catch { setNotice('The original project could not be backed up. It has not been replaced. Download the original data and free browser storage before continuing.'); return }
     replaceProject(candidate)
-    setNotice('Original data preserved. Review the corrected hole positions before fabrication.')
+    setNotice('Original data preserved. Review the corrected geometry before fabrication.')
   }
   const reportError = (error: unknown) => setNotice(error instanceof Error ? error.message : 'The operation failed. No export was created.')
   const open = async (file: File) => {
@@ -214,7 +211,7 @@ export default function App() {
     try {
       original = await file.text()
       const parsed = parseTableProject(original)
-      if (parsed.kind === 'migration') setReview({ kind: 'migration', original, config: parsed.config })
+      if (parsed.kind === 'migration') setReview({ ...parsed, original })
       else { replaceProject(parsed.config); setNotice('Project loaded.') }
     } catch (error) { reportError(error) }
   }
@@ -250,7 +247,7 @@ export default function App() {
   if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
   return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
     settings={<>
-          {review && <section role="alert" className="project-review"><h3>Project review required</h3><p className="socket-error">{reviewMessage(review)}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'welding-table-original.txt', 'text/plain')}>Download original data</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Apply {migrationPreset} origin ({presetValues[migrationPreset].margin} mm)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? `Keep saved origin (${review.config.margin} mm)` : 'Start a new table project'}</button></section>}
+          {review && <section role="alert" className="project-review"><h3>Project review required</h3><p className="socket-error">{review.message}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'welding-table-original.txt', 'text/plain')}>Download original data</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Apply {migrationPreset} origin ({presetValues[migrationPreset].margin} mm)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? review.change === 'table-grid' ? `Keep saved origin (${review.config.margin} mm)` : 'Apply corrected tool geometry' : 'Start a new table project'}</button></section>}
           <fieldset className="table-settings" disabled={Boolean(review)}>
           <TableTools config={config} onChange={nestingTools => patch('nestingTools', nestingTools)} onChoose={() => selectWorkspace('tools')} onNotice={setNotice} />
           <section className="fixture-card">
@@ -331,10 +328,10 @@ export default function App() {
           <p>Grid geometry does not certify cross-brand fit. Confirm the fastener’s grip range for {numberLabel(config.thickness, 3)} {unitLabel} stock, hole finish/tolerance and actual accessory dimensions before cutting.</p>
           </fieldset>
     </>}
-    production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? reviewMessage(review) : geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
+    production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? review.message : geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
     actions={<ProjectActions onOpen={file => void open(file)} onSave={save} onShare={() => void share()} disabled={Boolean(review || geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => setView('sheet') } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
     seo={<article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose D16/50, D28/100 or a custom hole diameter, pitch and grid origin. Square and diagonal grids share fixed edge and working-surface datums across the top and skirts. Grid geometry alone does not certify accessory fit.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>}>
-    {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly review the corrected grid in the sidebar.</div>
+    {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly review the corrected geometry in the sidebar.</div>
       : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
       : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} baseline={tableLayout} onBaseline={rememberTableLayout} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
       : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset3d} mountFocusToken={focusMount3d} dark={dark} /></Suspense></div><AssemblyControls value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onReset={() => setReset3d(value => value + 1)} onFocus={cornerPlate ? () => setFocusMount3d(value => value + 1) : undefined} /></>}

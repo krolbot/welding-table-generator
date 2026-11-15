@@ -15,6 +15,26 @@ before(async () => {
 })
 after(async () => { await server?.close() })
 const near = (a, b, tolerance = 1e-4) => assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`)
+const checkSlotSetbacks = (c, slots, tolerance = 1e-4) => {
+  assert.equal(slots.length, 8)
+  for (const [index, arcs] of slots.entries()) {
+    assert.equal(arcs.length, 2)
+    const distance = arc => Math.hypot(arc.center.x - c.length / 2, arc.center.y - c.width / 2)
+    const [inner, outer] = [...arcs].sort((a, b) => distance(a) - distance(b))
+    const span = Math.hypot(outer.center.x - inner.center.x, outer.center.y - inner.center.y)
+    const ux = (outer.center.x - inner.center.x) / span, uy = (outer.center.y - inner.center.y) / span
+    near(inner.radius, c.slotWidth / 2, tolerance); near(outer.radius, c.slotWidth / 2, tolerance)
+    near(distance(inner) - inner.radius, c.slotInnerRadius, tolerance)
+    near(ux, Math.cos(index * Math.PI / 4), tolerance); near(uy, Math.sin(index * Math.PI / 4), tolerance)
+    const boundary = { x: outer.center.x + (outer.radius + 15) * ux, y: outer.center.y + (outer.radius + 15) * uy }
+    assert.ok(boundary.x >= -tolerance && boundary.x <= c.length + tolerance && boundary.y >= -tolerance && boundary.y <= c.width + tolerance)
+    near(Math.min(Math.abs(boundary.x), Math.abs(boundary.y), Math.abs(c.length - boundary.x), Math.abs(c.width - boundary.y)), 0, tolerance)
+    if (c.length === c.width && index % 2) {
+      near(boundary.x, ux > 0 ? c.length : 0, tolerance)
+      near(boundary.y, uy > 0 ? c.width : 0, tolerance)
+    }
+  }
+}
 const materialAt = (part, point) => geometry.pointInContour(point, part.contours[0])
   && !part.contours.slice(1).some(cut => geometry.pointInContour(point, cut))
   && !part.holes.some(h => Math.hypot(point.x - h.x, point.y - h.y) < h.d / 2)
@@ -46,24 +66,18 @@ test('vise has five cut plates, eight independent native radial slots and an ope
   assert.equal(front.holes.length, 5)
   assert.equal(front.height, 50, 'the front blank excludes the empty region below it')
   assert.equal(side.contours[0][0].type, 'arc', 'curved free-end profile, not a rectangular box')
-  for (const [i, slot] of top.contours.slice(1).entries()) {
-    const arcs = slot.filter(s => s.type === 'arc')
-    assert.equal(arcs.length, 2)
-    const centre = { x: (arcs[0].center.x + arcs[1].center.x) / 2, y: (arcs[0].center.y + arcs[1].center.y) / 2 }
-    near(Math.hypot(centre.x - c.length / 2, centre.y - c.width / 2), c.slotInnerRadius + c.slotLength / 2)
-    near(Math.atan2(centre.y - c.width / 2, centre.x - c.length / 2) * 180 / Math.PI + (i > 4 ? 360 : 0), i * 45)
-    near(Math.hypot(arcs[0].center.x - arcs[1].center.x, arcs[0].center.y - arcs[1].center.y) + c.slotWidth, c.slotLength)
-    assert.ok(arcs.every(a => a.radius === c.slotWidth / 2))
-  }
+  checkSlotSetbacks(c, top.contours.slice(1).map(slot => slot.filter(s => s.type === 'arc')))
+  near(contours.nativeContourDistance(top.contours[2], top.contours[0]), (15 + c.slotWidth / 2) / Math.SQRT2 - c.slotWidth / 2)
   assert.equal(materialAt(top, { x: 140, y: 140 }), true, 'central web remains solid between centre hole and radial slots')
 })
 
 test('vise size/stock/grid matrix preserves native contours and complete fixed-datum mounting rows', () => {
   let checked = 0
-  for (const length of [250, 350]) for (const width of [250, 350]) for (const height of [100, 150])
+  for (const [length, width] of [[250, 250], [350, 350], [450, 250], [250, 450]]) for (const height of [100, 150])
     for (const thickness of [4, 6, 8]) for (const grid of ['square', 'staggered']) for (const clearance of [0, .2, 1]) {
       const c = { ...vise.viseModuleDefaults, length, width, height, thickness, grid, clearance }
       const parts = vise.viseModuleParts(c), mount = parts.find(p => p.name === 'viseMount')
+      checkSlotSetbacks(c, parts[0].contours.slice(1).map(slot => slot.filter(s => s.type === 'arc')))
       const expected = geometry.fixtureGridPoints(width, height, { pitch: c.holePitch, margin: c.holeInset, grid })
       assert.deepEqual(mount.holes.map(h => [h.x, height - h.y, h.d]), expected.map(p => [p.x, p.y, c.holeDiameter]))
       for (const part of parts) for (const contour of part.contours) {
@@ -145,6 +159,8 @@ test('vise shared Three meshes contain actual through slots, round holes and the
   for (const h of front.holes) assert.equal(hit(front.name, [300, h.x, h.y + 50], [-1, 0, 0]), 0)
   for (const h of side.holes) assert.equal(hit(side.name, [h.x, -50, h.y], [0, 1, 0]), 0)
   assert.ok(hit(top.name, [140, 140, 200], [0, 0, -1]) > 0)
+  assert.equal(hit(top.name, [220, 220, 200], [0, 0, -1]), 0, 'extended diagonal is an actual through-cut')
+  assert.ok(hit(top.name, [240, 240, 200], [0, 0, -1]) > 0, 'corner setback retains material')
   assert.equal(new THREE.Raycaster(new THREE.Vector3(125, 125, 40), new THREE.Vector3(0, 0, -1)).intersectObjects(group.toolMeshes, false).length, 0)
   group.traverse(item => { if (item.isMesh) item.geometry.dispose() }); material.dispose()
 })
@@ -166,6 +182,10 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
     const parsed = new DxfParser().parseSync(await zip.file(`parts/${part.name}_${part.count}pcs.dxf`).async('string'))
     assert.equal(parsed.header.$INSUNITS, 4)
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, part.contours.flat().filter(s => s.type === 'arc').length)
+    if (part.name === 'viseTop') {
+      const arcs = parsed.entities.filter(e => e.type === 'ARC')
+      checkSlotSetbacks(p.size, Array.from({ length: 8 }, (_, i) => arcs.slice(i * 2, i * 2 + 2)), .002)
+    }
     for (const h of part.holes) assert.ok(parsed.entities.some(e => e.type === 'CIRCLE' && Math.hypot(e.center.x - h.x, e.center.y - h.y) < .001 && e.radius === h.d / 2))
   }
   for (const sheet of result.sheets) {
@@ -173,12 +193,27 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, sheet.placements.reduce((n, p) => n + p.part.contours.flat().filter(s => s.type === 'arc').length, 0))
   }
   assert.equal(tools.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, tools.projectKey(p)), false)
-  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, slotLength: 78 } }, result, tools.projectKey(p)), error => error.code === 'invalid-layout')
+  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, slotInnerRadius: 31 } }, result, tools.projectKey(p)), error => error.code === 'invalid-layout')
 })
 
 test('vise rejects unsafe grid, slots, stock and overlapping cuts instead of losing mandatory holes', () => {
-  for (const changes of [{ thickness: 20 }, { height: NaN }, { tipHeight: 100 }, { slotLength: 200 }, { slotInnerRadius: 5 }, { slotWidth: 60 }, { grid: 'bad' }, { holeInset: 20, thickness: 8 }, { holeDiameter: 28 }])
+  for (const changes of [{ thickness: 20 }, { height: NaN }, { tipHeight: 100 }, { length: 200, slotInnerRadius: 80 }, { slotInnerRadius: 5 }, { slotWidth: 60 }, { slotWidth: 28 }, { grid: 'bad' }, { holeInset: 20, thickness: 8 }, { holeDiameter: 28 }, { width: 350 }, { length: 350 }])
     assert.throws(() => vise.viseModuleParts({ ...vise.viseModuleDefaults, ...changes }), error => error instanceof geometry.FabricationError)
-  for (const changes of [{ version: 2 }, { size: { ...vise.viseModuleDefaults, unknown: 1 } }, { size: { ...vise.viseModuleDefaults, grid: undefined } }])
+  for (const changes of [{ version: 3 }, { size: { ...vise.viseModuleDefaults, slotLength: 80 } }, { size: { ...vise.viseModuleDefaults, unknown: 1 } }, { size: { ...vise.viseModuleDefaults, grid: undefined } }])
     assert.throws(() => tools.parseToolProject(tools.projectJson({ ...tools.defaultViseModuleProject, ...changes })))
+})
+
+test('equal-length vise projects retain their original data and require review before fabrication', () => {
+  const old = { ...tools.defaultViseModuleProject, version: 1, copies: 2, size: { ...vise.viseModuleDefaults, slotLength: 75 } }
+  const original = tools.projectJson(old)
+  assert.throws(() => tools.parseToolProject(original), error => error.code === 'geometry-migration')
+  assert.throws(() => exporter.toolPartsArchive(old), error => error.code === 'geometry-migration')
+  assert.throws(() => exporter.toolStripDxf(old), error => error.code === 'geometry-migration')
+  const loaded = tools.readToolProject(original)
+  assert.equal(loaded.kind, 'migration'); assert.match(loaded.message, /15 mm/)
+  assert.deepEqual(loaded.project, { ...tools.defaultViseModuleProject, copies: 2 })
+  assert.equal(tools.readToolProject(tools.projectJson(loaded.project)).kind, 'current')
+  assert.equal(tools.projectJson(old), original, 'review does not mutate the saved input')
+  for (const changes of [{ slotLength: '80' }, { slotLength: 201 }, { slotLength: undefined }, { unexpected: 1 }, { grid: 'bad' }, { slotWidth: 28 }, { width: 350 }])
+    assert.throws(() => tools.readToolProject(tools.projectJson({ ...old, size: { ...old.size, ...changes } })))
 })

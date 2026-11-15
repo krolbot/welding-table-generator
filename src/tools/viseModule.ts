@@ -7,20 +7,20 @@ import { validateToolPart } from './fabrication'
 export type ViseModuleConfig = {
   length: number; width: number; height: number; thickness: number
   holeDiameter: number; holePitch: number; holeInset: number; grid: Grid
-  slotWidth: number; slotLength: number; slotInnerRadius: number
+  slotWidth: number; slotInnerRadius: number
   tipHeight: number; tabWidth: number; clearance: number
 }
 export const viseModuleDefaults: ViseModuleConfig = {
   length: 250, width: 250, height: 100, thickness: 8,
   holeDiameter: 16, holePitch: 50, holeInset: 25, grid: 'square',
-  slotWidth: 16, slotLength: 80, slotInnerRadius: 30,
+  slotWidth: 16, slotInnerRadius: 30,
   tipHeight: 50, tabWidth: 20, clearance: 0.2,
 }
 export const viseModuleLimits: Record<Exclude<keyof ViseModuleConfig, 'grid'>, { min: number; max: number; step: number }> = {
   length: { min: 200, max: 600, step: 50 }, width: { min: 200, max: 600, step: 50 },
   height: { min: 100, max: 200, step: 10 }, thickness: { min: 4, max: 8, step: 1 },
   holeDiameter: { min: 10, max: 28, step: 1 }, holePitch: { min: 40, max: 100, step: 5 }, holeInset: { min: 20, max: 50, step: 1 },
-  slotWidth: { min: 10, max: 28, step: 1 }, slotLength: { min: 30, max: 200, step: 5 }, slotInnerRadius: { min: 20, max: 80, step: 1 },
+  slotWidth: { min: 10, max: 28, step: 1 }, slotInnerRadius: { min: 20, max: 80, step: 1 },
   tipHeight: { min: 40, max: 120, step: 5 }, tabWidth: { min: 12, max: 30, step: 1 }, clearance: { min: 0, max: 1, step: 0.1 },
 }
 export type ViseModulePartName = 'viseTop' | 'viseMount' | 'viseFront' | 'viseSide'
@@ -30,6 +30,7 @@ type Placement = { part: ViseModulePartName; instance: number; origin: Vector3; 
 const point = (x: number, y: number): Point => ({ x, y })
 const joints = (centres: number[], width: number, depth: number): EdgeJoint[] => centres.map(centre => ({ centre, width, depth }))
 const holeWeb = 8
+export const viseSlotSetback = 15
 
 export const viseModuleDimensions = (config: ViseModuleConfig) => {
   const { length, width, height, thickness, clearance, tipHeight } = config
@@ -40,7 +41,7 @@ export const viseModuleDimensions = (config: ViseModuleConfig) => {
     sideRadius: ((sideEnd - sideStart) ** 2 + tipBottom ** 2) / (2 * tipBottom),
     xJoints: [length / 5, length * 4 / 5], yJoints: [width / 5, width * 4 / 5],
     mountJoint: bodyTop / 2, frontJoint: (tipBottom + bodyTop) / 2,
-    holeOrigin: config.holeInset, tabWidth: config.tabWidth, clearance,
+    holeOrigin: config.holeInset, tabWidth: config.tabWidth, clearance, slotSetback: viseSlotSetback,
   }
 }
 
@@ -52,7 +53,7 @@ const assertConfig = (config: ViseModuleConfig) => {
   }
   if (config.grid !== 'square' && config.grid !== 'staggered')
     throw new FabricationError('invalid-grid', 'Vise module grid must follow a supported table pattern')
-  if (config.tipHeight >= config.height || config.slotLength <= config.slotWidth
+  if (config.tipHeight >= config.height
     || config.tabWidth + config.clearance >= config.tipHeight - config.thickness - config.clearance / 2)
     throw new FabricationError('invalid-dimensions', 'The curved sides, radial slots and locating joints must fit the vise module envelope')
 }
@@ -87,8 +88,11 @@ export const viseModuleParts = (config: ViseModuleConfig = viseModuleDefaults): 
   if (topFar(length) <= topNear || topFar(width) <= topNear)
     throw new FabricationError('missing-grid-row', 'The vise module needs eight peripheral top holes and usable staggered wall rows')
   const radialSlots = Array.from({ length: 8 }, (_, index) => {
-    const angle = index * 45, radians = angle * Math.PI / 180, radius = config.slotInnerRadius + config.slotLength / 2
-    return capsuleContour(point(length / 2 + radius * Math.cos(radians), width / 2 + radius * Math.sin(radians)), config.slotLength, config.slotWidth, angle)
+    const angle = index * 45, radians = angle * Math.PI / 180, ux = Math.cos(radians), uy = Math.sin(radians)
+    const boundary = Math.min(length / (2 * Math.abs(ux)), width / (2 * Math.abs(uy)))
+    const slotLength = boundary - viseSlotSetback - config.slotInnerRadius
+    const radius = config.slotInnerRadius + slotLength / 2
+    return capsuleContour(point(length / 2 + radius * ux, width / 2 + radius * uy), slotLength, config.slotWidth, angle)
   })
   const topHoles = [
     ...[topNear, topFar(length)].flatMap(x => [hole(`top:${x}:near`, x, holeInset), hole(`top:${x}:far`, x, lastStation(width))]),

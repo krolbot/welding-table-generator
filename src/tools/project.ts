@@ -14,7 +14,7 @@ export type ToolId = typeof toolIds[number]
 export const isToolId = (value: unknown): value is ToolId => toolIds.some(id => id === value)
 export type ToolSheet = { length: number; width: number; edgeGap: number; partGap: number }
 type ProjectBase = { sheet: ToolSheet; copies: number }
-export type ToolProject = ProjectBase & ({ version: 3; tool: 'extension'; size: ExtensionConfig } | { version: 1; tool: 'compactExtension'; size: CompactExtensionConfig } | { version: 2; tool: 'square'; size: SquareConfig } | { version: 2; tool: 'cornerBracket'; size: CornerBracketConfig } | { version: 1; tool: 'viseModule'; size: ViseModuleConfig })
+export type ToolProject = ProjectBase & ({ version: 3; tool: 'extension'; size: ExtensionConfig } | { version: 1; tool: 'compactExtension'; size: CompactExtensionConfig } | { version: 2; tool: 'square'; size: SquareConfig } | { version: 2; tool: 'cornerBracket'; size: CornerBracketConfig } | { version: 2; tool: 'viseModule'; size: ViseModuleConfig })
 type Vector3 = [number, number, number]
 export type ToolSelection = { id: string; project: ToolProject }
 export type ToolPlacement = { part: string; instance: number; origin: Vector3; axes: [Vector3, Vector3, Vector3] }
@@ -38,7 +38,7 @@ export const defaultCompactExtensionProject: ToolProject & { tool: 'compactExten
   sheet: { ...defaultToolProject.sheet }, copies: 1,
 }
 export const defaultViseModuleProject: ToolProject & { tool: 'viseModule' } = {
-  version: 1, tool: 'viseModule', size: { ...viseModuleDefaults },
+  version: 2, tool: 'viseModule', size: { ...viseModuleDefaults },
   sheet: { ...defaultToolProject.sheet }, copies: 1,
 }
 export const toolDefaults = { extension: defaultToolProject, compactExtension: defaultCompactExtensionProject, square: defaultSquareProject, cornerBracket: defaultCornerBracketProject, viseModule: defaultViseModuleProject } satisfies Record<ToolId, ToolProject>
@@ -48,7 +48,7 @@ const exactKeys = (value: Record<string, unknown>, keys: string[]) => Object.key
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 export class ToolProjectError extends Error {
   readonly name = 'ToolProjectError'
-  constructor(readonly code: 'invalid-json' | 'invalid-field' | 'unsupported-version' | 'grid-migration' | 'invalid-layout' | 'mounting-grid-mismatch', message: string) { super(message) }
+  constructor(readonly code: 'invalid-json' | 'invalid-field' | 'unsupported-version' | 'grid-migration' | 'geometry-migration' | 'invalid-layout' | 'mounting-grid-mismatch', message: string) { super(message) }
 }
 const number = (value: unknown) => { if (typeof value !== 'number') throw new ToolProjectError('invalid-field', 'Project numeric fields must be numbers'); return value }
 const grid = (value: unknown): Config['grid'] => { if (value !== 'square' && value !== 'staggered') throw new ToolProjectError('invalid-field', 'Unsupported table grid'); return value }
@@ -61,6 +61,7 @@ export const parseToolProject = (text: string): ToolProject => {
   if (!root || !exactKeys(root, ['version', 'tool', 'size', 'sheet', 'copies'])) throw new ToolProjectError('invalid-field', 'Project has unknown or missing fields')
   if (root.tool === 'extension' && root.version === 1) throw new ToolProjectError('unsupported-version', 'This project uses the retired box design. It cannot be silently converted into wedge cutting plans. Download the original JSON before starting the corrected design.')
   if (root.tool === 'extension' && root.version === 2) throw new ToolProjectError('grid-migration', 'The extension grid now has a fixed 25 mm origin and side row, independent of thickness. Review and explicitly apply the corrected grid; the original data is retained.')
+  if (root.tool === 'viseModule' && root.version === 1) throw new ToolProjectError('geometry-migration', 'Vise slot lengths now follow the plate boundary with a 15 mm setback along every ray, including to the corners on a square top. Review and explicitly apply the corrected geometry; the original equal-length project is retained.')
   if (!isToolId(root.tool) || root.version !== toolDefaults[root.tool].version) throw new ToolProjectError('unsupported-version', 'Unsupported project version or tool')
   const size = object(root.size), sheet = object(root.sheet)
   const sizeKeys = Object.keys(toolDefaults[root.tool].size)
@@ -74,7 +75,7 @@ export const parseToolProject = (text: string): ToolProject => {
   switch (root.tool) {
     case 'extension': project = { ...base, version: 3, tool: 'extension', size: { ...common, height: number(size.height) } }; break
     case 'compactExtension': project = { ...base, version: 1, tool: 'compactExtension', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), holeInset: number(size.holeInset), tipHeight: number(size.tipHeight), taperRun: number(size.taperRun), windowInset: number(size.windowInset), windowRadius: number(size.windowRadius), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
-    case 'viseModule': project = { ...base, version: 1, tool: 'viseModule', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), holeInset: number(size.holeInset), grid: grid(size.grid), slotWidth: number(size.slotWidth), slotLength: number(size.slotLength), slotInnerRadius: number(size.slotInnerRadius), tipHeight: number(size.tipHeight), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
+    case 'viseModule': project = { ...base, version: 2, tool: 'viseModule', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), holeInset: number(size.holeInset), grid: grid(size.grid), slotWidth: number(size.slotWidth), slotInnerRadius: number(size.slotInnerRadius), tipHeight: number(size.tipHeight), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
     case 'square': project = { ...base, version: 2, tool: 'square', size: { ...common, armWidth: number(size.armWidth), holeDiameter: number(size.holeDiameter), endOffset: number(size.endOffset) } }; break
     case 'cornerBracket': project = { ...base, version: 2, tool: 'cornerBracket', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), slotLength: number(size.slotLength), cornerCut: number(size.cornerCut), tipWidth: number(size.tipWidth), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
   }
@@ -107,25 +108,42 @@ export const toolSelectionsAtTable = (selections: ToolSelection[], table: ToolTa
 })
 
 /** Unowned dimensions and quantities are snapshots; table-owned settings resolve at admission. */
-export const parseToolSelections = (value: unknown): ToolSelection[] => {
+export const readToolSelections = (value: unknown): { kind: 'current' | 'migration'; selections: ToolSelection[]; message: string } => {
   if (!Array.isArray(value) || value.length > 32) throw new ToolProjectError('invalid-field', 'Select at most 32 configured tools for a table cut job')
-  const ids = new Set<string>()
-  return value.map(item => {
+  const ids = new Set<string>(), messages = new Set<string>()
+  const selections: ToolSelection[] = value.map(item => {
     const row = object(item)
     if (!row || !exactKeys(row, ['id', 'project']) || typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(row.id) || ids.has(row.id))
       throw new ToolProjectError('invalid-field', 'Each selected tool needs a unique safe ID and a project')
     ids.add(row.id)
-    return { id: row.id, project: parseToolProject(JSON.stringify(row.project)) }
+    const loaded = readToolProject(JSON.stringify(row.project))
+    if (loaded.kind === 'migration') messages.add(loaded.message)
+    return { id: row.id, project: loaded.project }
   })
+  return { kind: messages.size ? 'migration' : 'current', selections, message: [...messages].join(' ') }
+}
+
+export const parseToolSelections = (value: unknown): ToolSelection[] => {
+  const loaded = readToolSelections(value)
+  if (loaded.kind === 'migration') throw new ToolProjectError('geometry-migration', loaded.message)
+  return loaded.selections
 }
 
 export const readToolProject = (text: string): { project: ToolProject; kind: 'current' | 'migration'; message: string } => {
   try { return { project: parseToolProject(text), kind: 'current', message: '' } }
   catch (error) {
-    if (!(error instanceof ToolProjectError) || error.code !== 'grid-migration') throw error
+    if (!(error instanceof ToolProjectError) || error.code !== 'grid-migration' && error.code !== 'geometry-migration') throw error
     const raw: unknown = JSON.parse(text)
     const root = object(raw)
-    return { project: parseToolProject(JSON.stringify({ ...root, version: 3 })), kind: 'migration', message: error.message }
+    let candidate: Record<string, unknown> = { ...root, version: 3 }
+    if (root?.tool === 'viseModule') {
+      const size = object(root.size)
+      if (!size || !exactKeys(size, [...Object.keys(viseModuleDefaults), 'slotLength'])) throw new ToolProjectError('invalid-field', 'Original vise dimensions are malformed')
+      const { slotLength, ...dimensions } = size
+      if (!finite(slotLength, 30, 200)) throw new ToolProjectError('invalid-field', 'Original vise slot length is outside supported limits')
+      candidate = { ...root, version: 2, size: dimensions }
+    }
+    return { project: parseToolProject(JSON.stringify(candidate)), kind: 'migration', message: error.message }
   }
 }
 

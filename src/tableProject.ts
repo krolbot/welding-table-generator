@@ -1,6 +1,6 @@
 import { defaults, maxTabWidth, mmPerInch, presetValues, projectConfig, projectFields, readPart, tableProjectVersion, type Config, type CustomHole, type RemovedHole } from './model'
 
-import { parseToolSelections, toolSelectionsAtTable } from './tools/project'
+import { readToolSelections, toolSelectionsAtTable } from './tools/project'
 
 export type NumericKey = { [K in keyof Config]: Config[K] extends number ? K : never }[keyof Config]
 export type BooleanKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config]
@@ -31,7 +31,7 @@ export class TableProjectError extends Error {
   readonly name = 'TableProjectError'
   constructor(readonly code: 'invalid-json' | 'unsupported-version' | 'invalid-field' | 'unknown-field' | 'missing-field', message: string, readonly field?: string) { super(message) }
 }
-export type TableProjectLoad = { kind: 'current' | 'migration'; config: Config }
+export type TableProjectLoad = { kind: 'current'; config: Config } | { kind: 'migration'; config: Config; change: 'table-grid' | 'tool-geometry'; message: string }
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const invalid = (field: string, requirement: string): never => { throw new TableProjectError('invalid-field', `${field}: ${requirement}`, field) }
 const finite = (value: unknown, field: string): number => typeof value === 'number' && Number.isFinite(value) ? value : invalid(field, 'must be a finite number')
@@ -71,6 +71,7 @@ export const parseTableProject = (text: string): TableProjectLoad => {
   try { raw = JSON.parse(text) } catch { throw new TableProjectError('invalid-json', 'Project JSON is invalid.') }
   if (!record(raw)) throw new TableProjectError('invalid-json', 'A table project must be a JSON object.')
   const legacy = raw.schemaVersion === undefined
+  const messages = legacy ? ['This project used a centred grid. The corrected grid is anchored to the table edges and working surface. Saved origins and manual hole coordinates are retained; select a standard origin explicitly if needed. Review hole removals and mating parts before cutting. The old geometry is not exported.'] : []
   if (!legacy && raw.schemaVersion !== 2 && raw.schemaVersion !== tableProjectVersion) throw new TableProjectError('unsupported-version', 'Unsupported table project version.', 'schemaVersion')
   const allowed = new Set([...Object.keys(defaults), ...Object.values(projectFields), 'schemaVersion', ...(legacy ? ['skirtHoleLayout'] : [])])
   for (const field of Object.keys(raw)) if (!allowed.has(field)) throw new TableProjectError('unknown-field', `Unknown table project field: ${field}`, field)
@@ -115,7 +116,9 @@ export const parseTableProject = (text: string): TableProjectLoad => {
   if (value.removedHoles !== undefined) config.removedHoles = removedHoles(value.removedHoles)
   if (value.nestingTools !== undefined) {
     if (raw.schemaVersion !== tableProjectVersion) return invalid('nestingTools', 'requires the current cut-job schema')
-    config.nestingTools = toolSelectionsAtTable(parseToolSelections(value.nestingTools), config)
+    const loaded = readToolSelections(value.nestingTools)
+    if (loaded.kind === 'migration') messages.push(loaded.message)
+    config.nestingTools = toolSelectionsAtTable(loaded.selections, config)
   }
   if (config.tabWidth > maxTabWidth(config)) return invalid('tabWidth', 'does not fit the selected height and stock')
 
@@ -124,7 +127,7 @@ export const parseTableProject = (text: string): TableProjectLoad => {
     const preset = presetValues[name]
     if (config.holeDiameter === preset.holeDiameter && config.pitch === preset.pitch && config.margin === preset.margin) config.preset = name
   }
-  return { kind: legacy ? 'migration' : 'current', config }
+  return messages.length ? { kind: 'migration', change: legacy ? 'table-grid' : 'tool-geometry', config, message: messages.join(' ') } : { kind: 'current', config }
 }
 
 export const tableProjectQuery = (config: Config) => {
