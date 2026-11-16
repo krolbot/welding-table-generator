@@ -2,35 +2,64 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { createServer } from 'vite'
 import DxfParser from 'dxf-parser'
+import * as THREE from 'three'
 
-let server, geometry, model, dxf, nesting, layout, settings, projects, toolExport
+let server, geometry, model, dxf, nesting, layout, settings, projects, toolExport, assembly, assemblyGeometry
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
-  ;[geometry, model, dxf, nesting, layout, settings, projects, toolExport] = await Promise.all([
+  ;[geometry, model, dxf, nesting, layout, settings, projects, toolExport, assembly, assemblyGeometry] = await Promise.all([
     '/src/geometry.ts', '/src/model.ts', '/src/dxf.ts', '/src/nesting.ts',
     '/src/fabricationLayout.ts', '/src/nestingSettings.ts', '/src/tools/project.ts', '/src/tools/export.ts',
+    '/src/ThreeAssembly.tsx', '/src/assemblyGeometry.ts',
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
 
-test('duplicate rib stations cannot produce repeated top contours or a fabrication DXF', () => {
+test('snapped ribs occupy distinct grid gaps with unique mating cuts in fabrication DXF', () => {
   const config = { ...model.defaults, length: 889, width: 4312, height: 389, thickness: 24,
     tabWidth: 39, clearance: 1.002, holeDiameter: 8, pitch: 133, margin: 132,
     grid: 'square', ribs: true, ribSpacing: 247, dogBones: true, dogBoneDiameter: 3.2, skirtHoles: false }
-  assert.deepEqual(geometry.framePositions(config).short, [-246, -113, 153, 153])
-  assert.equal(geometry.fabricationError(config)?.code, 'cut-clearance')
-  assert.throws(() => dxf.fullDxf(config), { code: 'cut-clearance' })
+  assert.deepEqual(geometry.framePositions(config).short, [-246, -113, 20, 153])
+  assert.equal(geometry.fabricationError(config), undefined)
+  const top = geometry.makeParts(config).find(part => part.name === 'top')
+  assert.equal(new Set(top.contours.slice(1).map(contour => JSON.stringify(contour))).size, top.contours.length - 1)
+  const parsed = new DxfParser().parseSync(dxf.dxfForPart(top, config))
+  assert.equal(parsed.header.$INSUNITS, 4)
+  assert.equal(parsed.entities.filter(entity => entity.layer === 'OUTLINE').length, top.contours.flat().length)
+  assert.equal(parsed.entities.filter(entity => entity.layer === 'HOLES').length, top.holes.length)
 })
 
-test('an internal slot crossing the outer contour cannot reach 2D, 3D or DXF export as valid', () => {
+test('rib tabs fit the actual top outline and never make crossing DXF cuts', () => {
   const config = { ...model.defaults, length: 1709, width: 3107, height: 315, thickness: 38,
     tabWidth: 129, clearance: 1.419, holeDiameter: 28, pitch: 224, margin: 55,
     grid: 'staggered', ribs: true, ribSpacing: 289, dogBones: true, dogBoneDiameter: 2.7, legMounts: false }
   const top = geometry.makeParts(config).find(part => part.name === 'top')
   assert.ok(top)
-  assert.equal(geometry.internalCutsInsideOuter(top, 3), false)
-  assert.equal(geometry.fabricationError(config)?.code, 'cut-clearance')
-  assert.throws(() => dxf.fullDxf(config), { code: 'cut-clearance' })
+  assert.equal(geometry.fabricationError(config), undefined)
+  assert.equal(geometry.internalCutsInsideOuter(top, 3), true)
+  assert.equal(top.slots.some(slot => Math.abs(slot.x + 752) < 1 && Math.abs(slot.y - 629.5) < 1), false)
+  assert.equal(top.slots.some(slot => Math.abs(slot.x + 575.5) < 1 && Math.abs(slot.y - 629.5) < 1), true)
+  assert.equal(new Set(top.contours.slice(1).map(contour => JSON.stringify(contour))).size, top.contours.length - 1)
+  const parsed = new DxfParser().parseSync(dxf.dxfForPart(top, config))
+  assert.equal(parsed.header.$INSUNITS, 4)
+  assert.equal(parsed.entities.filter(entity => entity.layer === 'OUTLINE').length, top.contours.flat().length)
+  assert.equal(parsed.entities.filter(entity => entity.layer === 'HOLES').length, top.holes.length)
+
+  const runtime = { assembly: new THREE.Group(), dimensions: new THREE.Group(), meshes: [],
+    metal: new THREE.MeshStandardMaterial({ side: THREE.DoubleSide }), colors: assemblyGeometry.assemblyColors(false),
+    factor: 0, targetFactor: 0, renderHoles: true }
+  assembly.rebuildAssembly(runtime, { ...config, showDimensions: false })
+  runtime.assembly.updateMatrixWorld(true)
+  const topMesh = runtime.meshes.find(item => item.userData.part === 'top')
+  const surface = new THREE.Box3().setFromObject(topMesh).max.y
+  const hits = (x, y) => {
+    const world = topMesh.localToWorld(new THREE.Vector3(x, y, 0))
+    return new THREE.Raycaster(new THREE.Vector3(world.x, surface + 20, world.z), new THREE.Vector3(0, -1, 0)).intersectObject(topMesh, false).length
+  }
+  assert.equal(hits(-575.5, 629.5), 0, 'the valid slot must be open in the assembled 3D plate')
+  assert.ok(hits(-752, 629.5) > 0, 'the former crossing slot is absent from 2D and solid in 3D')
+  assemblyGeometry.disposeObject3D(runtime.assembly)
+  assemblyGeometry.disposeObject3D(runtime.dimensions)
 })
 
 test('nesting refuses a second exterior island represented as an internal cut', () => {

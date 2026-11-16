@@ -366,7 +366,7 @@ const ribPositions = (span: number, c: Config, fixedCount?: number) => {
   const coordinates = gridCoordinates(span, c)
   const gaps = coordinates.slice(1).map((value, index) => (value + coordinates[index]) / 2)
   if (fixedCount === undefined && count % 2 && gaps.length && !gaps.some(value => Math.abs(value) < epsilon)) count += 1
-  return Array.from({ length: count }, (_, index) => {
+  const snapped = Array.from({ length: count }, (_, index) => {
     const desired = (index + 1) * span / (count + 1) - span / 2
     if (Math.abs(desired) < epsilon || !gaps.length) return desired
     return gaps.reduce((closest, value) => {
@@ -374,17 +374,29 @@ const ribPositions = (span: number, c: Config, fixedCount?: number) => {
       return difference < -epsilon || Math.abs(difference) < epsilon && Math.abs(value) < Math.abs(closest) ? value : closest
     })
   })
+  if (gaps.length < count || new Set(snapped).size === count) return snapped
+  // Reserve one distinct grid gap for every rib, keeping their order and count.
+  let last = -1
+  return snapped.map((_, index) => {
+    const desired = (index + 1) * span / (count + 1) - span / 2
+    const available = gaps.slice(last + 1, gaps.length - (count - index - 1))
+    const nearest = available.reduce((best, value) => Math.abs(value - desired) < Math.abs(best - desired) ? value : best)
+    last = gaps.indexOf(nearest)
+    return nearest
+  })
 }
 
 const ribTabs = (span: number, intersections: number[], c: Config) => {
   const boundaries = [-span / 2 + c.thickness, ...intersections, span / 2 - c.thickness]
+  const halfTab = (c.tabWidth + c.clearance) / 2
+  const reserve = halfTab + (c.thickness + c.clearance) / 2 + minimumHoleWeb + (c.dogBones ? c.dogBoneDiameter / 2 : 0)
   const centers = boundaries.slice(1).flatMap((value, index) => {
     const previous = boundaries[index]
-    if (value - previous < c.tabWidth) return []
+    if (value - previous < 2 * reserve - epsilon) return []
     const count = Math.max(1, Math.floor((value - previous) / 250))
     return Array.from({ length: count }, (_, tab) => previous + (tab + 1) * (value - previous) / (count + 1))
   })
-  return centers.length ? centers : [0]
+  return centers
 }
 
 export const framePositions = (c: Config) => ({
@@ -429,7 +441,9 @@ export const fabricationError = (c: Config): FabricationError | undefined => {
     return new FabricationError('tab-width', 'The locating tabs do not fit the selected table height and stock. Increase the height, reduce the stock thickness or adjust the tab width.')
   const positions = framePositions(c)
   if ([positions.short, positions.long].some(stations => stations.some((station, index) => stations.slice(index + 1).some(other => Math.abs(station - other) < epsilon))))
-    return new FabricationError('cut-clearance', 'Two ribs snap to the same station. Change rib spacing or the tooling grid before fabrication.')
+    return new FabricationError('cut-clearance', 'There are too few distinct grid gaps for the selected ribs. Change rib spacing or the tooling grid before fabrication.')
+  if (c.ribs && (!ribTabs(c.length, positions.short, c).length || !ribTabs(c.width, positions.long, c).length))
+    return new FabricationError('cut-clearance', 'No locating tab fits between the frame joints. Reduce the tab width or change the rib spacing before fabrication.')
   if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return new FabricationError('leg-plates', 'The leg plates, joints or mounting holes do not fit the frame. Adjust the conflicting dimensions before fabrication export.')
   const access = ribAccessHoleSpec(c)
   if (access && !access.valid) return new FabricationError('rib-access', `Rib access holes do not fit. Maximum diameter is ${access.maxDiameter.toFixed(2)} mm for the current ribs. Reduce the hole diameter or increase the available rib web. Fabrication export is disabled.`, { maximum: access.maxDiameter })
