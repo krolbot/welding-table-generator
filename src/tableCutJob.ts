@@ -1,4 +1,4 @@
-import { engravingLines, type FabricationPart } from './geometry'
+import { engravingLines, type FabricationPart, type Part } from './geometry'
 import { readPart, type Config } from './model'
 import { nestingKey, nestingOptions, nestingParts } from './nestingSettings'
 import { validNestingInventory, type NestingJob, type NestingStock } from './nestingJob'
@@ -15,8 +15,8 @@ export type TableLayoutSnapshot = { key: string; result: NestingResult }
 export const tableLayoutKey = (config: Config) => nestingKey({ ...config, nestingTools: [] })
 
 /** Namespaces distinguish equal tool families and tool 'top' from table 'top'. Geometry is never rewritten. */
-export const tableCutInventory = (config: Config) => {
-  const tableParts = nestingParts(config)
+export const tableCutInventory = (config: Config, preparedParts?: Part[]) => {
+  const tableParts = nestingParts(config, preparedParts)
   const sources: Record<string, CutPartSource> = Object.fromEntries(tableParts.map(part => [part.name, { kind: 'table', part: part.name, perCopy: part.count / config.nestingCopies }]))
   const parts: FabricationPart[] = [...tableParts]
   const savedSelections = parseToolSelections(config.nestingTools)

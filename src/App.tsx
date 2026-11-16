@@ -18,7 +18,7 @@ import {
   type CustomHole,
   type PartName,
 } from './model'
-import { engravingLines, fabricationError, layoutParts, legCornerPlateSpec, ribAccessHoleSpec, totals, type Hole } from './geometry'
+import { engravingLines, fabricationError, FabricationError, layoutParts, legCornerPlateSpec, makeParts, ribAccessHoleSpec, type Hole } from './geometry'
 import { downloadFull, downloadZip } from './dxf'
 import { TableSheetNesting } from './SheetNesting'
 import { Icon } from './Icon'
@@ -32,7 +32,7 @@ import { compareNesting } from './nesting'
 import { fabricationEstimate } from './fabricationLayout'
 import { TableTools } from './tools/TableTools'
 import { toolSelectionsAtTable, type ToolProject } from './tools/project'
-import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey, type TableProjectLoad } from './tableProject'
+import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey } from './tableProject'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 const ToolsWorkspace = lazy(() => import('./tools/ToolsWorkspace').then(module => ({ default: module.ToolsWorkspace })))
@@ -43,6 +43,10 @@ const inchRanges: Partial<Record<NumericKey, { min: number; max: number; step: n
 }
 const partNames = Object.keys(partLabels) as PartName[]
 const isPart = (value: unknown): value is PartName => typeof value === 'string' && Object.hasOwn(partLabels, value)
+const tableGeometryKey = (config: Config) => {
+  const { units, exploded, showDimensions, renderHoles, highlighting, engraving, engravingMode, nameMarking, sheetLength, sheetWidth, sheetEdgeGap, sheetPartGap, nestingCopies, nestingTools, ...geometry } = config
+  return JSON.stringify(geometry)
+}
 const readStorage = (key: string): Record<string, unknown> => {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
@@ -50,9 +54,8 @@ const readStorage = (key: string): Record<string, unknown> => {
   } catch { return {} }
 }
 
-type ProjectReview = (Extract<TableProjectLoad, { kind: 'migration' }> & { original: string }) | { kind: 'rejected'; original: string; message: string }
 const preserveView = (next: Config, current: Config): Config => ({ ...next, units: current.units, exploded: current.exploded, showDimensions: current.showDimensions, renderHoles: current.renderHoles, highlighting: current.highlighting })
-const loadedTable = (): { config: Config; review: ProjectReview | null } => {
+const loadedTable = (): { config: Config; error: string } => {
   const ui = readStorage('tableGenUI')
   const config: Config = {
     ...defaults, units: ui.units === 'in' || ui.units === 'inch' ? 'inch' : 'mm',
@@ -66,39 +69,45 @@ const loadedTable = (): { config: Config; review: ProjectReview | null } => {
     original = location.href
     const shared = tableProjectFromQuery(new URLSearchParams(location.search))
     original = shared ?? localStorage.getItem('tableGenParams') ?? ''
-    if (!original) return { config, review: null }
-    const parsed = parseTableProject(original)
-    return parsed.kind === 'migration'
-      ? { config, review: { ...parsed, original } }
-      : { config: preserveView(parsed.config, config), review: null }
+    if (!original) return { config, error: '' }
+    return { config: preserveView(parseTableProject(original).config, config), error: '' }
   } catch (error) {
-    return { config, review: { kind: 'rejected', original, message: error instanceof Error ? error.message : 'Не удалось прочитать сохранённый проект или проект по ссылке. Исходные данные не перезаписаны.' } }
+    return { config, error: error instanceof Error ? error.message : 'Не удалось прочитать сохранённый проект или проект по ссылке.' }
   }
 }
 
 export default function App() {
-  const [notice, setNotice] = useState('')
   const [initial] = useState(loadedTable)
+  const [notice, setNotice] = useState(initial.error)
   const [config, setConfig] = useState<Config>(initial.config)
-  const [review, setReview] = useState<ProjectReview | null>(initial.review)
-  const navigation = useWorkspaceNavigation(setNotice, review ? { workspace: 'table', message: 'Завершите проверку проекта стола перед переходом к оснастке.' } : null)
+  const navigation = useWorkspaceNavigation()
   const { workspace, view, selectWorkspace, selectView: setView } = navigation
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
   const [tableLayout, setTableLayout] = useState<TableLayoutSnapshot>()
   const [reset2dToken, setReset2dToken] = useState(0)
 
+  const geometryKey = tableGeometryKey(config)
+  const geometry = useMemo(() => {
+    try {
+      const parts = makeParts(config)
+      return { parts, error: fabricationError(config, parts) }
+    } catch (error) {
+      return { parts: [], error: error instanceof FabricationError ? error : new FabricationError('invalid-dimensions', error instanceof Error ? error.message : 'Некорректная геометрия стола') }
+    }
+  }, [geometryKey])
   const cutJob = useMemo(() => {
-    try { return { inventory: tableCutInventory(config) } }
+    if (geometry.error) return { error: geometry.error.message }
+    try { return { inventory: tableCutInventory(config, geometry.parts) } }
     catch (error) { return { error: error instanceof Error ? error.message : 'Некорректное задание на резку' } }
-  }, [config])
+  }, [geometry, config.nestingCopies, config.nestingTools])
   const summary = useMemo(() => ({
     ...fabricationEstimate(cutJob.inventory?.parts ?? [], { length: config.sheetLength, width: config.sheetWidth }),
-    engraving: cutJob.inventory ? totals(config).engraving * config.nestingCopies : 0,
-  }), [config, cutJob])
-  const layout = useMemo(() => layoutParts(config), [config])
-  const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
-  const ribAccess = useMemo(() => ribAccessHoleSpec(config), [config])
-  const geometryError = useMemo(() => fabricationError(config), [config])
+    engraving: cutJob.inventory ? geometry.parts.reduce((total, part) => total + engravingLines(part, config).reduce((sum, mark) => sum + Math.hypot(mark.to.x - mark.from.x, mark.to.y - mark.from.y), 0) * part.count, 0) / 1000 * config.nestingCopies : 0,
+  }), [cutJob, geometry.parts, config.sheetLength, config.sheetWidth, config.nestingCopies, config.engraving, config.engravingMode, config.nameMarking])
+  const layout = useMemo(() => layoutParts(config, geometry.parts), [geometry.parts])
+  const cornerPlate = useMemo(() => legCornerPlateSpec(config), [geometryKey])
+  const ribAccess = useMemo(() => ribAccessHoleSpec(config), [geometryKey])
+  const geometryError = geometry.error
   const unitLabel = config.units === 'mm' ? 'мм' : 'дюйм'
 
   useEffect(() => {
@@ -107,13 +116,12 @@ export default function App() {
 
   useEffect(() => {
     try {
-      if (!review) localStorage.setItem('tableGenParams', JSON.stringify(projectConfig(config)))
+      localStorage.setItem('tableGenParams', JSON.stringify(projectConfig(config)))
       localStorage.setItem('tableGenUI', JSON.stringify({ viewMode: workspace === 'table' ? view : readStorage('tableGenUI').viewMode ?? '2d', renderHoles3D: config.renderHoles, enableHoverEffect: config.highlighting, explodeFactor: config.exploded, showDims: config.showDimensions, units: config.units === 'inch' ? 'in' : 'mm', theme: dark ? 'dark' : 'light' }))
     } catch { setNotice('Автосохранение в браузере недоступно. Сохраните проект в файл.') }
-  }, [config, dark, view, workspace, review])
+  }, [config, dark, view, workspace])
 
   useEffect(() => {
-    if (review) return
     const url = new URL(location.href)
     if (!['state', 'length', 'schemaVersion'].some(key => url.searchParams.has(key))) return
     const selectedWorkspace = url.searchParams.get('workspace')
@@ -124,7 +132,7 @@ export default function App() {
     if (selectedWorkspace) url.searchParams.set('workspace', selectedWorkspace)
     if (selectedView) url.searchParams.set('view', selectedView)
     history.replaceState(history.state, '', url)
-  }, [config, review])
+  }, [config])
 
   const applyTableConfig = (next: Config) => {
     try {
@@ -165,7 +173,7 @@ export default function App() {
   const slider = (key: NumericKey, label: string, min: number, max: number, step: number, percentage = false) => {
     const imperial = config.units === 'inch' ? inchRanges[key] : undefined
     const range = imperial ?? { min, max, step }
-    return <SliderField label={label} output={percentage ? `${config[key]}%` : numberLabel(config[key], 2)} icon={percentage ? 'explode' : undefined} min={range.min} max={range.max} step={range.step} value={imperial ? config[key] / mmPerInch : config[key]} onValue={value => setNumeric(key, value * (imperial ? mmPerInch : 1))} />
+    return <SliderField label={label} output={draft => percentage ? `${draft}%` : numberLabel(draft * (imperial ? mmPerInch : 1), 2)} icon={percentage ? 'explode' : undefined} min={range.min} max={range.max} step={range.step} value={imperial ? config[key] / mmPerInch : config[key]} onValue={value => setNumeric(key, value * (imperial ? mmPerInch : 1))} />
   }
   const toggle = (key: BooleanKey, label: string) => <Checkbox label={label} checked={config[key]} onChange={value => patch(key, value)} />
   const reset2d = () => setReset2dToken(value => value + 1)
@@ -196,26 +204,13 @@ export default function App() {
     url.searchParams.set('workspace', workspace); url.searchParams.set('view', view)
     history.replaceState(history.state, '', url)
     setConfig(next)
-    setReview(null)
     reset2d()
-  }
-  const migrationPreset = review?.kind === 'migration' && review.change === 'table-grid' ? (['D16', 'D28'] as const).find(name => review.config.holeDiameter === presetValues[name].holeDiameter && review.config.pitch === presetValues[name].pitch && review.config.margin !== presetValues[name].margin) : undefined
-  const acceptReview = (candidate: Config) => {
-    if (!review) return
-    try { localStorage.setItem('tableGenParams.previous', review.original) }
-    catch { setNotice('Не удалось создать резервную копию исходного проекта. Проект не заменён. Скачайте исходные данные и освободите место в хранилище браузера.'); return }
-    replaceProject(candidate)
-    setNotice('Исходные данные сохранены. Перед изготовлением проверьте исправленную геометрию.')
   }
   const reportError = (error: unknown) => setNotice(error instanceof Error ? error.message : 'Операция завершилась с ошибкой. Файл экспорта не создан.')
   const open = async (file: File) => {
-    if (review) { setNotice('Завершите проверку текущего проекта перед его заменой другим файлом.'); return }
-    let original = ''
     try {
-      original = await file.text()
-      const parsed = parseTableProject(original)
-      if (parsed.kind === 'migration') setReview({ ...parsed, original })
-      else { replaceProject(parsed.config); setNotice('Проект загружен.') }
+      replaceProject(parseTableProject(await file.text()).config)
+      setNotice('Проект загружен.')
     } catch (error) { reportError(error) }
   }
   const share = async () => {
@@ -231,7 +226,6 @@ export default function App() {
   }
 
   const withSelectedTool = (project: ToolProject) => {
-    if (review) throw new Error('Завершите проверку проекта стола перед добавлением оснастки.')
     const next = { ...config, nestingTools: toolSelectionsAtTable([...config.nestingTools, { id: crypto.randomUUID(), project }], config) }
     tableCutInventory(next)
     return next
@@ -248,11 +242,10 @@ export default function App() {
   }
   const rememberTableLayout = (snapshot: TableLayoutSnapshot) => setTableLayout(current => current?.key === snapshot.key && compareNesting(current.result, snapshot.result) <= 0 ? current : snapshot)
 
-  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Загрузка оснастки…</div>}><ToolsWorkspace view={view} onView={setView} onNavigationGuard={navigation.setGuard} notice={notice} onDismissNotice={() => setNotice('')} tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
+  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Загрузка инструментов…</div>}><ToolsWorkspace view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')} tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
   return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
     settings={<>
-          {review && <section role="alert" className="project-review"><h3>Требуется проверка проекта</h3><p className="socket-error">{review.message}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'исходный-проект-сварочного-стола.txt', 'text/plain')}>Скачать исходные данные</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Применить начало сетки {migrationPreset} ({presetValues[migrationPreset].margin} мм)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? review.change === 'table-grid' ? `Сохранить прежнее начало сетки (${review.config.margin} мм)` : 'Применить исправленную геометрию оснастки' : 'Создать новый проект стола'}</button></section>}
-          <fieldset className="table-settings" disabled={Boolean(review)}>
+          <fieldset className="table-settings">
           <ParameterGroup title={<>Размеры ({unitLabel})</>} defaultOpen>
             {slider('length', 'Длина (L)', 500, 5000, 50)}
             {slider('width', 'Ширина (W)', 400, 5000, 50)}
@@ -333,12 +326,11 @@ export default function App() {
           </fieldset>
     </>}
     visualization={<VisualizationSettings value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} />}
-    production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? review.message : geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
-    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={save} onShare={() => { onClose(); void share() }} disabled={Boolean(review || geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => { onClose(); setView('sheet') } } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
+    production={<fieldset className="table-settings"><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
+    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={save} onShare={() => { onClose(); void share() }} disabled={Boolean(geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => { onClose(); setView('sheet') } } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
     seo={<article className="seo"><div><h1>Бесплатный генератор сварочных столов — DXF-чертежи и 3D CAD</h1><p>Создайте параметрический сварочный стол в браузере. Изучите 3D-сборку, настройте размеры и соединения, затем экспортируйте отдельные детали или полную раскладку в DXF.</p><h3>Системы оснастки D16 и D28</h3><p>Выберите D16/50, D28/100 либо задайте диаметр отверстий, шаг и начало сетки вручную. У квадратной и диагональной сеток фиксированные начала координат от краёв и рабочей поверхности столешницы и юбок. Одна только геометрия сетки не подтверждает совместимость оснастки.</p><h3>Конструкция на шипах и пазах</h3><p>Задайте толщину листа, ширину шипов и зазор в соединениях, чтобы построить взаимно фиксирующиеся детали периметра и опорной рамы. Перед резкой проверьте построенные контуры и посадку соединений.</p><h3>Угловые разгрузки</h3><p>Дополнительные угловые разгрузки обеспечивают место для шипов. В DXF круглые отверстия и дуги разгрузок остаются исходными сущностями на отдельных слоях резки и гравировки.</p><h3>Внутренняя опорная рама и рёбра</h3><p>Настройте шаг опорных рёбер и изучите собранный либо разнесённый стол. Можно использовать исходную схему болтов на юбках или создать четыре горизонтальные угловые пластины, которые соединяются с обеими соседними юбками и крепятся болтами к отдельным простым пластинам на съёмных ножках из квадратной трубы. В нужные детали также можно добавить отверстия для подъёма и пользовательские отверстия по координатам.</p><h3>Скачать DXF-файлы сварочного стола</h3><p>Скачайте DXF отдельных деталей в ZIP-архиве, экспортируйте полную раскладку, сохраните проект как JSON или поделитесь ссылкой с его параметрами. Перед изготовлением обязательно проверьте размеры, допуски и пригодность конструкции.</p></div></article>}>
-    {review ? <div className="three-loading socket-error" role="alert">Сохраните исходный проект, затем проверьте исправленную геометрию в разделе «Параметры».</div>
-      : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Интерактивная 2D-раскладка деталей сварочного стола" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
+    {geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Интерактивный 2D-чертёж сварочного стола" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
       : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} baseline={tableLayout} onBaseline={rememberTableLayout} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
-      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D-сборки…</div>}><ThreeAssembly config={config} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}
+      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ThreeAssembly config={config} parts={geometry.parts} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}
   </GeneratorShell>
 }

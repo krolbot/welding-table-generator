@@ -27,25 +27,12 @@ test('canonical table JSON and URL preserve exact fabrication data and omit reti
   assert.equal(decoded.kind, 'current')
 })
 
-test('legacy projects enter explicit review with origins and manual data preserved, never inferred presets', () => {
-  for (const layout of ['canonical', 'compact']) for (const margin of [25, 37, 50, 100]) {
-    const original = saved({ margin, customHoles: [{ id: 'manual', part: 'top', x: 1.25, y: 3.75, d: 12 }], removedHoles: ['top:0.000:0.000'] })
-    delete original.schemaVersion
-    delete original.nestingTools
-    original.skirtHoleLayout = layout
-    const result = load(original)
-    assert.equal(result.kind, 'migration')
-    assert.equal(result.config.margin, margin)
-    assert.deepEqual(result.config.customHoles, original.customHoles)
-    assert.deepEqual(result.config.removedHoles, original.removedHoles)
-    assert.equal('skirtHoleLayout' in result.config, false)
-    const current = model.projectConfig(result.config)
-    assert.equal(load(current).kind, 'current')
-    assert.equal('skirtHoleLayout' in current, false)
-  }
-  const legacyUrl = new URLSearchParams({ length: '1450', width: '1150', margin: '50', enableRibs: 'true', skirtHoleLayout: 'compact' })
-  const result = codec.parseTableProject(codec.tableProjectFromQuery(legacyUrl))
-  assert.equal(result.kind, 'migration'); assert.equal(result.config.margin, 50)
+test('legacy and incomplete projects are rejected instead of entering a migration flow', () => {
+  const missingVersion = saved(); delete missingVersion.schemaVersion
+  const oldVersion = { ...saved(), schemaVersion: 2 }; delete oldVersion.nestingTools
+  const retiredField = { ...saved(), skirtHoleLayout: 'compact' }
+  for (const value of [missingVersion, oldVersion, retiredField]) assert.throws(() => load(value))
+  assert.throws(() => codec.parseTableProject(codec.tableProjectFromQuery(new URLSearchParams({ length: '1450', width: '1150' }))))
 })
 
 test('invalid JSON, future versions, unknown fields, coercions, aliases and duplicate hole IDs are rejected structurally', () => {
@@ -53,7 +40,7 @@ test('invalid JSON, future versions, unknown fields, coercions, aliases and dupl
   for (const [change, code] of [
     [{ schemaVersion: 99 }, 'unsupported-version'], [{ skirtHoleLayout: 'compact' }, 'unknown-field'],
     [{ length: '1500' }, 'invalid-field'], [{ enableRibs: 1 }, 'invalid-field'], [{ nestingCopies: 1.5 }, 'invalid-field'],
-    [{ height: 120 }, 'invalid-field'], [{ holePattern: 'hexagonal' }, 'invalid-field'],
+    [{ height: 120 }, 'unknown-field'], [{ holePattern: 'hexagonal' }, 'invalid-field'],
     [{ customHoles: [{ id: 1, part: 'top', x: 0, y: 0, d: 10 }, { id: '1', part: 'top', x: 0, y: 0, d: 10 }] }, 'invalid-field'],
     [{ customHoles: [{ id: 1, part: 'unknown', x: 0, y: 0, d: 10 }] }, 'invalid-field'],
     [{ removedHoles: [{ id: 1, part: 'top', x: 0, y: 0, r: -1 }] }, 'invalid-field'],
@@ -68,19 +55,14 @@ test('invalid JSON, future versions, unknown fields, coercions, aliases and dupl
   assert.equal(codec.tableProjectFromQuery(new URLSearchParams('workspace=tools&toolProject=%7B%7D')), undefined)
 })
 
-test('extension revision 2 requires explicit review; revision 4 preserves dimensions/copies and gates every export', () => {
+test('retired tool revisions are rejected and current revisions preserve exact dimensions', () => {
   const old = { ...tools.defaultToolProject, version: 2, size: { length: 460, width: 230, height: 175, thickness: 8 }, copies: 2 }
   const text = JSON.stringify(old)
-  assert.throws(() => tools.parseToolProject(text), error => error.code === 'grid-migration')
-  assert.throws(() => toolExport.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'grid-migration')
-  assert.throws(() => toolExport.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'grid-migration')
-  const reviewed = tools.readToolProject(text)
-  assert.equal(reviewed.kind, 'migration')
-  assert.deepEqual(reviewed.project, { ...old, version: 4 })
-  assert.equal(tools.readToolProject(tools.projectJson(reviewed.project)).kind, 'current')
-  assert.throws(() => tools.readToolProject(JSON.stringify({ ...old, size: { ...old.size, thickness: 10 } })), error => error.code === 'invalid-dimensions')
+  assert.throws(() => tools.parseToolProject(text), error => error.code === 'unsupported-version')
+  assert.throws(() => toolExport.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
+  assert.throws(() => toolExport.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
   for (const project of [tools.defaultSquareProject, tools.defaultCornerBracketProject]) {
-    assert.equal(tools.readToolProject(tools.projectJson(project)).kind, 'current')
+    assert.deepEqual(tools.parseToolProject(tools.projectJson(project)), project)
     assert.equal(project.version, 3)
   }
 })

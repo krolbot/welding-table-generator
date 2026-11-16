@@ -6,7 +6,7 @@ import { display, readPart, type Config } from './model'
 import { framePositions, legCornerPlateSpec, makeParts, partWeight, skirtAssemblyY, type FabricationPart } from './geometry'
 import type { NestingResult } from './nesting'
 
-type Props = { config: Config; resetToken: number; dark: boolean; nesting?: NestingResult }
+type Props = { config: Config; resetToken: number; dark: boolean; parts?: FabricationPart[]; nesting?: NestingResult }
 type Part = FabricationPart
 type PartInfo = AssemblyPartInfo
 type PartMesh = AssemblyPartMesh
@@ -85,11 +85,11 @@ const rebuildDimensions = (runtime: AssemblyRuntime, config: Config) => {
   ].forEach(sprite => { if (sprite) runtime.dimensions.add(sprite) })
 }
 
-export const rebuildAssembly = (runtime: AssemblyRuntime, config: Config) => {
+export const rebuildAssembly = (runtime: AssemblyRuntime, config: Config, preparedParts?: FabricationPart[]) => {
   disposeObject3D(runtime.assembly)
   runtime.assembly.clear()
   runtime.meshes = []
-  const parts = makeParts(config)
+  const parts = preparedParts ?? makeParts(config)
   const find = (name: Part['name']) => parts.find(part => part.name === name)
   runtime.targetFactor = config.exploded / 100
   runtime.assembly.position.y = config.height / 2
@@ -209,11 +209,11 @@ const focusCornerMount = (runtime: AssemblyRuntime, config: Config) => {
   runtime.controls.update()
 }
 
-export function ThreeAssembly({ config, resetToken, dark, nesting }: Props) {
+export function ThreeAssembly({ config, resetToken, dark, parts, nesting }: Props) {
   const build = useCallback((runtime: AssemblyRuntime) => {
     if (nesting) rebuildSheets(runtime, config, nesting)
-    else rebuildAssembly(runtime, config)
-  }, [config, nesting])
+    else rebuildAssembly(runtime, config, parts)
+  }, [parts, nesting, config.showDimensions, config.units])
   const reset = useCallback((runtime: AssemblyRuntime) => {
     if (nesting) {
       const extent = Math.max(config.sheetLength * Math.max(1, nesting.sheets.length) * 1.08, config.sheetWidth)
@@ -242,6 +242,7 @@ export function ThreeAssembly({ config, resetToken, dark, nesting }: Props) {
     errorClassName="three-loading"
     renderHoles={nesting ? true : config.renderHoles}
     highlighting={config.highlighting}
+    exploded={config.exploded}
     cameraKey={nesting ? 'sheet' : 'assembly'}
     focusCamera={!nesting && legCornerPlateSpec(config) ? focus : undefined}
     onThemeChange={theme}

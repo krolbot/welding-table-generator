@@ -53,6 +53,7 @@ type Props = {
   errorClassName: string
   renderHoles?: boolean
   highlighting?: boolean
+  exploded?: number
   cameraKey?: string
   focusCamera?: (runtime: AssemblyRuntime) => void
   onThemeChange?: (runtime: AssemblyRuntime) => void
@@ -71,6 +72,7 @@ export function AssemblyViewport({
   errorClassName,
   renderHoles = true,
   highlighting = true,
+  exploded = 0,
   cameraKey,
   focusCamera,
   onThemeChange,
@@ -78,6 +80,7 @@ export function AssemblyViewport({
 }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const runtime = useRef<AssemblyRuntime | undefined>(undefined)
+  const built = useRef(false)
   const latest = useRef({ resetCamera, focusCamera, onThemeChange })
   latest.current = { resetCamera, focusCamera, onThemeChange }
   const fittedBounds = useRef<THREE.Box3 | undefined>(undefined)
@@ -100,9 +103,6 @@ export function AssemblyViewport({
     state.controls.update()
     fittedBounds.current = bounds
   }
-  const [navigation, setNavigation] = useState<'orbit' | 'pan'>('orbit')
-  const navigationRef = useRef(navigation)
-  navigationRef.current = navigation
   const [preset, setPreset] = useState<CameraPreset | 'custom'>('iso')
   const moveView = (x: number, y: number) => runtime.current?.controls.pan(x, y)
   const zoomView = (factor: number) => runtime.current?.controls.dollyIn(1 / factor)
@@ -125,13 +125,7 @@ export function AssemblyViewport({
     state.controls.enableDamping = damping
     setPreset(view)
   }
-  useEffect(() => {
-    const controls = runtime.current?.controls
-    if (!controls) return
-    controls.mouseButtons.LEFT = navigation === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
-    controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN
-    controls.touches.ONE = navigation === 'pan' ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
-  }, [navigation])
+
   const [error, setError] = useState('')
   const [hover, setHover] = useState<{ info: AssemblyPartInfo; x: number; y: number } | null>(null)
 
@@ -154,6 +148,9 @@ export function AssemblyViewport({
     controls.zoomToCursor = true
     controls.screenSpacePanning = true
     controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN
+    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE
+    controls.mouseButtons.RIGHT = THREE.MOUSE.PAN
+    controls.touches.ONE = THREE.TOUCH.ROTATE
     controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
     renderer.domElement.tabIndex = 0
     renderer.domElement.setAttribute('aria-label', ariaLabel)
@@ -172,7 +169,7 @@ export function AssemblyViewport({
         } else controls.pan(value === 'arrowleft' ? -48 : value === 'arrowright' ? 48 : 0, value === 'arrowup' ? -48 : value === 'arrowdown' ? 48 : 0)
       }
     }
-    const releaseSpace = () => { controls.mouseButtons.LEFT = navigationRef.current === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE }
+    const releaseSpace = () => { controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE }
     const keyUp = (event: KeyboardEvent) => { if (event.key === ' ') releaseSpace() }
     renderer.domElement.addEventListener('pointerdown', focus)
     renderer.domElement.addEventListener('keydown', key)
@@ -236,7 +233,6 @@ export function AssemblyViewport({
       renderer.setSize(width, height)
       camera.aspect = width / Math.max(height, 1)
       camera.updateProjectionMatrix()
-      fit(state, true)
     }
     const observer = new ResizeObserver(resize)
     observer.observe(mount)
@@ -287,8 +283,21 @@ export function AssemblyViewport({
     state.highlighting = highlighting
     setHover(null)
     build(state)
-    fit(state)
-  }, [build, renderHoles, highlighting])
+    if (!built.current) { fit(state, true); built.current = true }
+  }, [build, renderHoles])
+
+  useEffect(() => {
+    const state = runtime.current
+    if (!state) return
+    state.highlighting = highlighting
+    if (!highlighting) state.meshes.forEach(mesh => { mesh.material = state.metal })
+    setHover(null)
+  }, [highlighting])
+
+  useEffect(() => {
+    const state = runtime.current
+    if (state) state.targetFactor = Math.max(0, Math.min(100, exploded)) / 100
+  }, [exploded])
 
   useEffect(() => {
     const state = runtime.current
@@ -309,10 +318,9 @@ export function AssemblyViewport({
   // resetToken is the user-facing reset action; cameraKey identifies a different view mode.
   }, [resetToken, cameraKey])
 
-  return error ? <div className={errorClassName} role="alert">{error}</div> : <div className="assembly-viewport" data-navigation={navigation}>
+  return error ? <div className={errorClassName} role="alert">{error}</div> : <div className="assembly-viewport">
     <div className="viewport-toolbar" aria-label="Навигация в 3D">
-      <div className="viewport-group"><button aria-label="Вращение" title="Вращение" aria-pressed={navigation === 'orbit'} onClick={() => setNavigation('orbit')}><Icon name="orbit" /><span>Вращение</span></button><button aria-label="Панорамирование" title="Панорамирование" aria-pressed={navigation === 'pan'} onClick={() => setNavigation('pan')}><Icon name="hand" /><span>Панорама</span></button></div>
-      <details className="viewport-help"><summary aria-label="Справка по управлению 3D"><Icon name="info" /></summary><div>Перетаскивайте модель для вращения или панорамирования в выбранном режиме. Правая или средняя кнопка мыши либо пробел с перетаскиванием включают панорамирование. Колесо меняет масштаб относительно указателя. Два пальца перемещают и масштабируют модель. Стрелки перемещают вид, Shift со стрелками вращает модель, F вписывает модель.</div></details>
+      <details className="viewport-help"><summary aria-label="Справка по управлению 3D"><Icon name="info" /></summary><div>Перетаскивайте модель левой кнопкой для вращения. Правая или средняя кнопка мыши либо пробел с перетаскиванием перемещают вид. Колесо меняет масштаб относительно указателя. Два пальца перемещают и масштабируют модель. Стрелки перемещают вид, Shift со стрелками вращает модель, F вписывает модель.</div></details>
     </div>
     <div className="camera-presets" aria-label="Направление камеры">
       <select className="camera-preset-select" aria-label="Направление камеры" value={preset} onChange={event => { const view = cameraPresets.find(value => value === event.target.value); if (view) orient(view) }}><option value="custom" disabled>Пользовательский вид</option>{cameraPresets.map(view => <option key={view} value={view}>{view === 'iso' ? 'Изометрия' : view === 'top' ? 'Сверху' : view === 'front' ? 'Спереди' : 'Справа'}</option>)}</select>
@@ -328,6 +336,6 @@ export function AssemblyViewport({
       </dl>
     </div>}
     </div>
-    <div className="viewport-status"><PanControls onPan={moveView} /><span>{navigation === 'orbit' ? 'Перетаскивание — вращение' : 'Перетаскивание — панорама'} · колесо — масштаб</span><ZoomControls onZoom={zoomView} onFit={fitView} /></div>
+    <div className="viewport-status"><PanControls onPan={moveView} /><span>Левая кнопка — вращение · правая — перемещение · колесо — масштаб</span><ZoomControls onZoom={zoomView} onFit={fitView} /></div>
   </div>
 }

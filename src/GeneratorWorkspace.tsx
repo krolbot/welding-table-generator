@@ -18,8 +18,11 @@ export function NumberField({ label, onValue, ...props }: Omit<InputHTMLAttribut
   return <label className="field"><span>{label}</span><NumberInput {...props} onValue={onValue} /></label>
 }
 
-export function SliderField({ label, value, output, min, max, step, onValue, icon }: { label: string; value: number; output: ReactNode; min: number; max: number; step: number; onValue: (value: number) => void; icon?: IconName }) {
-  return <label className="slider-field"><span><span className="slider-label">{icon && <Icon name={icon} size={14} />}{label}</span><output>{output}</output></span><input aria-label={label} type="range" min={min} max={max} step={step} value={value} onChange={event => onValue(Number(event.target.value))} /></label>
+export function SliderField({ label, value, output, min, max, step, onValue, icon }: { label: string; value: number; output: ReactNode | ((draft: number) => ReactNode); min: number; max: number; step: number; onValue: (value: number) => void; icon?: IconName }) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const commit = () => { if (draft !== value) onValue(draft) }
+  return <label className="slider-field"><span><span className="slider-label">{icon && <Icon name={icon} size={14} />}{label}</span><output>{typeof output === 'function' ? output(draft) : output}</output></span><input aria-label={label} type="range" min={min} max={max} step={step} value={draft} onChange={event => setDraft(Number(event.target.value))} onPointerUp={commit} onPointerCancel={() => setDraft(value)} onKeyUp={commit} onBlur={commit} /></label>
 }
 
 export function Checkbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
@@ -28,7 +31,7 @@ export function Checkbox({ label, checked, onChange }: { label: string; checked:
 
 export function VisualizationSettings({ value, onChange }: { value: VisualSettings; onChange: (value: Partial<VisualSettings>) => void }) {
   return <div className="visualization">
-    <SliderField label="Разнесённый вид" value={value.exploded} output={`${value.exploded}%`} min={0} max={100} step={1} onValue={exploded => onChange({ exploded })} />
+    <SliderField label="Разнесённый вид" value={value.exploded} output={draft => `${draft}%`} min={0} max={100} step={1} onValue={exploded => onChange({ exploded })} />
     <Checkbox label="Показывать размеры" checked={value.showDimensions} onChange={showDimensions => onChange({ showDimensions })} />
     <Checkbox label="Показывать отверстия" checked={value.renderHoles} onChange={renderHoles => onChange({ renderHoles })} />
     <Checkbox label="Подсвечивать детали" checked={value.highlighting} onChange={highlighting => onChange({ highlighting })} />
@@ -50,7 +53,7 @@ export function ProductionEstimate({ summary, units, sheet, onSheetChange, error
       <div className="sheet-size">
         <span>Лист материала · {unitLabel}</span>
         <div className="sheet-inputs"><NumberInput aria-label="Длина листа" value={String(Number(display(sheet.length, units, 3)))} min={0} step={50 / factor} onValue={value => onSheetChange({ length: readDisplay(value, units) })} /><span>×</span><NumberInput aria-label="Ширина листа" value={String(Number(display(sheet.width, units, 3)))} min={0} step={50 / factor} onValue={value => onSheetChange({ width: readDisplay(value, units) })} /></div>
-        <p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? 'Отдельные детали помещаются. Проверьте полную раскладку в разделе «Листы».' : 'Некоторые детали не помещаются на этот лист.'}</p>
+        <p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? 'Отдельные детали помещаются. Проверьте общую карту раскроя в разделе «Раскрой».' : 'Некоторые детали не помещаются на этот лист.'}</p>
       </div>
     </>}
   </section>
@@ -71,7 +74,7 @@ export function ProjectActions({ onOpen, onSave, onShare, fabrication, disabled 
       <button className="dxf secondary" disabled={disabled} onClick={fabrication.onDxf}><Icon name="download" />DXF-полоса деталей <span className="action-note">Без раскладки</span></button>
     </> : <>
       <button className="zip" disabled={disabled} onClick={fabrication.onOpenSheets}><Icon name="layers" size={20} /><span>Открыть общий раскрой<small>Стол и выбранная оснастка</small></span></button>
-      <p>Экспорт доступен в разделе «Листы» после проверки полной раскладки.</p>
+      <p>Экспорт доступен в разделе «Раскрой» после проверки полной раскладки.</p>
     </>}
     {disabled && <p className="socket-error" role="status">Перед сохранением или экспортом завершите проверку проекта либо исправьте геометрию.</p>}
   </section>
@@ -147,22 +150,22 @@ export function GeneratorShell({ workspace, onWorkspace, dark, onTheme, units, o
     <a className="skip-link" href="#workspace-view">Перейти к чертежу</a>
     <header className="app-header">
       <div className="brand"><svg className="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect x="1" y="1" width="26" height="26" rx="3" />{[7, 14, 21].flatMap(x => [7, 14, 21].map(y => <circle key={`${x}:${y}`} cx={x} cy={y} r="1.5" />))}</svg><h1>Сварочный стол<span>Генератор</span></h1></div>
-      <nav className="workspace-navigation" aria-label="Разделы продукта">{(['table', 'tools'] as const).map(value => <a key={value} href={workspaceUrl(new URL(location.href), { workspace: value, view }).toString()} aria-current={workspace === value ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onWorkspace(value) }}>{value === 'table' ? 'Стол' : 'Оснастка'}</a>)}</nav>
+      <nav className="workspace-navigation" aria-label="Разделы продукта">{(['table', 'tools'] as const).map(value => <a key={value} href={workspaceUrl(new URL(location.href), { workspace: value, view: value === 'tools' && view === 'sheet' ? '2d' : view }).toString()} aria-current={workspace === value ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onWorkspace(value) }}>{value === 'table' ? 'Стол' : 'Инструменты'}</a>)}</nav>
       <div className="mode-navigation">
-        <nav className="view-navigation" aria-label="Виды чертежа">{([{ id: '2d', label: 'Детали', icon: 'frame' }, { id: '3d', label: 'Сборка', icon: 'box' }, { id: 'sheet', label: 'Листы', icon: 'layers' }] as const).map(mode => <a key={mode.id} href={workspaceUrl(new URL(location.href), { workspace, view: mode.id }).toString()} aria-label={mode.id === 'sheet' ? 'Листы' : `${mode.id.toUpperCase()} ${mode.label}`} aria-current={view === mode.id ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onView(mode.id) }}><Icon name={mode.icon} /><span>{mode.label}</span></a>)}</nav>
+        <nav className="view-navigation" aria-label="Виды">{([{ id: '2d', label: '2D', icon: 'frame' }, { id: '3d', label: '3D', icon: 'box' }, ...workspace === 'table' ? [{ id: 'sheet' as const, label: 'Раскрой', icon: 'layers' as const }] : []] as const).map(mode => <a key={mode.id} href={workspaceUrl(new URL(location.href), { workspace, view: mode.id }).toString()} aria-label={mode.label} aria-current={view === mode.id ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onView(mode.id) }}><Icon name={mode.icon} /><span>{mode.label}</span></a>)}</nav>
         <button className="settings-toggle" title="Параметры" aria-controls={docked ? 'settings-panel' : 'parameters-dialog'} aria-expanded={docked ? parametersVisible : parametersDialog} onClick={() => docked ? setParametersVisible(value => !value) : setParametersDialog(true)}><Icon name="settings" /><span>Параметры</span></button>
       </div>
       <div className="header-preferences"><Preferences {...preferences} /></div>
       <button className="project-toggle" aria-haspopup="dialog" aria-controls="project-dialog" onClick={() => setProjectOpen(true)}><Icon name="download" /><span>Проект</span></button>
     </header>
-    {docked ? <aside id="settings-panel" className="settings" hidden={!parametersVisible} aria-labelledby="settings-heading">
+    {docked ? <aside id="settings-panel" className="settings" data-open={parametersVisible} aria-hidden={!parametersVisible} aria-labelledby="settings-heading">
       <header className="panel-heading"><h2 id="settings-heading">Параметры</h2><button className="icon" aria-label="Закрыть параметры" onClick={() => setParametersVisible(false)}><Icon name="close" /></button></header>
       {parameters}
     </aside> : <WorkspaceDialog id="parameters-dialog" title="Параметры" className="settings-drawer" open={parametersDialog} onClose={() => setParametersDialog(false)}>
       <div className="mobile-preferences"><span>Отображение</span><Preferences {...preferences} /></div>{parameters}
     </WorkspaceDialog>}
     <section className="work-area" data-view={view} id="workspace-view" tabIndex={-1}>
-      {view !== '2d' && <details className="display-options"><summary title="Параметры отображения 3D"><Icon name="eye" /><span>Отображение</span></summary><div>{visualization}</div></details>}
+      {view === '3d' && <details className="display-options"><summary title="Параметры отображения 3D"><Icon name="eye" /><span>Отображение</span></summary><div>{visualization}</div></details>}
       <div className="workspace-content">{children}</div>
       {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label="Закрыть сообщение" onClick={onDismissNotice}><Icon name="close" /></button></div>}
     </section>

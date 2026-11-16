@@ -4,16 +4,20 @@ import { useEffect, useRef, useState } from 'react'
 export function NumberInput({ value, onValue, ...props }: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & { value: string | number; onValue: (value: number) => void | boolean }) {
   const [draft, setDraft] = useState(String(value))
   const focused = useRef(false)
+  const timer = useRef<number | undefined>(undefined)
+  const cancelTimer = () => { if (timer.current !== undefined) { window.clearTimeout(timer.current); timer.current = undefined } }
   useEffect(() => { if (!focused.current) setDraft(String(value)) }, [value])
+  useEffect(() => cancelTimer, [])
   return <input {...props} type="number" value={draft}
     onFocus={() => { focused.current = true }}
     onChange={event => {
-      setDraft(event.target.value)
+      const text = event.target.value
+      setDraft(text); cancelTimer()
       const number = Number(event.target.value)
-      if (event.target.value !== '' && Number.isFinite(number) && number !== Number(value)) onValue(number)
+      if (text !== '' && Number.isFinite(number) && number !== Number(value)) timer.current = window.setTimeout(() => { timer.current = undefined; onValue(number) }, 300)
     }}
     onBlur={event => {
-      focused.current = false
+      focused.current = false; cancelTimer()
       const number = Number(event.target.value)
       const min = props.min === undefined ? -Infinity : Number(props.min)
       const max = props.max === undefined ? Infinity : Number(props.max)

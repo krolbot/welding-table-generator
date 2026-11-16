@@ -44,16 +44,14 @@ test('selected tools preserve exact native geometry and independent quantities w
   assert.throws(() => cut.tableCutInventory(table({ nestingTools: many })), error => error.code === 'part-limit')
 })
 
-test('schema 3 round-trips selected tools exactly; v2 imports empty tools without a grid migration', () => {
+test('schema 3 round-trips selected tools exactly and retired schemas are rejected', () => {
   const c = table({ nestingTools: [selection('ext', 'extension'), selection('bracket', 'cornerBracket', { copies: 3 }), selection('compact', 'compactExtension', { copies: 2 }), selection('vise', 'viseModule')] })
   const saved = model.projectConfig(c)
   assert.equal(saved.schemaVersion, 3)
   assert.deepEqual(model.projectConfig(codec.parseTableProject(JSON.stringify(saved)).config), saved)
   assert.deepEqual(model.projectConfig(codec.parseTableProject(codec.tableProjectFromQuery(codec.tableProjectQuery(c))).config), saved)
   const v2 = { ...model.projectConfig(table()), schemaVersion: 2 }; delete v2.nestingTools
-  const loaded = codec.parseTableProject(JSON.stringify(v2))
-  assert.equal(loaded.kind, 'current'); assert.deepEqual(loaded.config.nestingTools, [])
-  assert.deepEqual(geometry.makeParts(loaded.config), geometry.makeParts(table()))
+  assert.throws(() => codec.parseTableProject(JSON.stringify(v2)), error => error.code === 'unsupported-version')
   const rows = saved.nestingTools
   for (const invalid of [null, [{ ...rows[0], unknown: true }], [rows[0], rows[0]], [{ ...rows[0], id: '../bad' }], [{ ...rows[0], project: { ...rows[0].project, version: 99 } }]]) {
     assert.throws(() => codec.parseTableProject(JSON.stringify({ ...saved, nestingTools: invalid })))
@@ -61,18 +59,17 @@ test('schema 3 round-trips selected tools exactly; v2 imports empty tools withou
   assert.throws(() => codec.parseTableProject(JSON.stringify({ ...v2, nestingTools: rows })))
   const oldExtension = structuredClone(saved)
   oldExtension.nestingTools[0].project.version = 2
-  const reviewed = codec.parseTableProject(JSON.stringify(oldExtension))
-  assert.equal(reviewed.kind, 'migration')
-  assert.deepEqual(model.projectConfig(reviewed.config), saved)
+  assert.throws(() => codec.parseTableProject(JSON.stringify(oldExtension)), error => error.code === 'unsupported-version')
 })
 
-test('all five tools inherit table stock; unreviewed saved mismatches cannot reach fabrication', () => {
+test('all five tools inherit table stock while raw mismatches cannot reach fabrication', () => {
   const source = selection('compact', 'compactExtension', { copies: 2, size: { thickness: 6 } })
   const original = structuredClone(source)
   for (const thickness of [4, 6, 8]) {
     const unresolved = table({ thickness, nestingTools: [source] })
     const imported = codec.parseTableProject(JSON.stringify(model.projectConfig(unresolved)))
-    assert.equal(imported.kind, thickness === source.project.size.thickness ? 'current' : 'migration')
+    assert.equal(imported.kind, 'current')
+    assert.equal(imported.config.nestingTools[0].project.size.thickness, thickness)
     if (thickness === source.project.size.thickness) assert.doesNotThrow(() => cut.tableCutInventory(unresolved))
     else assert.throws(() => cut.tableCutInventory(unresolved), error => error.code === 'thickness-mismatch')
     const c = table({ thickness, nestingTools: tools.toolSelectionsAtTable([source], unresolved) })
@@ -145,24 +142,16 @@ test('vise inherits the entire mounting interface across saved tools, table JSON
   assert.deepEqual(source, original, 'rejected changes never mutate the retained selection')
 })
 
-test('saved table vise selections require geometry review without losing table settings, IDs or quantities', () => {
+test('saved table vise selections with retired geometry are rejected without mutation', () => {
   const old = selection('vise', 'viseModule', { copies: 2 })
   old.project.version = 1; old.project.size.slotLength = 80
   const c = table({ length: 1000, width: 700, nestingTools: [old, selection('square', 'square')] })
   const saved = model.projectConfig(c), original = JSON.stringify(saved)
-  assert.throws(() => tools.parseToolSelections(c.nestingTools), error => error.code === 'geometry-migration')
-  assert.throws(() => cut.tableCutInventory(c), error => error.code === 'geometry-migration')
-  const loaded = codec.parseTableProject(original)
-  assert.equal(loaded.kind, 'migration'); assert.equal(loaded.change, 'tool-geometry'); assert.match(loaded.message, /15 мм/)
-  const expected = structuredClone(saved)
-  expected.nestingTools[0].project.version = 2
-  delete expected.nestingTools[0].project.size.slotLength
-  assert.deepEqual(model.projectConfig(loaded.config), expected)
-  const shared = codec.parseTableProject(codec.tableProjectFromQuery(codec.tableProjectQuery(c)))
-  assert.deepEqual(shared, loaded)
-  assert.equal(codec.parseTableProject(JSON.stringify(expected)).kind, 'current')
+  assert.throws(() => tools.parseToolSelections(c.nestingTools), error => error.code === 'unsupported-version')
+  assert.throws(() => cut.tableCutInventory(c), error => error.code === 'unsupported-version')
+  assert.throws(() => codec.parseTableProject(original), error => error.code === 'unsupported-version')
+  assert.throws(() => codec.parseTableProject(codec.tableProjectFromQuery(codec.tableProjectQuery(c))), error => error.code === 'unsupported-version')
   assert.equal(JSON.stringify(saved), original)
-  assert.equal(cut.tableCutInventory(loaded.config).selections[0].project.version, 2)
   for (const rows of [[old, old], [{ ...old, extra: 1 }], [{ ...old, id: 'bad/id' }]])
     assert.throws(() => codec.parseTableProject(JSON.stringify({ ...saved, nestingTools: rows })))
 })

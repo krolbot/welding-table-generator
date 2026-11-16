@@ -426,7 +426,7 @@ export const ribAccessHoleSpec = (c: Config) => {
   return { longRib, shortRib, web, maxDiameter, diameter: c.ribAccessHoleDiameter, valid }
 }
 
-export const fabricationError = (c: Config): FabricationError | undefined => {
+export const fabricationError = (c: Config, preparedParts?: Part[]): FabricationError | undefined => {
   if (![c.holeDiameter, c.pitch, c.margin, c.length, c.width, c.height, c.thickness].every(Number.isFinite)
     || Math.min(c.holeDiameter, c.pitch, c.length, c.width, c.height, c.thickness) <= 0)
     return new FabricationError('invalid-grid', 'Размеры стола и сетки должны быть конечными положительными числами.')
@@ -447,7 +447,7 @@ export const fabricationError = (c: Config): FabricationError | undefined => {
   if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return new FabricationError('leg-plates', 'Пластины ножек, соединения или монтажные отверстия не помещаются в раме. Перед экспортом измените конфликтующие размеры.')
   const access = ribAccessHoleSpec(c)
   if (access && !access.valid) return new FabricationError('rib-access', `Технологические отверстия в рёбрах не помещаются. Для текущих рёбер максимальный диаметр — ${access.maxDiameter.toFixed(2)} мм. Уменьшите диаметр или увеличьте доступную перемычку ребра. Экспорт для изготовления отключён.`, { maximum: access.maxDiameter })
-  const parts = makeParts(c)
+  const parts = preparedParts ?? makeParts(c)
   // No manufacturing cut may touch or cross the outline, including its tab notches.
   for (const part of parts) if (!internalCutsInsideOuter(part, minimumHoleWeb))
     return new FabricationError('cut-clearance', `У детали «${part.label}» внутренний вырез слишком близок к внешнему контуру или пересекает его. Перед изготовлением измените рёбра, шипы или толщину металла.`)
@@ -480,8 +480,8 @@ export const fabricationError = (c: Config): FabricationError | undefined => {
   }
 }
 
-export const assertFabricationReady = (c: Config) => {
-  const error = fabricationError(c)
+export const assertFabricationReady = (c: Config, preparedParts?: Part[]) => {
+  const error = fabricationError(c, preparedParts)
   if (error) throw error
 }
 
@@ -706,11 +706,11 @@ export const makeParts = (c: Config): Part[] => {
   })
 }
 
-export const layoutParts = (c: Config): Layout => {
+export const layoutParts = (c: Config, preparedParts?: Part[]): Layout => {
   // Fabrication layout is packed from the top plate at Y=0 upward, exactly as
   // exported full DXF: top, skirts, longitudinal ribs, transverse ribs and optional leg supports.
   const order: PartName[] = ['top', 'longSkirt', 'shortSkirt', 'longRib', 'shortRib', 'legCornerPlate', 'legJumper', 'legMountPlate']
-  const parts = makeParts(c).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
+  const parts = [...(preparedParts ?? makeParts(c))].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
   const packed = parts.map(part => ({
     part,
     width: part.width - (part.name === 'shortSkirt' || part.name.endsWith('Rib') ? 2 * c.thickness : 0),

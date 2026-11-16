@@ -25,7 +25,7 @@ test('project codec rejects malformed, unknown, versioned and out-of-range data'
     JSON.stringify({ ...project.defaultToolProject, copies: 0 }),
     JSON.stringify({ ...project.defaultToolProject, size: { ...project.defaultToolProject.size, length: Number.NaN } }),
   ]) assert.throws(() => project.parseToolProject(value))
-  assert.throws(() => project.parseToolProject(JSON.stringify({ ...project.defaultToolProject, version: 1 })), /снятая с поддержки коробчатая конструкция/)
+  assert.throws(() => project.parseToolProject(JSON.stringify({ ...project.defaultToolProject, version: 1 })), error => error.code === 'unsupported-version')
 })
 
 test('ZIP contains canonical parts, sheets and manifests, and rejects a tampered layout', async () => {

@@ -31,7 +31,7 @@ export class TableProjectError extends Error {
   readonly name = 'TableProjectError'
   constructor(readonly code: 'invalid-json' | 'unsupported-version' | 'invalid-field' | 'unknown-field' | 'missing-field', message: string, readonly field?: string) { super(message) }
 }
-export type TableProjectLoad = { kind: 'current'; config: Config } | { kind: 'migration'; config: Config; change: 'table-grid' | 'tool-geometry'; message: string }
+export type TableProjectLoad = { kind: 'current'; config: Config }
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const invalid = (field: string, requirement: string): never => { throw new TableProjectError('invalid-field', `${field}: ${requirement}`, field) }
 const finite = (value: unknown, field: string): number => typeof value === 'number' && Number.isFinite(value) ? value : invalid(field, 'должно быть конечным числом')
@@ -65,17 +65,15 @@ const removedHoles = (value: unknown): Array<RemovedHole | string> => {
   })
 }
 
-/** Legacy dimensions can be reviewed, never rendered/exported through the retired grid algorithm. */
+/** The editor accepts only the current complete project schema. */
 export const parseTableProject = (text: string): TableProjectLoad => {
   let raw: unknown
   try { raw = JSON.parse(text) } catch { throw new TableProjectError('invalid-json', 'Некорректный JSON проекта.') }
   if (!record(raw)) throw new TableProjectError('invalid-json', 'Проект стола должен быть объектом JSON.')
-  const legacy = raw.schemaVersion === undefined
-  const messages = legacy ? ['В этом проекте использовалась центрированная сетка. Исправленная сетка привязана к краям стола и рабочей поверхности. Сохранённые начала и ручные координаты отверстий оставлены; при необходимости явно выберите стандартное начало. Перед резкой проверьте удалённые отверстия и сопрягаемые детали. Старая геометрия не экспортируется.'] : []
-  if (!legacy && raw.schemaVersion !== 2 && raw.schemaVersion !== tableProjectVersion) throw new TableProjectError('unsupported-version', 'Версия проекта стола не поддерживается.', 'schemaVersion')
-  const allowed = new Set([...Object.keys(defaults), ...Object.values(projectFields), 'schemaVersion', ...(legacy ? ['skirtHoleLayout'] : [])])
+  if (raw.schemaVersion !== tableProjectVersion) throw new TableProjectError('unsupported-version', 'Версия проекта стола не поддерживается.', 'schemaVersion')
+  const allowed = new Set(Object.keys(projectConfig(defaults)))
   for (const field of Object.keys(raw)) if (!allowed.has(field)) throw new TableProjectError('unknown-field', `Неизвестное поле проекта стола: ${field}`, field)
-  const required = legacy ? ['length', 'width'] : Object.keys(projectConfig(defaults)).filter(key => raw.schemaVersion !== 2 || key !== 'nestingTools')
+  const required = Object.keys(projectConfig(defaults))
   for (const field of required) if (!Object.hasOwn(raw, field)) throw new TableProjectError('missing-field', `Отсутствует поле проекта стола: ${field}`, field)
   const value = { ...raw }
   for (const [key, field] of Object.entries(projectFields)) if (Object.hasOwn(raw, field)) {
@@ -93,13 +91,9 @@ export const parseTableProject = (text: string): TableProjectLoad => {
     if (typeof flag !== 'boolean') return invalid(key, 'должно быть логическим значением')
     config[key] = flag
   }
-  if (value.units !== undefined) {
-    if (value.units !== 'mm' && value.units !== 'inch' && value.units !== 'in') return invalid('units', 'неизвестные единицы отображения')
-    config.units = value.units === 'in' ? 'inch' : value.units
-  }
   if (value.grid !== undefined) {
-    if (value.grid === 'square' || value.grid === 'grid') config.grid = 'square'
-    else if (value.grid === 'staggered' || value.grid === 'stagger') config.grid = 'staggered'
+    if (value.grid === 'grid') config.grid = 'square'
+    else if (value.grid === 'stagger') config.grid = 'staggered'
     else return invalid('holePattern', 'неизвестная схема сетки')
   }
   if (value.engravingMode !== undefined) {
@@ -107,18 +101,13 @@ export const parseTableProject = (text: string): TableProjectLoad => {
     config.engravingMode = value.engravingMode
   }
   if (value.legMountStyle !== undefined) {
-    if (legacy && value.legMountStyle === 'squareSocket') config.legMountStyle = 'cornerPlate'
-    else if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') config.legMountStyle = value.legMountStyle
+    if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') config.legMountStyle = value.legMountStyle
     else return invalid('legMountStyle', 'неизвестный способ крепления')
   }
-  if (legacy && value.skirtHoleLayout !== undefined && value.skirtHoleLayout !== 'canonical' && value.skirtHoleLayout !== 'compact') return invalid('skirtHoleLayout', 'неизвестная устаревшая раскладка')
   if (value.customHoles !== undefined) config.customHoles = customHoles(value.customHoles)
   if (value.removedHoles !== undefined) config.removedHoles = removedHoles(value.removedHoles)
   if (value.nestingTools !== undefined) {
-    if (raw.schemaVersion !== tableProjectVersion) return invalid('nestingTools', 'требуется текущая схема задания на резку')
-    const loaded = readToolSelections(value.nestingTools, config)
-    if (loaded.kind === 'migration') messages.push(loaded.message)
-    config.nestingTools = toolSelectionsAtTable(loaded.selections, config)
+    config.nestingTools = toolSelectionsAtTable(readToolSelections(value.nestingTools, config), config)
   }
   if (config.tabWidth > maxTabWidth(config)) return invalid('tabWidth', 'не помещается при выбранной высоте и толщине металла')
 
@@ -127,7 +116,7 @@ export const parseTableProject = (text: string): TableProjectLoad => {
     const preset = presetValues[name]
     if (config.holeDiameter === preset.holeDiameter && config.pitch === preset.pitch && config.margin === preset.margin) config.preset = name
   }
-  return messages.length ? { kind: 'migration', change: legacy ? 'table-grid' : 'tool-geometry', config, message: messages.join(' ') } : { kind: 'current', config }
+  return { kind: 'current', config }
 }
 
 export const tableProjectQuery = (config: Config) => {

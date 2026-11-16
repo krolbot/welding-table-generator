@@ -77,7 +77,7 @@ test('both tool project types round-trip without changing keys or accepting the 
     assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, size: { ...input.size, unknown: 1 } })))
     assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, tool: input.tool === 'square' ? 'extension' : 'square' })))
   }
-  assert.throws(() => projects.parseToolProject(JSON.stringify({ ...projects.defaultToolProject, version: 1 })), /снятая с поддержки коробчатая конструкция/)
+  assert.throws(() => projects.parseToolProject(JSON.stringify({ ...projects.defaultToolProject, version: 1 })), error => error.code === 'unsupported-version')
 })
 
 test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and reject stale exports', async () => {

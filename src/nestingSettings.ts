@@ -1,12 +1,12 @@
-import { assertFabricationReady, makeParts } from './geometry'
+import { assertFabricationReady, makeParts, type Part } from './geometry'
 import { projectConfig, type Config } from './model'
 import type { NestingOptions } from './nesting'
 import type { NestingJob, NestingRun } from './nestingJob'
 
 export const nestingKey = (config: Config) => JSON.stringify(projectConfig(config))
-export const nestingParts = (config: Config) => {
-  assertFabricationReady(config)
-  return makeParts(config).map(part => ({ ...part, count: part.count * config.nestingCopies }))
+export const nestingParts = (config: Config, preparedParts?: Part[]) => {
+  assertFabricationReady(config, preparedParts)
+  return (preparedParts ?? makeParts(config)).map(part => ({ ...part, count: part.count * config.nestingCopies }))
 }
 const automaticRotations = [0, 90, 180, 270, ...Array.from({ length: 24 }, (_, i) => i * 15).filter(angle => angle % 90 !== 0)]
 export const automaticNestingOptions = (sheet: { length: number; width: number; edgeGap: number; partGap: number }): NestingOptions => ({

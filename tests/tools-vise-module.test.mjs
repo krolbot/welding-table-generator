@@ -203,17 +203,13 @@ test('vise rejects unsafe grid, slots, stock and overlapping cuts instead of los
     assert.throws(() => tools.parseToolProject(tools.projectJson({ ...tools.defaultViseModuleProject, ...changes })))
 })
 
-test('equal-length vise projects retain their original data and require review before fabrication', () => {
+test('retired equal-length vise projects are rejected without a migration path', () => {
   const old = { ...tools.defaultViseModuleProject, version: 1, copies: 2, size: { ...vise.viseModuleDefaults, slotLength: 75 } }
   const original = tools.projectJson(old)
-  assert.throws(() => tools.parseToolProject(original), error => error.code === 'geometry-migration')
-  assert.throws(() => exporter.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'geometry-migration')
-  assert.throws(() => exporter.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'geometry-migration')
-  const loaded = tools.readToolProject(original)
-  assert.equal(loaded.kind, 'migration'); assert.match(loaded.message, /15 мм/)
-  assert.deepEqual(loaded.project, { ...tools.defaultViseModuleProject, copies: 2 })
-  assert.equal(tools.readToolProject(tools.projectJson(loaded.project)).kind, 'current')
-  assert.equal(tools.projectJson(old), original, 'review does not mutate the saved input')
+  assert.throws(() => tools.parseToolProject(original), error => error.code === 'unsupported-version')
+  assert.throws(() => exporter.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
+  assert.throws(() => exporter.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
+  assert.equal(tools.projectJson(old), original)
   for (const changes of [{ slotLength: '80' }, { slotLength: 201 }, { slotLength: undefined }, { unexpected: 1 }, { grid: 'bad' }, { slotWidth: 28 }, { width: 350 }])
-    assert.throws(() => tools.readToolProject(tools.projectJson({ ...old, size: { ...old.size, ...changes } })))
+    assert.throws(() => tools.parseToolProject(tools.projectJson({ ...old, size: { ...old.size, ...changes } })))
 })

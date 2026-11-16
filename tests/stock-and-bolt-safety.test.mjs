@@ -77,29 +77,24 @@ test('independent sampled native contours confirm material volume and steel-mass
   }
 })
 
-test('old independent stock remains original until explicit review; mixed and standalone exports fail closed', () => {
+test('retired stock schemas are rejected while current tools inherit active table stock', () => {
   for (const id of ['extension', 'square', 'cornerBracket']) {
     const current = tools.projectAtTable(tools.toolDefaults[id], table(6))
     const original = JSON.stringify({ ...current, version: current.version - 1 })
-    assert.throws(() => tools.parseToolProject(original), error => error.code === 'geometry-migration')
-    assert.equal(tools.readToolProjectAtTable(original, table(8)).kind, 'migration')
-    const loaded = tools.readToolProjectAtTable(original, table(8)).project
-    assert.equal(loaded.size.thickness, 8)
-    assert.equal(tools.readToolProjectAtTable(tools.projectJson(loaded), table(8)).kind, 'current')
-    assert.equal(JSON.parse(original).size.thickness, 6)
+    assert.throws(() => tools.parseToolProject(original), error => error.code === 'unsupported-version')
+    assert.throws(() => tools.readToolProjectAtTable(original, table(8)), error => error.code === 'unsupported-version')
     const unreviewed = { ...table(8), nestingTools: [{ id, project: current }] }
-    assert.equal(codec.parseTableProject(JSON.stringify(model.projectConfig(unreviewed))).kind, 'migration')
+    const loaded = codec.parseTableProject(JSON.stringify(model.projectConfig(unreviewed))).config
+    assert.equal(loaded.nestingTools[0].project.size.thickness, 8)
     assert.throws(() => cut.tableCutInventory(unreviewed), error => error.code === 'thickness-mismatch')
     assert.throws(() => exporter.toolPartsArchive(current, table(8)), error => error.code === 'stock-mismatch')
     assert.throws(() => exporter.toolStripDxf(current, table(8)), error => error.code === 'stock-mismatch')
-    const accepted = codec.parseTableProject(JSON.stringify(model.projectConfig(unreviewed))).config
-    assert.ok(cut.tableCutInventory(accepted).parts.every(part => part.thickness === 8))
+    assert.ok(cut.tableCutInventory(loaded).parts.every(part => part.thickness === 8))
   }
   for (const id of ['compactExtension', 'viseModule']) {
     const project = tools.projectAtTable(tools.toolDefaults[id], table(6))
     const loaded = tools.readToolProjectAtTable(tools.projectJson(project), table(8))
-    assert.equal(loaded.kind, 'migration')
-    assert.equal(loaded.project.size.thickness, 8)
+    assert.equal(loaded.size.thickness, 8)
   }
 })
 

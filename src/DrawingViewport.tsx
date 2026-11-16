@@ -9,22 +9,19 @@ type DrawingTool = 'pan' | 'measure' | 'holes'
 type Draft = { kind: 'new'; start: SnapPoint; end: SnapPoint } | { kind: 'edit'; id: string; endpoint: 'start' | 'end'; start: SnapPoint; end: SnapPoint }
 type Pointer = { start: Point; last: Point; intent: 'pan' | 'pick'; moved: boolean; target: EventTarget | null }
 type Props = {
-  bounds: DrawingBounds; parts: DrawingFeatures[]; geometryKey: string; label: string; units: Config['units']; initialFocus: 'overview' | 'first-part'
-  children: (focusedPart: number | null) => ReactNode; resetToken?: number; onPickHole?: (target: EventTarget | null) => void
+  bounds: DrawingBounds; parts: DrawingFeatures[]; geometryKey: string; label: string; units: Config['units']
+  children: ReactNode; resetToken?: number; onPickHole?: (target: EventTarget | null) => void
 }
 const snapLabels = { free: 'Свободная точка', vertex: 'Конечная точка', midpoint: 'Середина', centre: 'Центр', edge: 'На контуре' }
 
-export function DrawingViewport({ bounds, parts, geometryKey, label, units, initialFocus, children, resetToken = 0, onPickHole }: Props) {
+export function DrawingViewport({ bounds, parts, geometryKey, label, units, children, resetToken = 0, onPickHole }: Props) {
   const area = useRef<HTMLDivElement>(null), svg = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState<DrawingBounds>({ width: 1, height: 1 })
   const [camera, setCamera] = useState<DrawingCamera>({ scale: 1, x: 0, y: 0 })
   const cameraRef = useRef(camera), sizeRef = useRef(size), boundsRef = useRef(bounds)
   cameraRef.current = camera; sizeRef.current = size; boundsRef.current = bounds
   const framing = useRef(bounds)
-  const [focusedPart, setFocusedPart] = useState('all')
   const features = useMemo(() => ({ anchors: parts.flatMap(part => part.anchors), edges: parts.flatMap(part => part.edges), targets: parts.flatMap(part => part.targets) }), [parts])
-  const visibleFeatures = focusedPart === 'all' ? features : parts[Number(focusedPart)] ?? features
-  const visibleBounds = features.targets[Number(focusedPart)]?.bounds ?? bounds
   const [tool, setTool] = useState<DrawingTool>('pan'), [snap, setSnap] = useState(true)
   const [measurements, setMeasurements] = useState<Measurement[]>([]), [draft, setDraft] = useState<Draft | null>(null)
   const [cursor, setCursor] = useState<SnapPoint | null>(null), [selected, setSelected] = useState<string | null>(null)
@@ -53,12 +50,15 @@ export function DrawingViewport({ bounds, parts, geometryKey, label, units, init
     return () => resize.disconnect()
   }, [])
   useEffect(() => {
-    const firstPart = initialFocus === 'first-part' ? features.targets[0] : undefined
-    framing.current = firstPart?.bounds ?? boundsRef.current
-    setFocusedPart(firstPart ? '0' : 'all')
+    framing.current = boundsRef.current
+    setMeasurements([]); setDraft(null); setCursor(null); setSelected(null)
+    pointers.current.clear(); pinch.current = null
+  }, [geometryKey])
+  useEffect(() => {
+    framing.current = boundsRef.current
     fit(); setMeasurements([]); setDraft(null); setCursor(null); setSelected(null)
     pointers.current.clear(); pinch.current = null
-  }, [geometryKey, resetToken, initialFocus])
+  }, [resetToken])
   useEffect(() => {
     const element = svg.current
     if (!element) return
@@ -77,7 +77,7 @@ export function DrawingViewport({ bounds, parts, geometryKey, label, units, init
   }
   const pick = (point: Point, precision: 'snap' | 'free'): SnapPoint => {
     const world = drawingPoint(point, cameraRef.current)
-    return snap && precision === 'snap' ? snapDrawingPoint(world, visibleFeatures, 10 / cameraRef.current.scale) : { ...world, kind: 'free', label: '' }
+    return snap && precision === 'snap' ? snapDrawingPoint(world, features, 10 / cameraRef.current.scale) : { ...world, kind: 'free', label: '' }
   }
   const updateEnd = (point: SnapPoint) => setDraft(current => !current ? current : current.kind === 'edit' ? { ...current, [current.endpoint]: point } : { ...current, end: point })
   const finishPoint = (point: SnapPoint) => {
@@ -160,19 +160,15 @@ export function DrawingViewport({ bounds, parts, geometryKey, label, units, init
       <details className="viewport-help"><summary aria-label="Справка по управлению чертежом"><Icon name="info" /></summary><div>Перетаскивайте чертёж для панорамирования. Колесо мыши или жест щипка меняют масштаб относительно указателя. В режиме измерения выберите две точки; для панорамирования удерживайте пробел, среднюю или правую кнопку мыши. Alt отключает привязку. F вписывает чертёж, стрелки перемещают вид, Esc отменяет текущую точку.</div></details>
     </div>
     <div className="drawing-context">
-      <select className="part-focus" aria-label="Выбрать деталь" value={focusedPart} onChange={event => {
-        const value = event.target.value; setFocusedPart(value)
-        const target = value === 'all' ? bounds : features.targets[Number(value)]?.bounds
-        if (target) { framing.current = target; commitCamera(fitDrawing(target, sizeRef.current)) }
-      }}><option value="all">Все детали · {features.targets.length}</option>{features.targets.map((target, index) => <option key={index} value={index}>{index + 1}. {target.label}</option>)}</select>
-      <span className="drawing-size">{format(visibleBounds.width)} × {format(visibleBounds.height)} {unit}</span>
+      <strong>2D-чертёж</strong>
+      <span className="drawing-size">{format(bounds.width)} × {format(bounds.height)} {unit}</span>
     </div>
     <div className="drawing-surface" ref={area}>
       <svg ref={svg} className="layout" viewBox={`0 0 ${size.width} ${size.height}`} aria-label={label} role="application" tabIndex={0}
         onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={release}
         onLostPointerCapture={event => { pointers.current.delete(event.pointerId); pinch.current = null }}
         onPointerLeave={() => { if (!pointers.current.size) setCursor(null) }} onContextMenu={event => event.preventDefault()}>
-        <g data-drawing-transform transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale} ${-camera.scale})`}>{children(focusedPart === 'all' ? null : Number(focusedPart))}</g>
+        <g data-drawing-transform transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale} ${-camera.scale})`}>{children}</g>
         <g className="dimension-overlay">
           {measurements.filter(item => draft?.kind !== 'edit' || item.id !== draft.id).map((item, index) => {
             const start = screenPoint(item.start, camera), end = screenPoint(item.end, camera)

@@ -177,7 +177,7 @@ export function ToolAssembly3d({
   const build = useCallback((runtime: AssemblyRuntime) => {
     if (nesting) rebuildSheets(runtime, project, nesting, units)
     else rebuildAssembly(runtime, project, exploded, showDimensions, units)
-  }, [exploded, nesting, project, showDimensions, units])
+  }, [nesting, project, showDimensions, units])
   const reset = useCallback((runtime: AssemblyRuntime) => {
     if (nesting) resetSheetCamera(runtime, project, nesting)
     else resetCamera(runtime, project)
@@ -199,6 +199,7 @@ export function ToolAssembly3d({
     errorClassName="three-loading"
     renderHoles={nesting ? true : renderHoles}
     highlighting={highlighting}
+    exploded={exploded}
     cameraKey={nesting ? 'sheet' : project.tool}
     onThemeChange={theme}
     up={[0, 0, 1]}

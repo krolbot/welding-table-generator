@@ -136,18 +136,18 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   return <div className="sheet-workspace">
     <div className="sheet-canvas">
       {focused ? mode === '3d' ? render3D(focused)
-        : <DrawingViewport bounds={{ width: settings.length, height: settings.width }} parts={features} geometryKey={`${selected}:${JSON.stringify(features)}`} units={unitSystem} label={`Раскладка резки на листе ${selected + 1}`} initialFocus="overview">
-          {focusedPart => <g>
+        : <DrawingViewport bounds={{ width: settings.length, height: settings.width }} parts={features} geometryKey={`${selected}:${JSON.stringify(features)}`} units={unitSystem} label={`Раскладка резки на листе ${selected + 1}`}>
+          <g>
             <rect className="stock-outline" x={0} y={0} width={settings.length} height={settings.width} />
             <rect className="stock-margin" x={settings.edgeGap} y={settings.edgeGap} width={Math.max(0, settings.length - 2 * settings.edgeGap)} height={Math.max(0, settings.width - 2 * settings.edgeGap)} />
             {metric && metric.remnant.width > 0 && metric.remnant.height > 0 && <rect className="stock-remnant" {...metric.remnant} />}
-            {sheet!.placements.map((p, index) => (focusedPart === null || focusedPart === index) && <g key={`${p.part.name}:${p.instance}`} className="nested-part" transform={`translate(${p.translation.x} ${p.translation.y}) rotate(${p.rotation})`}>
+            {sheet!.placements.map(p => <g key={`${p.part.name}:${p.instance}`} className="nested-part" transform={`translate(${p.translation.x} ${p.translation.y}) rotate(${p.rotation})`}>
               <title>{p.part.label} · {p.instance + 1} · {p.rotation}°</title>
               <path d={p.part.contours.map(svgContourPath).join(' ')} fillRule="evenodd" />
               {p.part.holes.map(hole => <circle key={hole.id} cx={hole.x} cy={hole.y} r={hole.d / 2} />)}
               {getEngravings?.(p.part).map((line, i) => <line key={i} className="nested-engraving" x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y} />)}
             </g>)}
-          </g>}
+          </g>
         </DrawingViewport>
         : <div className="three-loading" role="status">{status === 'error' ? 'Сбой расчёта' : result ? 'Детали не размещены' : 'Подготовка первой раскладки…'}</div>}
       <div className="sheet-view-tools">

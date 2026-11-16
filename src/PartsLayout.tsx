@@ -12,13 +12,13 @@ type Props = {
 }
 export function PartsLayout({ layout, units, label, resetToken = 0, getEngravings, onRemoveHole }: Props) {
   const features = useMemo(() => layout.instances.map(item => drawingFeatures([{ ...item, rotation: 0 }])), [layout])
-  return <DrawingViewport bounds={layout} parts={features} geometryKey={JSON.stringify(features)} label={label} units={units} resetToken={resetToken} initialFocus="first-part"
+  return <DrawingViewport bounds={layout} parts={features} geometryKey={JSON.stringify(features)} label={label} units={units} resetToken={resetToken}
     onPickHole={onRemoveHole ? target => {
       if (!(target instanceof SVGElement)) return
       const instance = layout.instances[Number(target.dataset.instance)], hole = instance?.part.holes[Number(target.dataset.hole)]
       if (instance && hole) onRemoveHole(hole, instance.part)
     } : undefined}>
-    {focusedPart => layout.instances.map((item, instance) => (focusedPart === null || focusedPart === instance) && <g key={`${item.part.name}:${item.instance}`} transform={`translate(${item.position.x} ${item.position.y})`} className="part">
+    {layout.instances.map((item, instance) => <g key={`${item.part.name}:${item.instance}`} transform={`translate(${item.position.x} ${item.position.y})`} className="part">
       <title>{item.part.label} · {item.instance + 1}</title>
       <path className="contour" d={svgContourPath(item.part.contours[0])} />
       {getEngravings?.(item.part).map((mark, index) => <line key={index} className="engrave" x1={mark.from.x} y1={mark.from.y} x2={mark.to.x} y2={mark.to.y} />)}
