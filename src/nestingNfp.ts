@@ -57,7 +57,7 @@ export class ContactCache {
       pb = positive(simplifyPath(pb, simplification))
     }
     if (simplification) this.coarsened++
-    if (pa.length * pb.length > maxPairVertices) throw new Error('Contour is too complex for the bounded contact search')
+    if (pa.length * pb.length > maxPairVertices) throw new Error('Контур слишком сложен для ограниченного поиска касаний')
     // Round-offset chords and integer conversion get their own reserve, in addition to input arc errors.
     const offsetTolerance = 0.01
     const guard = clearance + a.error + b.error + offsetTolerance + 0.004 + 2 * simplification / scale

@@ -23,7 +23,7 @@ self.onmessage = (event: MessageEvent<NestingRequest>) => {
   } catch (error) {
     self.postMessage({ key: request.key, error: {
       code: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'calculation-failed',
-      message: error instanceof Error ? error.message : 'Nesting calculation failed',
+      message: error instanceof Error ? error.message : 'Не удалось рассчитать раскладку',
     } } satisfies NestingResponse)
   }
 }

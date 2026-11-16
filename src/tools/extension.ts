@@ -80,7 +80,7 @@ export const extensionDimensions = ({ length, width, height, thickness }: Extens
 const assertConfig = (config: ExtensionConfig) => {
   for (const name of Object.keys(extensionLimits) as (keyof ExtensionConfig)[]) {
     const value = config[name], { min, max } = extensionLimits[name]
-    if (!Number.isFinite(value) || value < min || value > max) throw new FabricationError('invalid-dimensions', `Extension ${name} must be finite and ${min}–${max} mm. Stock must leave the fixed 25 mm row and 8 mm edge web.`, { field: name, min, max })
+    if (!Number.isFinite(value) || value < min || value > max) throw new FabricationError('invalid-dimensions', `Параметр расширения ${name} должен быть конечным числом от ${min} до ${max} мм. Металл должен оставлять фиксированный ряд 25 мм и краевую перемычку 8 мм.`, { field: name, min, max })
   }
 }
 
@@ -122,16 +122,16 @@ export const extensionParts = (config: ExtensionConfig = extensionDefaults): Ext
   ])
   const part = (name: ExtensionPartName, label: string, width: number, height: number, count: number, contours: Contour[]): ExtensionPart => ({ name, label, width, height, count, thickness, contours, holes: [], slots: [] })
   const parts = [
-    part('top', 'Working top', length, width, 1, [top, ...ribStations.map(x => rect(x - (thickness + clearance) / 2, width / 2 - (tabWidth + clearance) / 2, thickness + clearance, tabWidth + clearance))]),
-    part('longSide', 'Tapered side', length, height, 2, [side, window, ...ribStations.map(ribSlot)]),
-    part('nearEnd', 'Mounting end', width, height, 1, [endOutline(height, rootJoints), ...mountingCuts]),
-    part('farEnd', 'Free end', width, tipHeight, 1, [endOutline(tipHeight, [tipJoint])]),
-    part('crossRib', 'Cross tie', width, ribDepth + thickness, 2, [rib]),
+    part('top', 'Рабочая поверхность', length, width, 1, [top, ...ribStations.map(x => rect(x - (thickness + clearance) / 2, width / 2 - (tabWidth + clearance) / 2, thickness + clearance, tabWidth + clearance))]),
+    part('longSide', 'Наклонная боковина', length, height, 2, [side, window, ...ribStations.map(ribSlot)]),
+    part('nearEnd', 'Монтажный торец', width, height, 1, [endOutline(height, rootJoints), ...mountingCuts]),
+    part('farEnd', 'Свободный торец', width, tipHeight, 1, [endOutline(tipHeight, [tipJoint])]),
+    part('crossRib', 'Поперечная перемычка', width, ribDepth + thickness, 2, [rib]),
   ]
   for (const part of parts) {
     if (part.name !== 'crossRib') part.holes = grid(part, part.name === 'nearEnd' ? [pivot] : [])
     if (part.name !== 'crossRib' && part.name !== 'top' && !part.holes.some(hole => hole.kind === 'grid' && Math.abs(hole.y - (part.height - pitch / 2)) < epsilon))
-      throw new FabricationError('missing-grid-row', `${part.name} has no safe hole in the fixed 25 mm row. Adjust dimensions; the grid will not shift.`, { part: part.name })
+      throw new FabricationError('missing-grid-row', `На детали ${part.name} нет безопасного отверстия в фиксированном ряду 25 мм. Измените размеры; сетка не будет смещаться.`, { part: part.name })
     validateToolPart(part, { holeWeb, cutWeb: 3 })
   }
   return parts

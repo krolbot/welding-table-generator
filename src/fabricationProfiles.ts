@@ -7,7 +7,7 @@ const line = (from: Point, to: Point): Contour[number] => ({ type: 'line', from,
 
 /** True circular fillets on a convex counter-clockwise polygon. */
 export const roundedConvexPolygon = (vertices: Point[], radius: number): Contour => {
-  if (vertices.length < 3 || !Number.isFinite(radius) || radius <= 0) throw new FabricationError('invalid-dimensions', 'A rounded polygon needs vertices and a positive radius')
+  if (vertices.length < 3 || !Number.isFinite(radius) || radius <= 0) throw new FabricationError('invalid-dimensions', 'Для скруглённого многоугольника нужны вершины и положительный радиус')
   const corners = vertices.map((vertex, index) => {
     const previous = vertices[(index + vertices.length - 1) % vertices.length], next = vertices[(index + 1) % vertices.length]
     const previousLength = distance(previous, vertex), nextLength = distance(next, vertex)
@@ -21,7 +21,7 @@ export const roundedConvexPolygon = (vertices: Point[], radius: number): Contour
   })
   return corners.flatMap((corner, index): Contour => {
     const next = corners[(index + 1) % corners.length]
-    if (corner.tangent + next.tangent >= distance(vertices[index], vertices[(index + 1) % vertices.length])) throw new FabricationError('cut-clearance', 'Access-window fillets do not fit')
+    if (corner.tangent + next.tangent >= distance(vertices[index], vertices[(index + 1) % vertices.length])) throw new FabricationError('cut-clearance', 'Скругления технологического окна не помещаются')
     return [
       { type: 'arc', center: corner.center, radius, start: Math.atan2(corner.entry.y - corner.center.y, corner.entry.x - corner.center.x) * 180 / Math.PI, end: Math.atan2(corner.exit.y - corner.center.y, corner.exit.x - corner.center.x) * 180 / Math.PI },
       line(corner.exit, next.entry),
@@ -39,7 +39,7 @@ export const polygonContour = (vertices: Point[]): Contour => vertices.map((from
 /** Overall slot length includes both semicircular ends; angle is in degrees. */
 export const capsuleContour = (center: Point, length: number, diameter: number, angle = 0): Contour => {
   if (![center.x, center.y, length, diameter, angle].every(Number.isFinite) || diameter <= 0 || length <= diameter)
-    throw new FabricationError('invalid-dimensions', 'A rounded slot needs a positive width and a greater overall length')
+    throw new FabricationError('invalid-dimensions', 'Для скруглённого паза нужны положительная ширина и большая общая длина')
   const radians = angle * Math.PI / 180, ux = Math.cos(radians), uy = Math.sin(radians)
   const r = diameter / 2, half = (length - diameter) / 2
   const a = point(center.x - half * ux, center.y - half * uy), b = point(center.x + half * ux, center.y + half * uy)
@@ -63,7 +63,7 @@ export const jointOutline = (vertices: Point[], joints: EdgeJoint[][]): Contour 
     let previous = 0
     for (const joint of [...(joints[index] ?? [])].sort((a, b) => a.centre - b.centre)) {
       const start = joint.centre - joint.width / 2, end = joint.centre + joint.width / 2
-      if (start <= previous || end >= length) throw new Error('Locating joints do not fit the edge')
+      if (start <= previous || end >= length) throw new Error('Установочные соединения не помещаются на кромке')
       points.push(at(start), at(start, joint.depth), at(end, joint.depth), at(end))
       previous = end
     }

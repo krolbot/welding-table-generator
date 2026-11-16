@@ -29,22 +29,22 @@ const storageKey = 'weldingToolsProject'
 
 type ToolDimension = keyof ExtensionConfig | keyof SquareConfig | keyof CornerBracketConfig | keyof CompactExtensionConfig | Exclude<keyof ViseModuleConfig, 'grid'>
 const sizeLabels: Record<ToolDimension, string> = {
-  length: 'Length', width: 'Width', height: 'Mounting-end height', thickness: 'Sheet thickness · Table',
-  armWidth: 'Arm width', holeDiameter: 'Hole Ø', endOffset: 'Hole inset from free ends',
-  holePitch: 'Hole pitch', slotLength: 'Clamp slot length', cornerCut: 'Elbow chamfer',
-  tipWidth: 'Free-end width', tabWidth: 'Locating tab width', clearance: 'Total joint clearance',
-  holeInset: 'Grid origin from edges', tipHeight: 'Free-end depth', taperRun: 'Free-end taper length',
-  windowInset: 'Window border inset', windowRadius: 'Window corner radius',
-  slotWidth: 'Radial slot width', slotInnerRadius: 'Slot inner-end radius from centre',
+  length: 'Длина', width: 'Ширина', height: 'Высота монтажного торца', thickness: 'Толщина листа · стол',
+  armWidth: 'Ширина плеча', holeDiameter: 'Диаметр отверстия Ø', endOffset: 'Отступ отверстия от свободных концов',
+  holePitch: 'Шаг отверстий', slotLength: 'Длина паза для струбцины', cornerCut: 'Фаска внутреннего угла',
+  tipWidth: 'Ширина свободного конца', tabWidth: 'Ширина установочного шипа', clearance: 'Общий зазор в соединении',
+  holeInset: 'Начало сетки от краёв', tipHeight: 'Глубина свободного конца', taperRun: 'Длина скоса свободного конца',
+  windowInset: 'Отступ окон от края', windowRadius: 'Радиус углов окон',
+  slotWidth: 'Ширина радиального паза', slotInnerRadius: 'Радиус внутреннего конца паза от центра',
 }
 
 const sizeLimits = { extension: extensionLimits, compactExtension: compactExtensionLimits, square: squareLimits, cornerBracket: cornerBracketLimits, viseModule: viseModuleLimits }
 const toolSummaries: Record<ToolId, string> = {
-  extension: 'D16 / 50 mm grid · table-owned sheet thickness',
-  compactExtension: 'Three plates · central windowed spine · one mounting end',
-  square: 'One flat L-shaped plate · three mounting holes · no bend',
-  cornerBracket: 'Three flat parts · two perpendicular walls · open diagonal side',
-  viseModule: 'Five plates · eight radial vise slots · table-matched mounting grid',
+  extension: 'Сетка D16 / 50 мм · толщина листа от стола',
+  compactExtension: 'Три пластины · центральное ребро с окнами · один монтажный торец',
+  square: 'Одна плоская Г-образная пластина · три монтажных отверстия · без гибки',
+  cornerBracket: 'Три плоские детали · две перпендикулярные стенки · открытая диагональная сторона',
+  viseModule: 'Пять пластин · восемь радиальных пазов для тисков · монтажная сетка по столу',
 }
 
 export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigationGuard, notice, onDismissNotice, units, onUnits, visual, onVisual, tableConfig, tableAdmissionError, onAddToTable }: ToolsWorkspaceProps) {
@@ -55,7 +55,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
       const loaded = saved ? readToolProjectAtTable(saved, tableConfig) : { project: projectAtTable(defaultToolProject, tableConfig), kind: 'current', message: '' }
       return { project: loaded.kind === 'current' ? loaded.project : defaultToolProject, notice: loaded.message, rejected: loaded.kind === 'migration' ? saved ?? '' : '', migration: loaded.kind === 'migration' ? loaded.project : null }
     } catch (error) {
-      return { project: defaultToolProject, notice: `Saved/shared Tools project was not loaded: ${error instanceof Error ? error.message : 'storage unavailable'}. Its original data has not been deleted.`, rejected: saved ?? '', migration: null }
+      return { project: defaultToolProject, notice: `Сохранённый проект оснастки или проект по ссылке не загружен: ${error instanceof Error ? error.message : 'хранилище недоступно'}. Исходные данные не удалены.`, rejected: saved ?? '', migration: null }
     }
   })
   const [storedProject, setProject] = useState<ToolProject>(initial.project)
@@ -66,26 +66,26 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
   const [migration, setMigration] = useState<ToolProject | null>(initial.migration)
   const [reset, setReset] = useState(0)
   useEffect(() => {
-    onNavigationGuard(rejected ? { workspace: 'tools', message: 'Resolve the pending project review before leaving Tools.' } : null)
+    onNavigationGuard(rejected ? { workspace: 'tools', message: 'Завершите проверку проекта перед выходом из раздела оснастки.' } : null)
     return () => onNavigationGuard(null)
   }, [rejected, onNavigationGuard])
-  useEffect(() => { try { localStorage.setItem('weldingToolsView', view) } catch { setMessage('View preference could not be saved.') } }, [view])
+  useEffect(() => { try { localStorage.setItem('weldingToolsView', view) } catch { setMessage('Не удалось сохранить выбранный вид.') } }, [view])
   const key = projectKey(project)
   const fabrication = useMemo(() => {
     try { return { parts: projectModelParts(project), error: null } }
-    catch (error) { return { parts: null, error: error instanceof Error ? error.message : 'Invalid tool geometry' } }
+    catch (error) { return { parts: null, error: error instanceof Error ? error.message : 'Некорректная геометрия оснастки' } }
   }, [key])
   useEffect(() => {
     if (rejected || fabrication.error) return
     try { localStorage.setItem(storageKey, projectJson(project)); localStorage.setItem(`${storageKey}.${project.tool}`, projectJson(project)) }
-    catch { setLoadError('Browser autosave unavailable. Use Save to keep your project.') }
+    catch { setLoadError('Автосохранение в браузере недоступно. Сохраните проект в файл.') }
   }, [key, rejected, fabrication.error])
   const parts = fabrication.parts
   const batchParts = useMemo(() => parts?.map(part => ({ ...part, count: part.count * project.copies })), [parts, project.copies])
   const layout = useMemo(() => batchParts && arrangeParts(batchParts), [batchParts])
   const summary = useMemo(() => batchParts && fabricationEstimate(batchParts, project.sheet), [batchParts, project.sheet])
   const admissionError = rejected ? loadError : fabrication.error ?? tableAdmissionError(project)
-  const factor = units === 'mm' ? 1 : mmPerInch, unitLabel = units === 'mm' ? 'mm' : 'in'
+  const factor = units === 'mm' ? 1 : mmPerInch, unitLabel = units === 'mm' ? 'мм' : 'дюйм'
 
   const apply = (candidate: ToolProject) => {
     if (rejected) return false
@@ -96,7 +96,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
       if (url.searchParams.has('toolProject')) { url.searchParams.set('toolProject', projectJson(next)); history.replaceState(history.state, '', url) }
       setProject(next)
       return true
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Invalid Tools project'); return false }
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Некорректный проект оснастки'); return false }
   }
   const selectTool = (id: ToolId) => {
     if (id === project.tool || rejected) return
@@ -104,10 +104,10 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
       const saved = localStorage.getItem(`${storageKey}.${id}`)
       const loaded = saved ? readToolProjectAtTable(saved, tableConfig) : { project: projectAtTable({ ...toolDefaults[id], sheet: { ...project.sheet } }, tableConfig), kind: 'current', message: '' }
       const next = loaded.project
-      if (next.tool !== id) throw new Error('Saved tool identity does not match the selected product')
+      if (next.tool !== id) throw new Error('Тип сохранённой оснастки не совпадает с выбранным изделием')
       if (loaded.kind === 'migration') { setMigration(next); setRejected(saved ?? ''); setLoadError(loaded.message); return }
       if (apply(next)) setReset(value => value + 1)
-    } catch (error) { setLoadError(`Saved tool was not replaced: ${error instanceof Error ? error.message : 'storage unavailable'}`) }
+    } catch (error) { setLoadError(`Сохранённая оснастка не заменена: ${error instanceof Error ? error.message : 'хранилище недоступно'}`) }
   }
   const applySize = (name: ToolDimension, value: number) => {
     const next = readDisplay(value, units)
@@ -125,7 +125,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
     const value = project.size[name as keyof typeof project.size]
     const range = limits[name as keyof typeof limits]
     const readOnly = name === 'thickness' || project.tool === 'viseModule' && ['holeDiameter', 'holePitch', 'holeInset'].includes(name)
-    const label = name === 'height' && project.tool !== 'extension' ? 'Height' : sizeLabels[name]
+    const label = name === 'height' && project.tool !== 'extension' ? 'Высота' : sizeLabels[name]
     return <NumberField key={`${project.tool}:${name}`} label={label} readOnly={readOnly} disabled={Boolean(rejected)} value={String(Number(display(value, units, 3)))} min={range.min / factor} max={range.max / factor} step={range.step / factor}
       onValue={value => applySize(name, value)} />
   }
@@ -134,8 +134,8 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
     url.search = tableProjectQuery(tableConfig).toString()
     url.searchParams.set('toolProject', projectJson(project))
     url.searchParams.set('workspace', 'tools'); url.searchParams.set('view', view)
-    try { await copyText(url.toString()); setMessage('Tools project link copied.') }
-    catch { setMessage('Clipboard denied. Use Save to preserve this project.') }
+    try { await copyText(url.toString()); setMessage('Ссылка на проект оснастки скопирована.') }
+    catch { setMessage('Нет доступа к буферу обмена. Сохраните проект в файл.') }
   }
   const startCorrected = () => {
     try {
@@ -147,40 +147,40 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
       url.searchParams.delete('toolProject'); url.searchParams.set('workspace', 'tools')
       history.replaceState(history.state, '', url)
       setProject(next); setRejected(''); setMigration(null); setLoadError(''); setReset(value => value + 1)
-    } catch (error) { setLoadError(`Could not apply corrected geometry: ${error instanceof Error ? error.message : 'storage unavailable'}. Download the original JSON first.`) }
+    } catch (error) { setLoadError(`Не удалось применить исправленную геометрию: ${error instanceof Error ? error.message : 'хранилище недоступно'}. Сначала скачайте исходный JSON.`) }
   }
   const open = async (file: File) => {
-    if (rejected) { setMessage('Resolve the pending project review before replacing it.'); return }
+    if (rejected) { setMessage('Завершите проверку текущего проекта перед его заменой.'); return }
     try {
       const original = await file.text(), loaded = readToolProjectAtTable(original, tableConfig)
       if (loaded.kind === 'migration') { setRejected(original); setMigration(loaded.project); setLoadError(loaded.message); return }
-      if (apply(loaded.project)) { setReset(value => value + 1); setMessage('Tools project opened.') }
+      if (apply(loaded.project)) { setReset(value => value + 1); setMessage('Проект оснастки открыт.') }
     }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Project could not be opened') }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Не удалось открыть проект') }
   }
   return <GeneratorShell workspace="tools" onWorkspace={value => { if (value === 'table') onBack() }} dark={dark} onTheme={onTheme} units={units} onUnits={onUnits} view={view}
     onView={onView} notice={message || notice} onDismissNotice={() => { setMessage(''); onDismissNotice() }}
     settings={<>
-      {loadError && <section role="alert"><p className="socket-error">{loadError}</p>{rejected && <><button className="secondary full" onClick={() => downloadFile(rejected, 'welding-tool-original.json')}>Download original JSON</button><button className="secondary full" onClick={startCorrected}>{migration ? 'Apply corrected geometry' : 'Start new design'}</button></>}</section>}
+      {loadError && <section role="alert"><p className="socket-error">{loadError}</p>{rejected && <><button className="secondary full" onClick={() => downloadFile(rejected, 'исходный-проект-оснастки.json')}>Скачать исходный JSON</button><button className="secondary full" onClick={startCorrected}>{migration ? 'Применить исправленную геометрию' : 'Начать новый проект'}</button></>}</section>}
       <>
-        <section className="fixture-card"><h3>Tools</h3><label className="field"><span>Choose a tool</span><select disabled={Boolean(rejected)} aria-label="Select tool" value={project.tool} onChange={event => { const value = event.target.value; if (isToolId(value)) selectTool(value) }}>{toolIds.map(id => <option key={id} value={id}>{toolLabels[id]}</option>)}</select></label><p className="grid-summary">{toolSummaries[project.tool]}</p></section>
-        <ParameterGroup title={<>Dimensions ({unitLabel})</>} defaultOpen><div className="fields">{sizeField('length')}{sizeField('width')}{project.tool === 'square' ? sizeField('armWidth') : sizeField('height')}{sizeField('thickness')}</div><p>Thickness follows the table, including imported projects. Change Metal Thickness in Table generator; all joints and cut parts are recalculated.</p></ParameterGroup>
-        {project.tool === 'viseModule' && <><ParameterGroup title={<>Table mounting grid ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Diameter, pitch, edge origin and {project.size.grid} pattern follow Table generator. The mounting wall contains the complete matching grid, measured down from the working face; holes are never shifted or omitted to fit. Lower side rows are limited by the curved profile.</p></ParameterGroup><ParameterGroup title={<>Vise slots & locating joints ({unitLabel})</>}><div className="fields">{sizeField('slotWidth')}{sizeField('slotInnerRadius')}{sizeField('tipHeight')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Eight separate rounded slots at 45° intervals, plus a central round hole. Every outer rounded tip stops {display(viseSlotSetback, units, 3)} {unitLabel} before the plate boundary along its ray; square-top diagonals end that distance from the corners. Slot lengths recalculate with the plate size. Measured along each slot axis, not perpendicular to the side.</p></ParameterGroup></>}
-        {project.tool === 'square' && <ParameterGroup title={<>Mounting holes ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('endOffset')}</div><p>One hole at the elbow and one near each free end. The elbow centre is half the arm width from both outside edges. Check the resulting centre distances against your table.</p></ParameterGroup>}
-        {project.tool === 'compactExtension' && <><ParameterGroup title={<>Tooling grid ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Fixed edge origins on the working top and mounting end. The first end row is measured down from the assembled working face. Conflicting holes are rejected, not shifted or removed.</p></ParameterGroup><ParameterGroup title={<>Spine & locating joints ({unitLabel})</>}><div className="fields">{sizeField('tipHeight')}{sizeField('taperRun')}{sizeField('windowInset')}{sizeField('windowRadius')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Window border inset sets the perimeter web. Diagonal webs between adjacent windows: {display(project.size.windowInset * 2, units, 3)} {unitLabel}. Saved projects keep their chosen inset.</p></ParameterGroup></>}
-        {project.tool === 'cornerBracket' && <><ParameterGroup title={<>Mounting holes & slot ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('slotLength')}</div><p>Nine base holes in a triangular grid with the elbow position omitted; three holes in one wall, one rounded slot in the other. The slot width equals the hole diameter.</p></ParameterGroup><ParameterGroup title={<>Profile & locating joints ({unitLabel})</>}><div className="fields">{sizeField('cornerCut')}{sizeField('tipWidth')}{sizeField('tabWidth')}{sizeField('clearance')}</div></ParameterGroup></>}
-        <ParameterGroup title={<>Add to table sheets</>}><p>Cut this configured tool together with the table, using only the table’s existing sheet capacity. Same steel grade and {display(tableConfig.thickness, units, 3)} {unitLabel} thickness required.</p><NumberField label="Tool copies in the cutting batch" value={project.copies} min={1} max={10} step={1} disabled={Boolean(rejected)} onValue={copies => apply({ ...project, copies })} />{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}<button className="secondary full" disabled={Boolean(admissionError)} onClick={() => onAddToTable(project)}>Add to table cut job</button><p>This adds a saved copy of the tool settings. Later dimension edits here do not change tools already selected for the table. All five tool families use the table’s thickness; the vise mounting grid follows the table too. The table’s sheet size and clearances apply; all tool copies must fit before export.</p></ParameterGroup>
+        <section className="fixture-card"><h3>Оснастка</h3><label className="field"><span>Выберите изделие</span><select disabled={Boolean(rejected)} aria-label="Выбрать изделие" value={project.tool} onChange={event => { const value = event.target.value; if (isToolId(value)) selectTool(value) }}>{toolIds.map(id => <option key={id} value={id}>{toolLabels[id]}</option>)}</select></label><p className="grid-summary">{toolSummaries[project.tool]}</p></section>
+        <ParameterGroup title={<>Размеры ({unitLabel})</>} defaultOpen><div className="fields">{sizeField('length')}{sizeField('width')}{project.tool === 'square' ? sizeField('armWidth') : sizeField('height')}{sizeField('thickness')}</div><p>Толщина берётся из проекта стола, в том числе для импортированных проектов. Измените толщину металла в генераторе стола; все соединения и детали для резки будут пересчитаны.</p></ParameterGroup>
+        {project.tool === 'viseModule' && <><ParameterGroup title={<>Монтажная сетка стола ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Диаметр, шаг, начало от края и схема «{project.size.grid === 'square' ? 'квадратная' : 'диагональная'}» берутся из генератора стола. На монтажной стенке строится полная совпадающая сетка с отсчётом вниз от рабочей поверхности; отверстия не смещаются и не удаляются ради размещения. Нижние боковые ряды ограничены криволинейным профилем.</p></ParameterGroup><ParameterGroup title={<>Пазы тисков и установочные соединения ({unitLabel})</>}><div className="fields">{sizeField('slotWidth')}{sizeField('slotInnerRadius')}{sizeField('tipHeight')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Восемь отдельных скруглённых пазов с шагом 45° и центральное круглое отверстие. Каждый внешний скруглённый конец останавливается за {display(viseSlotSetback, units, 3)} {unitLabel} до границы пластины по своему лучу; диагонали квадратной верхней пластины заканчиваются на таком же расстоянии от углов. Длины пазов пересчитываются вместе с размером пластины. Расстояние измеряется вдоль оси каждого паза, а не перпендикулярно стороне.</p></ParameterGroup></>}
+        {project.tool === 'square' && <ParameterGroup title={<>Монтажные отверстия ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('endOffset')}</div><p>Одно отверстие у внутреннего угла и по одному у каждого свободного конца. Центр углового отверстия отстоит от обеих наружных кромок на половину ширины плеча. Сверьте полученные межцентровые расстояния со своим столом.</p></ParameterGroup>}
+        {project.tool === 'compactExtension' && <><ParameterGroup title={<>Сетка оснастки ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Начала сетки на рабочей поверхности и монтажном торце зафиксированы относительно краёв. Первый торцевой ряд отсчитывается вниз от рабочей поверхности в сборе. Конфликтующие отверстия отклоняются, а не смещаются и не удаляются.</p></ParameterGroup><ParameterGroup title={<>Центральное ребро и установочные соединения ({unitLabel})</>}><div className="fields">{sizeField('tipHeight')}{sizeField('taperRun')}{sizeField('windowInset')}{sizeField('windowRadius')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Отступ окон задаёт ширину материала по периметру. Диагональные перемычки между соседними окнами: {display(project.size.windowInset * 2, units, 3)} {unitLabel}. Сохранённые проекты сохраняют выбранный отступ.</p></ParameterGroup></>}
+        {project.tool === 'cornerBracket' && <><ParameterGroup title={<>Монтажные отверстия и паз ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('slotLength')}</div><p>Девять отверстий основания образуют треугольную сетку без позиции во внутреннем углу; в одной стенке три отверстия, в другой — один скруглённый паз. Ширина паза равна диаметру отверстия.</p></ParameterGroup><ParameterGroup title={<>Профиль и установочные соединения ({unitLabel})</>}><div className="fields">{sizeField('cornerCut')}{sizeField('tipWidth')}{sizeField('tabWidth')}{sizeField('clearance')}</div></ParameterGroup></>}
+        <ParameterGroup title={<>Добавить на листы стола</>}><p>Вырежьте эту оснастку вместе со столом, не увеличивая число листов, доступных столу. Требуются та же марка стали и толщина {display(tableConfig.thickness, units, 3)} {unitLabel}.</p><NumberField label="Копий оснастки в партии резки" value={project.copies} min={1} max={10} step={1} disabled={Boolean(rejected)} onValue={copies => apply({ ...project, copies })} />{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}<button className="secondary full" disabled={Boolean(admissionError)} onClick={() => onAddToTable(project)}>Добавить в задание на резку стола</button><p>В задание добавляется сохранённая копия параметров оснастки. Последующие изменения размеров здесь не меняют уже выбранную для стола оснастку. Все пять семейств используют толщину металла стола; монтажная сетка тисков также следует столу. Используются размеры листа и зазоры стола; перед экспортом должны поместиться все копии оснастки.</p></ParameterGroup>
       </>
     </>}
     visualization={<VisualizationSettings value={visual} onChange={onVisual} />}
     production={summary && <ProductionEstimate summary={summary} units={units} sheet={project.sheet} error={rejected ? loadError : null} onSheetChange={changes => apply({ ...project, sheet: { ...project.sheet, ...changes } })} />}
-    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={() => downloadFile(JSON.stringify(project, null, 2), `welding-${project.tool}-project.json`)} onShare={() => { onClose(); void share() }} disabled={Boolean(rejected || fabrication.error)} fabrication={{ kind: 'parts', onZip: () => void downloadToolParts(project, tableConfig).catch(() => setMessage('Could not create the ZIP archive.')), onDxf: () => downloadToolStrip(project, tableConfig) }} />}>
-    {rejected ? <div className="three-loading socket-error" role="alert">Preserve the original project, then explicitly start the corrected design.</div>
-      : fabrication.error ? <div className="three-loading socket-error" role="alert">{fabrication.error} Change the table thickness or the tool dimensions before fabrication.</div>
-      : view === '2d' ? layout && <PartsLayout layout={layout} units={units} label={`Interactive 2D ${toolLabels[project.tool]} parts layout`} resetToken={reset} />
-      : view === '3d' ? <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div></>
+    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={() => downloadFile(JSON.stringify(project, null, 2), `проект-оснастки-${project.tool}.json`)} onShare={() => { onClose(); void share() }} disabled={Boolean(rejected || fabrication.error)} fabrication={{ kind: 'parts', onZip: () => void downloadToolParts(project, tableConfig).catch(() => setMessage('Не удалось создать ZIP-архив.')), onDxf: () => downloadToolStrip(project, tableConfig) }} />}>
+    {rejected ? <div className="three-loading socket-error" role="alert">Сохраните исходный проект, затем явно запустите исправленный вариант.</div>
+      : fabrication.error ? <div className="three-loading socket-error" role="alert">{fabrication.error} Перед изготовлением измените толщину стола или размеры оснастки.</div>
+      : view === '2d' ? layout && <PartsLayout layout={layout} units={units} label={`Интерактивная 2D-раскладка деталей: ${toolLabels[project.tool]}`} resetToken={reset} />
+      : view === '3d' ? <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D-сборки…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div></>
       : batchParts && <SheetNesting jobKey={key} job={{ parts: batchParts, options: projectNestingOptions(project), stock: { kind: 'new-sheets' } }} sheetSettings={{ ...project.sheet, copies: project.copies }} units={units} maxGap={100}
         onChange={({ copies, ...sheet }) => apply({ ...project, sheet: { ...project.sheet, ...sheet }, copies: copies ?? project.copies })} onNotice={setMessage} onExport={({ result }) => downloadToolArchive(project, result, key, tableConfig)} isLayoutValid={({ result }, key) => validProjectLayout(project, result, key)}
-        render3D={result => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={0} {...visual} nesting={result} /></Suspense>} />}
+        render3D={result => <Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={0} {...visual} nesting={result} /></Suspense>} />}
   </GeneratorShell>
 }

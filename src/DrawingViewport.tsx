@@ -12,7 +12,7 @@ type Props = {
   bounds: DrawingBounds; parts: DrawingFeatures[]; geometryKey: string; label: string; units: Config['units']; initialFocus: 'overview' | 'first-part'
   children: (focusedPart: number | null) => ReactNode; resetToken?: number; onPickHole?: (target: EventTarget | null) => void
 }
-const snapLabels = { free: 'Free point', vertex: 'Endpoint', midpoint: 'Midpoint', centre: 'Centre', edge: 'On edge' }
+const snapLabels = { free: 'Свободная точка', vertex: 'Конечная точка', midpoint: 'Середина', centre: 'Центр', edge: 'На контуре' }
 
 export function DrawingViewport({ bounds, parts, geometryKey, label, units, initialFocus, children, resetToken = 0, onPickHole }: Props) {
   const area = useRef<HTMLDivElement>(null), svg = useRef<SVGSVGElement>(null)
@@ -31,7 +31,7 @@ export function DrawingViewport({ bounds, parts, geometryKey, label, units, init
   const pointers = useRef(new Map<number, Pointer>()), space = useRef(false)
   const pinch = useRef<{ distance: number; center: Point; camera: DrawingCamera } | null>(null)
   const format = (value: number) => display(value, units, units === 'mm' ? 2 : 4)
-  const unit = units === 'mm' ? 'mm' : 'in'
+  const unit = units === 'mm' ? 'мм' : 'дюйм'
   const commitCamera = (value: DrawingCamera) => { cameraRef.current = value; setCamera(value) }
   const fit = () => commitCamera(fitDrawing(framing.current, sizeRef.current))
   const pan = (x: number, y: number) => commitCamera({ ...cameraRef.current, x: cameraRef.current.x + x, y: cameraRef.current.y + y })
@@ -151,20 +151,20 @@ export function DrawingViewport({ bounds, parts, geometryKey, label, units, init
     else if ((key === 'delete' || key === 'backspace') && selected) { event.preventDefault(); remove(selected) }
     else if (key.startsWith('arrow')) { event.preventDefault(); pan(key === 'arrowleft' ? -48 : key === 'arrowright' ? 48 : 0, key === 'arrowup' ? -48 : key === 'arrowdown' ? 48 : 0) }
   }} onKeyUp={event => { if (event.key === ' ') space.current = false }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { space.current = false; pointers.current.clear(); pinch.current = null } }}>
-    <div className="viewport-toolbar" aria-label="Drawing tools">
+    <div className="viewport-toolbar" aria-label="Инструменты чертежа">
       <div className="viewport-group">
-        <button aria-label="Pan" aria-pressed={tool === 'pan'} onClick={() => chooseTool('pan')} title="Pan (H)"><Icon name="hand" /><span>Pan</span></button>
-        <button aria-label="Measure" aria-pressed={tool === 'measure'} onClick={() => chooseTool('measure')} title="Measure two points (M)"><Icon name="ruler" /><span>Measure</span></button>
-        {onPickHole && <button aria-label="Remove holes" aria-pressed={tool === 'holes'} onClick={() => chooseTool('holes')} title="Remove a hole"><Icon name="trash" /><span>Holes</span></button>}
+        <button aria-label="Панорамирование" aria-pressed={tool === 'pan'} onClick={() => chooseTool('pan')} title="Панорамирование (H)"><Icon name="hand" /><span>Панорама</span></button>
+        <button aria-label="Измерить" aria-pressed={tool === 'measure'} onClick={() => chooseTool('measure')} title="Измерить между двумя точками (M)"><Icon name="ruler" /><span>Измерить</span></button>
+        {onPickHole && <button aria-label="Удалить отверстия" aria-pressed={tool === 'holes'} onClick={() => chooseTool('holes')} title="Удалить отверстие"><Icon name="trash" /><span>Отверстия</span></button>}
       </div>
-      <details className="viewport-help"><summary aria-label="Drawing controls help"><Icon name="info" /></summary><div>Drag to pan. Scroll or pinch to zoom at the pointer. In Measure, choose two points; hold Space or the middle/right mouse button to pan. Alt bypasses snapping. F fits the view; arrows pan; Esc cancels the current point.</div></details>
+      <details className="viewport-help"><summary aria-label="Справка по управлению чертежом"><Icon name="info" /></summary><div>Перетаскивайте чертёж для панорамирования. Колесо мыши или жест щипка меняют масштаб относительно указателя. В режиме измерения выберите две точки; для панорамирования удерживайте пробел, среднюю или правую кнопку мыши. Alt отключает привязку. F вписывает чертёж, стрелки перемещают вид, Esc отменяет текущую точку.</div></details>
     </div>
     <div className="drawing-context">
-      <select className="part-focus" aria-label="Focus part" value={focusedPart} onChange={event => {
+      <select className="part-focus" aria-label="Выбрать деталь" value={focusedPart} onChange={event => {
         const value = event.target.value; setFocusedPart(value)
         const target = value === 'all' ? bounds : features.targets[Number(value)]?.bounds
         if (target) { framing.current = target; commitCamera(fitDrawing(target, sizeRef.current)) }
-      }}><option value="all">All parts · {features.targets.length}</option>{features.targets.map((target, index) => <option key={index} value={index}>{index + 1}. {target.label}</option>)}</select>
+      }}><option value="all">Все детали · {features.targets.length}</option>{features.targets.map((target, index) => <option key={index} value={index}>{index + 1}. {target.label}</option>)}</select>
       <span className="drawing-size">{format(visibleBounds.width)} × {format(visibleBounds.height)} {unit}</span>
     </div>
     <div className="drawing-surface" ref={area}>
@@ -190,17 +190,17 @@ export function DrawingViewport({ bounds, parts, geometryKey, label, units, init
         </g>
       </svg>
     </div>
-    {(tool === 'measure' || measurements.length > 0) && <aside className="measure-panel" aria-label="Measurements">
-        <header><strong>Measurements{measurements.length > 0 ? ` · ${measurements.length}` : ''}</strong><button aria-label="Clear measurements" disabled={!measurements.length && !draft} onClick={() => { setMeasurements([]); setDraft(null); setSelected(null) }}><Icon name="trash" /></button></header>
-        {tool === 'measure' && <><label className="snap-toggle"><input type="checkbox" checked={snap} onChange={event => setSnap(event.target.checked)} />Snap to geometry</label><p role="status">{draft?.kind === 'edit' ? `Choose new point ${draft.endpoint === 'start' ? 'A' : 'B'}` : draft ? 'Choose point B' : 'Choose point A'}{cursor ? ` · ${snapLabels[cursor.kind]}` : ''}</p></>}
-        {values && <div className="measure-result"><output aria-label="Measured distance">{format(values.length)} <small>{unit}</small></output><span>ΔX {format(values.dx)} · ΔY {format(values.dy)} {unit} · {values.angle.toFixed(1)}°</span></div>}
-        {measurements.length > 0 && <details className="measurement-history" open={size.width >= 700}><summary>Saved measurements <span>{measurements.length}</span><Icon name="chevron" size={14} /></summary><ol>{measurements.map((item, index) => <li key={item.id} data-selected={selected === item.id}>
-          <button onClick={() => setSelected(item.id)} aria-label={`Select measurement ${index + 1}`}>{index + 1}. {format(measurementValues(item).length)} {unit}</button>
-          <button onClick={() => edit(item, 'start')} aria-label={`Edit measurement ${index + 1} start`}>A</button><button onClick={() => edit(item, 'end')} aria-label={`Edit measurement ${index + 1} end`}>B</button>
-          <button onClick={() => remove(item.id)} aria-label={`Delete measurement ${index + 1}`}><Icon name="close" size={14} /></button>
+    {(tool === 'measure' || measurements.length > 0) && <aside className="measure-panel" aria-label="Измерения">
+        <header><strong>Измерения{measurements.length > 0 ? ` · ${measurements.length}` : ''}</strong><button aria-label="Очистить измерения" disabled={!measurements.length && !draft} onClick={() => { setMeasurements([]); setDraft(null); setSelected(null) }}><Icon name="trash" /></button></header>
+        {tool === 'measure' && <><label className="snap-toggle"><input type="checkbox" checked={snap} onChange={event => setSnap(event.target.checked)} />Привязка к геометрии</label><p role="status">{draft?.kind === 'edit' ? `Выберите новую точку ${draft.endpoint === 'start' ? 'A' : 'B'}` : draft ? 'Выберите точку B' : 'Выберите точку A'}{cursor ? ` · ${snapLabels[cursor.kind]}` : ''}</p></>}
+        {values && <div className="measure-result"><output aria-label="Измеренное расстояние">{format(values.length)} <small>{unit}</small></output><span>ΔX {format(values.dx)} · ΔY {format(values.dy)} {unit} · {values.angle.toFixed(1)}°</span></div>}
+        {measurements.length > 0 && <details className="measurement-history" open={size.width >= 700}><summary>Сохранённые измерения <span>{measurements.length}</span><Icon name="chevron" size={14} /></summary><ol>{measurements.map((item, index) => <li key={item.id} data-selected={selected === item.id}>
+          <button onClick={() => setSelected(item.id)} aria-label={`Выбрать измерение ${index + 1}`}>{index + 1}. {format(measurementValues(item).length)} {unit}</button>
+          <button onClick={() => edit(item, 'start')} aria-label={`Изменить начало измерения ${index + 1}`}>A</button><button onClick={() => edit(item, 'end')} aria-label={`Изменить конец измерения ${index + 1}`}>B</button>
+          <button onClick={() => remove(item.id)} aria-label={`Удалить измерение ${index + 1}`}><Icon name="close" size={14} /></button>
         </li>)}</ol></details>}
-        {draft && <button className="measure-cancel" onClick={() => setDraft(null)}>Cancel point</button>}
+        {draft && <button className="measure-cancel" onClick={() => setDraft(null)}>Отменить точку</button>}
       </aside>}
-    <div className="viewport-status"><PanControls onPan={pan} /><span>{tool === 'holes' ? 'Click a hole to remove it' : tool === 'measure' ? 'Two points · Space + drag to pan' : 'Drag to pan · Scroll to zoom'}</span><ZoomControls onZoom={zoom} onFit={fit} /></div>
+    <div className="viewport-status"><PanControls onPan={pan} /><span>{tool === 'holes' ? 'Нажмите на отверстие, чтобы удалить его' : tool === 'measure' ? 'Две точки · пробел и перетаскивание — панорама' : 'Перетаскивание — панорама · колесо — масштаб'}</span><ZoomControls onZoom={zoom} onFit={fit} /></div>
   </div>
 }

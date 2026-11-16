@@ -51,11 +51,11 @@ const assertConfig = (config: CompactExtensionConfig) => {
   for (const key of Object.keys(compactExtensionLimits) as Array<keyof CompactExtensionConfig>) {
     const value = config[key], { min, max } = compactExtensionLimits[key]
     if (!Number.isFinite(value) || value < min || value > max)
-      throw new FabricationError('invalid-dimensions', `Compact extension ${key} must be ${min}–${max} mm`, { field: key, min, max })
+      throw new FabricationError('invalid-dimensions', `Параметр компактного расширения ${key} должен быть от ${min} до ${max} мм`, { field: key, min, max })
   }
   if (config.tipHeight >= config.height || config.tipHeight <= config.thickness + 2 * config.windowInset + 2 * config.windowRadius
     || config.taperRun >= config.length / 2 || config.tabWidth + config.clearance >= (config.height - config.thickness) / 3)
-    throw new FabricationError('invalid-dimensions', 'The taper, windows and locating joints must fit within the compact extension envelope')
+    throw new FabricationError('invalid-dimensions', 'Скос, окна и установочные соединения должны помещаться в габарит компактного расширения')
 }
 
 /** Three cut plates observed across the references; exact window and joint dimensions are proposed. */
@@ -86,7 +86,7 @@ export const compactExtensionParts = (config: CompactExtensionConfig = compactEx
   const windows = cells.map((cell, index) => {
     const paths = inflatePathsD([cell], -windowInset, JoinType.Miter, EndType.Polygon, 8, 6)
     if (paths.length !== 1 || paths[0].length < 3)
-      throw new FabricationError('cut-clearance', 'The spine window collapses at these dimensions', { window: index })
+      throw new FabricationError('cut-clearance', 'При этих размерах окно центрального ребра вырождается', { window: index })
     const vertices = signedContourArea(polygonContour(paths[0])) > 0 ? paths[0] : paths[0].slice().reverse()
     return roundedConvexPolygon(vertices, windowRadius)
   })
@@ -95,18 +95,18 @@ export const compactExtensionParts = (config: CompactExtensionConfig = compactEx
   const topHoles = grid(length, width)
   const mountHoles = grid(width, height).map(hole => ({ ...hole, y: height - hole.y }))
   if (!topHoles.length || !mountHoles.length)
-    throw new FabricationError('missing-grid-row', 'Both working and mounting plates need a usable fixed-origin grid')
+    throw new FabricationError('missing-grid-row', 'На рабочей и монтажной пластинах должна помещаться сетка с фиксированным началом')
   // Keep the full hole inventory: incompatible stock/grid combinations fail rather than losing holes.
   if (topHoles.some(hole => Math.abs(hole.y - spineY) < (holeDiameter + thickness) / 2 + holeWeb)
     || mountHoles.some(hole => Math.abs(hole.x - spineY) < (holeDiameter + thickness) / 2 + holeWeb))
-    throw new FabricationError('hole-clearance', 'The hole grid crosses the central spine. Adjust width, pitch or origin; holes will not be silently removed.')
+    throw new FabricationError('hole-clearance', 'Сетка отверстий пересекает центральное ребро. Измените ширину, шаг или начало сетки; отверстия не будут удаляться автоматически.')
   const part = (name: CompactExtensionPartName, label: string, width: number, height: number, contours: Contour[], holes: Hole[]): Part => ({
     name, label, width, height, thickness, count: 1, contours, holes, slots: [],
   })
   const parts = [
-    part('compactTop', 'Compact working top', length, width, [top, ...topJoints.map(x => rectangle(x - (tabWidth + clearance) / 2, spineY - (thickness + clearance) / 2, tabWidth + clearance, thickness + clearance))], topHoles),
-    part('compactSpine', 'Central windowed spine', length, height, [spine, ...windows], []),
-    part('compactMount', 'Compact mounting end', width, height, [mount, ...endJoints.map(z => rectangle(spineY - (thickness + clearance) / 2, z - (tabWidth + clearance) / 2, thickness + clearance, tabWidth + clearance))], mountHoles),
+    part('compactTop', 'Рабочая поверхность компактного расширения', length, width, [top, ...topJoints.map(x => rectangle(x - (tabWidth + clearance) / 2, spineY - (thickness + clearance) / 2, tabWidth + clearance, thickness + clearance))], topHoles),
+    part('compactSpine', 'Центральное ребро с окнами', length, height, [spine, ...windows], []),
+    part('compactMount', 'Монтажный торец компактного расширения', width, height, [mount, ...endJoints.map(z => rectangle(spineY - (thickness + clearance) / 2, z - (tabWidth + clearance) / 2, thickness + clearance, tabWidth + clearance))], mountHoles),
   ]
   for (const part of parts) validateToolPart(part, { holeWeb, cutWeb: 3 })
   return parts

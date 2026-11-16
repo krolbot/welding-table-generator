@@ -310,24 +310,24 @@ export function AssemblyViewport({
   }, [resetToken, cameraKey])
 
   return error ? <div className={errorClassName} role="alert">{error}</div> : <div className="assembly-viewport" data-navigation={navigation}>
-    <div className="viewport-toolbar" aria-label="3D navigation">
-      <div className="viewport-group"><button aria-label="Orbit" title="Orbit" aria-pressed={navigation === 'orbit'} onClick={() => setNavigation('orbit')}><Icon name="orbit" /><span>Orbit</span></button><button aria-label="Pan" title="Pan" aria-pressed={navigation === 'pan'} onClick={() => setNavigation('pan')}><Icon name="hand" /><span>Pan</span></button></div>
-      <details className="viewport-help"><summary aria-label="3D controls help"><Icon name="info" /></summary><div>Drag to orbit or pan in the selected mode. Right/middle drag or Space + drag pans. Scroll to zoom at the pointer. Two fingers pan and pinch. Arrows pan; Shift + arrows orbit; F fits the model.</div></details>
+    <div className="viewport-toolbar" aria-label="Навигация в 3D">
+      <div className="viewport-group"><button aria-label="Вращение" title="Вращение" aria-pressed={navigation === 'orbit'} onClick={() => setNavigation('orbit')}><Icon name="orbit" /><span>Вращение</span></button><button aria-label="Панорамирование" title="Панорамирование" aria-pressed={navigation === 'pan'} onClick={() => setNavigation('pan')}><Icon name="hand" /><span>Панорама</span></button></div>
+      <details className="viewport-help"><summary aria-label="Справка по управлению 3D"><Icon name="info" /></summary><div>Перетаскивайте модель для вращения или панорамирования в выбранном режиме. Правая или средняя кнопка мыши либо пробел с перетаскиванием включают панорамирование. Колесо меняет масштаб относительно указателя. Два пальца перемещают и масштабируют модель. Стрелки перемещают вид, Shift со стрелками вращает модель, F вписывает модель.</div></details>
     </div>
-    <div className="camera-presets" aria-label="Camera direction">
-      <select className="camera-preset-select" aria-label="Camera direction" value={preset} onChange={event => { const view = cameraPresets.find(value => value === event.target.value); if (view) orient(view) }}><option value="custom" disabled>Custom view</option>{cameraPresets.map(view => <option key={view} value={view}>{view === 'iso' ? 'Isometric' : view[0].toUpperCase() + view.slice(1)}</option>)}</select>
-      {cameraPresets.map(view => <button key={view} aria-pressed={preset === view} onClick={() => orient(view)}>{view === 'iso' ? 'ISO' : view[0].toUpperCase() + view.slice(1)}</button>)}{focusCamera && <button className="mount-detail" onClick={() => { if (runtime.current) latest.current.focusCamera?.(runtime.current) }}>Mount detail</button>}
+    <div className="camera-presets" aria-label="Направление камеры">
+      <select className="camera-preset-select" aria-label="Направление камеры" value={preset} onChange={event => { const view = cameraPresets.find(value => value === event.target.value); if (view) orient(view) }}><option value="custom" disabled>Пользовательский вид</option>{cameraPresets.map(view => <option key={view} value={view}>{view === 'iso' ? 'Изометрия' : view === 'top' ? 'Сверху' : view === 'front' ? 'Спереди' : 'Справа'}</option>)}</select>
+      {cameraPresets.map(view => <button key={view} aria-pressed={preset === view} onClick={() => orient(view)}>{view === 'iso' ? 'ИЗО' : view === 'top' ? 'Сверху' : view === 'front' ? 'Спереди' : 'Справа'}</button>)}{focusCamera && <button className="mount-detail" onClick={() => { if (runtime.current) latest.current.focusCamera?.(runtime.current) }}>Крепление</button>}
     </div>
     <div className="assembly-surface">
     <div className={hostClassName} ref={host} aria-label={ariaLabel} />
     {hover && <div className="part-tooltip" style={{ left: Math.max(8, Math.min(hover.x + 15, (host.current?.clientWidth ?? 280) - 270)), top: Math.max(8, Math.min(hover.y + 15, (host.current?.clientHeight ?? 130) - 125)) }}>
       <strong>{hover.info.name}</strong><dl>
-        <dt>Dimensions:</dt><dd>{hover.info.dims}</dd>
-        {hover.info.weight !== undefined && <><dt>Weight:</dt><dd>{hover.info.weight} {hover.info.weightUnit}</dd></>}
-        <dt>Holes:</dt><dd>{hover.info.holesCount} pcs</dd>
+        <dt>Размеры:</dt><dd>{hover.info.dims}</dd>
+        {hover.info.weight !== undefined && <><dt>Масса:</dt><dd>{hover.info.weight} {hover.info.weightUnit}</dd></>}
+        <dt>Отверстия:</dt><dd>{hover.info.holesCount} шт.</dd>
       </dl>
     </div>}
     </div>
-    <div className="viewport-status"><PanControls onPan={moveView} /><span>{navigation === 'orbit' ? 'Drag to orbit' : 'Drag to pan'} · Scroll to zoom</span><ZoomControls onZoom={zoomView} onFit={fitView} /></div>
+    <div className="viewport-status"><PanControls onPan={moveView} /><span>{navigation === 'orbit' ? 'Перетаскивание — вращение' : 'Перетаскивание — панорама'} · колесо — масштаб</span><ZoomControls onZoom={zoomView} onFit={fitView} /></div>
   </div>
 }

@@ -174,12 +174,12 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
   assert.equal(tools.validProjectLayout(p, result, tools.projectKey(p)), true)
   const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, tools.projectKey(p), { thickness: p.size.thickness }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(JSON.parse(await zip.file('project.json').async('string')), p)
-  const assembly = JSON.parse(await zip.file('assembly.json').async('string'))
+  const assembly = JSON.parse(await zip.file('сборка.json').async('string'))
   assert.equal(assembly.placements.length, 5)
   assert.deepEqual(assembly.joinery, vise.viseModuleDimensions(p.size))
-  assert.match(await zip.file('README.txt').async('string'), /eight separate radial slots/i)
+  assert.match(await zip.file('ПРОЧТИ_МЕНЯ.txt').async('string'), /Восемь отдельных радиальных пазов/)
   for (const part of tools.projectParts(p)) {
-    const parsed = new DxfParser().parseSync(await zip.file(`parts/${part.name}_${part.count}pcs.dxf`).async('string'))
+    const parsed = new DxfParser().parseSync(await zip.file(`детали/${part.name}_${part.count}шт.dxf`).async('string'))
     assert.equal(parsed.header.$INSUNITS, 4)
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, part.contours.flat().filter(s => s.type === 'arc').length)
     if (part.name === 'viseTop') {
@@ -189,7 +189,7 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
     for (const h of part.holes) assert.ok(parsed.entities.some(e => e.type === 'CIRCLE' && Math.hypot(e.center.x - h.x, e.center.y - h.y) < .001 && e.radius === h.d / 2))
   }
   for (const sheet of result.sheets) {
-    const parsed = new DxfParser().parseSync(await zip.file(`sheets/Sheet_${sheet.index + 1}.dxf`).async('string'))
+    const parsed = new DxfParser().parseSync(await zip.file(`листы/Лист_${sheet.index + 1}.dxf`).async('string'))
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, sheet.placements.reduce((n, p) => n + p.part.contours.flat().filter(s => s.type === 'arc').length, 0))
   }
   assert.equal(tools.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, tools.projectKey(p)), false)
@@ -210,7 +210,7 @@ test('equal-length vise projects retain their original data and require review b
   assert.throws(() => exporter.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'geometry-migration')
   assert.throws(() => exporter.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'geometry-migration')
   const loaded = tools.readToolProject(original)
-  assert.equal(loaded.kind, 'migration'); assert.match(loaded.message, /15 mm/)
+  assert.equal(loaded.kind, 'migration'); assert.match(loaded.message, /15 мм/)
   assert.deepEqual(loaded.project, { ...tools.defaultViseModuleProject, copies: 2 })
   assert.equal(tools.readToolProject(tools.projectJson(loaded.project)).kind, 'current')
   assert.equal(tools.projectJson(old), original, 'review does not mutate the saved input')

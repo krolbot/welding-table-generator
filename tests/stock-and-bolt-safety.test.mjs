@@ -51,7 +51,7 @@ test('all five tool projects use the host stock in parts, mass, assembly, native
     const archive = await JSZip.loadAsync(await exporter.toolPartsArchive(project, host).generateAsync({ type: 'nodebuffer' }))
     assert.deepEqual(JSON.parse(await archive.file('project.json').async('string')), project)
     for (const part of parts) {
-      const parsed = new DxfParser().parseSync(await archive.file(`parts/${part.name}_${part.count * project.copies}pcs.dxf`).async('string'))
+      const parsed = new DxfParser().parseSync(await archive.file(`детали/${part.name}_${part.count * project.copies}шт.dxf`).async('string'))
       assert.equal(parsed.entities.filter(entity => entity.type === 'CIRCLE').length, part.holes.length, `${id}/${part.name}`)
       assert.equal(parsed.entities.filter(entity => entity.type === 'ARC').length, part.contours.flat().filter(segment => segment.type === 'arc').length, `${id}/${part.name}`)
     }

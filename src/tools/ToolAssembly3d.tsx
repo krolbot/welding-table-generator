@@ -31,7 +31,7 @@ export const toolGroup = <Material extends THREE.Material>(
   const parts = new Map(projectParts(project).map(part => [part.name, part]))
   for (const placement of projectAssembly(project)) {
     const part = parts.get(placement.part)
-    if (!part) throw new Error(`Assembly references unknown part ${placement.part}`)
+    if (!part) throw new Error(`В сборке указана неизвестная деталь ${placement.part}`)
     const mesh = extrudedPartMesh(part, material, { renderHoles, edgeColor })
     mesh.name = `${part.name}:${placement.instance}`
     mesh.applyMatrix4(new THREE.Matrix4().set(
@@ -49,9 +49,9 @@ const partInfo = (part: FabricationPart, basePos: THREE.Vector3, explodeDir: THR
   part: part.name,
   isPart: true,
   name: part.label,
-  dims: `${display(part.width, units, 2)} × ${display(part.height, units, 2)} × ${display(part.thickness, units, 2)} ${units === 'mm' ? 'mm' : 'in'}`,
+  dims: `${display(part.width, units, 2)} × ${display(part.height, units, 2)} × ${display(part.thickness, units, 2)} ${units === 'mm' ? 'мм' : 'дюйм'}`,
   weight: (partWeight(part) * (units === 'mm' ? 1 : 2.20462)).toFixed(2),
-  weightUnit: units === 'mm' ? 'kg' : 'lb',
+  weightUnit: units === 'mm' ? 'кг' : 'фунт',
   holesCount: part.holes.length,
   basePos,
   explodeDir,
@@ -63,7 +63,7 @@ const rebuildDimensions = (runtime: AssemblyRuntime, project: ToolProject, showD
   runtime.dimensions.clear()
   if (!showDimensions) return
   const { length, width, height } = projectEnvelope(project)
-  const label = (value: number) => `${Number(display(value, units, 2))} ${units === 'mm' ? 'mm' : 'in'}`
+  const label = (value: number) => `${Number(display(value, units, 2))} ${units === 'mm' ? 'мм' : 'дюйм'}`
 
   const offset = Math.max(length, width, height) * 0.08
   const x = -offset
@@ -98,7 +98,7 @@ const rebuildAssembly = (runtime: AssemblyRuntime, project: ToolProject, explode
   group.toolMeshes.forEach((mesh, index) => {
     const placement = placements[index]
     const part = parts.get(placement.part)
-    if (!part) throw new Error(`Assembly references unknown part ${placement.part}`)
+    if (!part) throw new Error(`В сборке указана неизвестная деталь ${placement.part}`)
     const explodeDir = placements.length === 1 ? new THREE.Vector3() : new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3()).sub(center)
     if (explodeDir.lengthSq()) explodeDir.normalize().multiplyScalar(Math.max(length, width, height) * 0.25)
     const partMesh: AssemblyPartMesh = Object.assign(mesh, { userData: partInfo(part, mesh.position.clone(), explodeDir, units) })
@@ -193,8 +193,8 @@ export function ToolAssembly3d({
     build={build}
     resetCamera={reset}
     initialExtent={Math.max(envelope.length, envelope.width, envelope.height)}
-    ariaLabel={nesting ? 'Interactive 3D tool sheet layout' : 'Interactive 3D tool assembly'}
-    errorMessage="3D rendering is unavailable in this browser. The 2D profiles and DXF remain available."
+    ariaLabel={nesting ? 'Интерактивная 3D-раскладка оснастки на листах' : 'Интерактивная 3D-сборка оснастки'}
+    errorMessage="В этом браузере недоступно отображение 3D. Профили 2D и DXF остаются доступны."
     hostClassName="three-canvas"
     errorClassName="three-loading"
     renderHoles={nesting ? true : renderHoles}

@@ -17,5 +17,5 @@ export async function copyText(value: string) {
   input.select()
   const copied = document.execCommand('copy')
   input.remove()
-  if (!copied) throw new Error('Clipboard unavailable')
+  if (!copied) throw new Error('Буфер обмена недоступен')
 }

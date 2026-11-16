@@ -83,7 +83,7 @@ test('independent finer arc validation rejects a manual clearance violation', ()
   ], options)
 
   assert.equal(validation.valid, false)
-  assert.match(validation.violations.map(item => item.message).join('\n'), /overlap or violate part clearance/)
+  assert.match(validation.violations.map(item => item.message).join('\n'), /пересекаются или нарушают междетальный зазор/)
 })
 
 test('validation rejects crossing contours at zero clearance and non-finite placement', () => {

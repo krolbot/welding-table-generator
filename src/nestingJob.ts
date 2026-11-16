@@ -42,14 +42,14 @@ export function* searchNestingJob(job: NestingJob): Generator<NestingRun> {
     return
   }
   let baseline = job.stock.baseline
-  if (baseline && !validNestingInventory(job.stock.tableParts, baseline, job.options)) throw new NestingJobError('stale-baseline', 'The table-only layout is stale or invalid. Recalculate the table before adding tools.')
+  if (baseline && !validNestingInventory(job.stock.tableParts, baseline, job.options)) throw new NestingJobError('stale-baseline', 'Раскладка только стола устарела или некорректна. Перед добавлением оснастки пересчитайте стол.')
   if (!baseline) {
     for (const result of searchNesting(job.stock.tableParts, { ...job.options, attempts: tableCapacityPasses })) {
       baseline = result
       yield { phase: 'capacity', result }
     }
   }
-  if (!baseline || !validNestingInventory(job.stock.tableParts, baseline, job.options)) throw new NestingJobError('capacity-unavailable', 'The table-only search did not find a complete layout within the configured sheets. Selected tools were not laid out. Restart or change the table or sheet settings.')
+  if (!baseline || !validNestingInventory(job.stock.tableParts, baseline, job.options)) throw new NestingJobError('capacity-unavailable', 'Не удалось найти полную раскладку стола на заданных листах. Выбранная оснастка не раскладывалась. Перезапустите расчёт или измените параметры стола либо листов.')
   const stock: NestingStock = { kind: 'table-offcuts', baseline }
   for (const result of searchNesting(job.parts, { ...job.options, maxSheets: baseline.sheets.length })) {
     yield { phase: 'nesting', result, stock }

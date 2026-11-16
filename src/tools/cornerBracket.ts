@@ -56,31 +56,31 @@ const validatePart = (part: BracketPart) => {
   const [outer, ...cuts] = part.contours
   for (const contour of part.contours) {
     const bounds = nativeContourBounds(contour)
-    if (Object.values(bounds).some(value => !Number.isFinite(value)) || bounds.minX < -epsilon || bounds.minY < -epsilon || bounds.maxX > part.width + epsilon || bounds.maxY > part.height + epsilon) throw new Error(`${part.label}: contour is outside the blank`)
+    if (Object.values(bounds).some(value => !Number.isFinite(value)) || bounds.minX < -epsilon || bounds.minY < -epsilon || bounds.maxX > part.width + epsilon || bounds.maxY > part.height + epsilon) throw new Error(`${part.label}: контур выходит за пределы заготовки`)
     for (let i = 0; i < contour.length; i++) for (let j = i + 2; j < contour.length; j++) {
       if (i === 0 && j === contour.length - 1) continue
-      if (nativeContourDistance([contour[i]], [contour[j]]) < epsilon) throw new Error(`${part.label}: profile edges intersect`)
+      if (nativeContourDistance([contour[i]], [contour[j]]) < epsilon) throw new Error(`${part.label}: кромки профиля пересекаются`)
     }
   }
   for (const cut of cuts) {
-    if (!inside(contourPoints(cut, 64)[0], outer) || nativeContourDistance(cut, outer) < web - epsilon) throw new Error(`${part.label}: slot needs at least ${web} mm of material to every edge`)
+    if (!inside(contourPoints(cut, 64)[0], outer) || nativeContourDistance(cut, outer) < web - epsilon) throw new Error(`${part.label}: от паза до каждой кромки должно оставаться не менее ${web} мм металла`)
   }
   for (const [index, hole] of part.holes.entries()) {
     if (!inside(hole, outer) || nativePointContourDistance(hole, outer) < hole.d / 2 + web - epsilon
       || cuts.some(cut => inside(hole, cut) || nativePointContourDistance(hole, cut) < hole.d / 2 + web - epsilon)
       || part.holes.slice(index + 1).some(other => Math.hypot(other.x - hole.x, other.y - hole.y) < (hole.d + other.d) / 2 + web - epsilon))
-      throw new Error(`${part.label}: all mounting holes must retain at least ${web} mm of material to every cut and each other; adjust the size, pitch or profile`)
+      throw new Error(`${part.label}: от каждого монтажного отверстия до вырезов и других отверстий должно оставаться не менее ${web} мм металла; измените размер, шаг или профиль`)
   }
 }
 
 export const cornerBracketParts = (config: CornerBracketConfig = cornerBracketDefaults): BracketPart[] => {
   for (const key of Object.keys(cornerBracketLimits) as Array<keyof CornerBracketConfig>) {
     const value = config[key], { min, max } = cornerBracketLimits[key]
-    if (!Number.isFinite(value) || value < min || value > max) throw new Error(`Corner bracket ${key} must be between ${min} and ${max} mm`)
+    if (!Number.isFinite(value) || value < min || value > max) throw new Error(`Параметр углового кронштейна ${key} должен быть от ${min} до ${max} мм`)
   }
   const { length, width, height, thickness, holeDiameter, holePitch, slotLength, cornerCut, tipWidth, tabWidth, clearance } = config
-  if (cornerCut >= Math.min(length, width) / 2 || tipWidth >= Math.min(length, width) / 2) throw new Error('Corner cuts must leave two long seating edges and an open diagonal side')
-  if (slotLength <= holeDiameter) throw new Error('Clamp slot length must exceed its width')
+  if (cornerCut >= Math.min(length, width) / 2 || tipWidth >= Math.min(length, width) / 2) throw new Error('Срезы углов должны оставлять две длинные опорные кромки и открытую диагональную сторону')
+  if (slotLength <= holeDiameter) throw new Error('Длина паза для струбцины должна быть больше его ширины')
   const { xJoints, yJoints, wallBottom, wallStart, wallHoleHeight, holeOrigin } = cornerBracketDimensions(config)
   const joints = (centres: number[], width: number, depth: number): EdgeJoint[] => centres.map(centre => ({ centre, width, depth }))
   const base = jointOutline([
@@ -102,9 +102,9 @@ export const cornerBracketParts = (config: CornerBracketConfig = cornerBracketDe
   }
   const part = (name: CornerBracketPartName, label: string, width: number, height: number, contours: Contour[], holes: Hole[]): BracketPart => ({ name, label, width, height, thickness, count: 1, contours, holes, slots: [] })
   const parts = [
-    part('cornerBase', 'Corner base', length, width, [base], baseHoles),
-    part('cornerHoleWall', 'Perforated wall', length, height, [wall(length, wallStart, xJoints)], [-1, 0, 1].map((index, i) => hole(`wall:${i}`, length / 2 + index * holePitch, wallHoleHeight))),
-    part('cornerSlotWall', 'Slotted wall', width, height, [wall(width, 0, yJoints), capsuleContour(point(width / 2, wallHoleHeight), slotLength, holeDiameter)], []),
+    part('cornerBase', 'Основание углового кронштейна', length, width, [base], baseHoles),
+    part('cornerHoleWall', 'Перфорированная стенка', length, height, [wall(length, wallStart, xJoints)], [-1, 0, 1].map((index, i) => hole(`wall:${i}`, length / 2 + index * holePitch, wallHoleHeight))),
+    part('cornerSlotWall', 'Стенка с пазом', width, height, [wall(width, 0, yJoints), capsuleContour(point(width / 2, wallHoleHeight), slotLength, holeDiameter)], []),
   ]
   parts.forEach(validatePart)
   return parts

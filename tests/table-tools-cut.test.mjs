@@ -139,8 +139,8 @@ test('vise inherits the entire mounting interface across saved tools, table JSON
   for (const [changes, selected] of [[{ height: 50, tabWidth: 10 }, source], [{ length: 500, width: 500 }, wider]]) {
     assert.throws(() => tools.toolSelectionsAtTable([selected], table(changes)), error => error.code === 'mounting-grid-mismatch')
     const host = table(changes)
-    assert.throws(() => cut.tableCutInventory({ ...host, nestingTools: tools.toolSelectionsAtTable([selected], host) }), /complete vise mounting grid/)
-    assert.throws(() => codec.parseTableProject(JSON.stringify(model.projectConfig(table({ ...changes, nestingTools: [selected] })))), /complete vise mounting grid/)
+    assert.throws(() => cut.tableCutInventory({ ...host, nestingTools: tools.toolSelectionsAtTable([selected], host) }), /Полная монтажная сетка тисков/)
+    assert.throws(() => codec.parseTableProject(JSON.stringify(model.projectConfig(table({ ...changes, nestingTools: [selected] })))), /Полная монтажная сетка тисков/)
   }
   assert.deepEqual(source, original, 'rejected changes never mutate the retained selection')
 })
@@ -153,7 +153,7 @@ test('saved table vise selections require geometry review without losing table s
   assert.throws(() => tools.parseToolSelections(c.nestingTools), error => error.code === 'geometry-migration')
   assert.throws(() => cut.tableCutInventory(c), error => error.code === 'geometry-migration')
   const loaded = codec.parseTableProject(original)
-  assert.equal(loaded.kind, 'migration'); assert.equal(loaded.change, 'tool-geometry'); assert.match(loaded.message, /15 mm/)
+  assert.equal(loaded.kind, 'migration'); assert.equal(loaded.change, 'tool-geometry'); assert.match(loaded.message, /15 мм/)
   const expected = structuredClone(saved)
   expected.nestingTools[0].project.version = 2
   delete expected.nestingTools[0].project.size.slotLength
@@ -198,7 +198,7 @@ test('complete mixed job fits existing stock and real ZIP preserves all circles,
   assert.equal(manifest.capacity.sheetLimit, base.sheets.length)
   assert.deepEqual(JSON.parse(await zip.file('project.json').async('string')), model.projectConfig(c))
   for (const sheet of run.result.sheets) {
-    const parsed = new DxfParser().parseSync(await zip.file(`Sheet_${sheet.index + 1}.dxf`).async('string'))
+    const parsed = new DxfParser().parseSync(await zip.file(`Лист_${sheet.index + 1}.dxf`).async('string'))
     assert.equal(parsed.header.$INSUNITS, 4)
     assert.equal(parsed.entities.filter(e => e.type === 'CIRCLE').length, sheet.placements.reduce((n, p) => n + p.part.holes.length, 0))
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, sheet.placements.reduce((n, p) => n + p.part.contours.flat().filter(s => s.type === 'arc').length, 0))
@@ -287,7 +287,7 @@ test('actual shared Three sheet renderer keeps every mixed part and the same rig
     assert.ok(Math.abs(actual.z - (c.sheetWidth / 2 - transformed.y)) < 1e-6)
     assert.equal(mesh.userData.part, p.part.name)
     assert.equal(mesh.userData.holesCount, p.part.holes.length)
-    if (p.part.name.startsWith('tool:')) assert.equal(mesh.userData.dims, `${p.part.width.toFixed(0)} × ${p.part.height.toFixed(0)} mm`)
+    if (p.part.name.startsWith('tool:')) assert.equal(mesh.userData.dims, `${p.part.width.toFixed(0)} × ${p.part.height.toFixed(0)} мм`)
   })
   runtime.metal.dispose()
 })

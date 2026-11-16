@@ -19,7 +19,7 @@ type Vector3 = [number, number, number]
 export type ToolSelection = { id: string; project: ToolProject }
 export type ToolPlacement = { part: string; instance: number; origin: Vector3; axes: [Vector3, Vector3, Vector3] }
 
-export const toolLabels: Record<ToolId, string> = { extension: 'Wedge table extension', compactExtension: 'Compact table extension', square: 'Flat welding square', cornerBracket: 'Internal corner bracket', viseModule: 'Vise mounting module' }
+export const toolLabels: Record<ToolId, string> = { extension: 'Клиновое расширение стола', compactExtension: 'Компактное расширение стола', square: 'Плоский сварочный угольник', cornerBracket: 'Внутренний угловой кронштейн', viseModule: 'Модуль крепления тисков' }
 export const defaultToolProject: ToolProject & { tool: 'extension' } = {
   version: 4, tool: 'extension', size: { ...extensionDefaults },
   sheet: { length: 3000, width: 1500, edgeGap: 10, partGap: 5 }, copies: 1,
@@ -50,28 +50,28 @@ export class ToolProjectError extends Error {
   readonly name = 'ToolProjectError'
   constructor(readonly code: 'invalid-json' | 'invalid-field' | 'unsupported-version' | 'grid-migration' | 'geometry-migration' | 'invalid-layout' | 'mounting-grid-mismatch' | 'stock-mismatch', message: string) { super(message) }
 }
-const number = (value: unknown) => { if (typeof value !== 'number') throw new ToolProjectError('invalid-field', 'Project numeric fields must be numbers'); return value }
-const grid = (value: unknown): Config['grid'] => { if (value !== 'square' && value !== 'staggered') throw new ToolProjectError('invalid-field', 'Unsupported table grid'); return value }
+const number = (value: unknown) => { if (typeof value !== 'number') throw new ToolProjectError('invalid-field', 'Числовые поля проекта должны содержать числа'); return value }
+const grid = (value: unknown): Config['grid'] => { if (value !== 'square' && value !== 'staggered') throw new ToolProjectError('invalid-field', 'Схема сетки стола не поддерживается'); return value }
 
 /** Only current fabrication data can reach exports; old shapes and grids have no runtime path. */
 export const parseToolProject = (text: string): ToolProject => {
   let raw: unknown
-  try { raw = JSON.parse(text) } catch { throw new ToolProjectError('invalid-json', 'Project JSON is invalid') }
+  try { raw = JSON.parse(text) } catch { throw new ToolProjectError('invalid-json', 'Некорректный JSON проекта') }
   const root = object(raw)
-  if (!root || !exactKeys(root, ['version', 'tool', 'size', 'sheet', 'copies'])) throw new ToolProjectError('invalid-field', 'Project has unknown or missing fields')
-  if (root.tool === 'extension' && root.version === 1) throw new ToolProjectError('unsupported-version', 'This project uses the retired box design. It cannot be silently converted into wedge cutting plans. Download the original JSON before starting the corrected design.')
-  if (root.tool === 'extension' && root.version === 2) throw new ToolProjectError('grid-migration', 'The extension grid now has a fixed 25 mm origin and side row, independent of thickness. Review and explicitly apply the corrected grid; the original data is retained.')
-  if (root.tool === 'viseModule' && root.version === 1) throw new ToolProjectError('geometry-migration', 'Vise slot lengths now follow the plate boundary with a 15 mm setback along every ray, including to the corners on a square top. Review and explicitly apply the corrected geometry; the original equal-length project is retained.')
+  if (!root || !exactKeys(root, ['version', 'tool', 'size', 'sheet', 'copies'])) throw new ToolProjectError('invalid-field', 'В проекте есть неизвестные поля или отсутствуют обязательные')
+  if (root.tool === 'extension' && root.version === 1) throw new ToolProjectError('unsupported-version', 'В этом проекте используется снятая с поддержки коробчатая конструкция. Её нельзя незаметно преобразовать в клиновые детали для резки. Перед началом исправленного проекта скачайте исходный JSON.')
+  if (root.tool === 'extension' && root.version === 2) throw new ToolProjectError('grid-migration', 'Теперь у сетки расширения фиксированное начало 25 мм и фиксированный боковой ряд, не зависящий от толщины. Проверьте и явно примените исправленную сетку; исходные данные сохранены.')
+  if (root.tool === 'viseModule' && root.version === 1) throw new ToolProjectError('geometry-migration', 'Теперь длина пазов тисков следует границе пластины с отступом 15 мм вдоль каждого луча, включая направление к углам квадратной верхней пластины. Проверьте и явно примените исправленную геометрию; исходный проект с одинаковыми пазами сохранён.')
   if ((root.tool === 'extension' && root.version === 3) || (root.tool === 'square' && root.version === 2) || (root.tool === 'cornerBracket' && root.version === 2))
-    throw new ToolProjectError('geometry-migration', 'This tool project stored its own sheet thickness. All tools now inherit the table stock thickness; review the recalculated parts before cutting. The original project is retained.')
-  if (!isToolId(root.tool) || root.version !== toolDefaults[root.tool].version) throw new ToolProjectError('unsupported-version', 'Unsupported project version or tool')
+    throw new ToolProjectError('geometry-migration', 'В этом проекте оснастки хранилась собственная толщина листа. Теперь вся оснастка наследует толщину металла стола; перед резкой проверьте пересчитанные детали. Исходный проект сохранён.')
+  if (!isToolId(root.tool) || root.version !== toolDefaults[root.tool].version) throw new ToolProjectError('unsupported-version', 'Версия проекта или тип оснастки не поддерживается')
   const size = object(root.size), sheet = object(root.sheet)
   const sizeKeys = Object.keys(toolDefaults[root.tool].size)
-  if (!size || !exactKeys(size, sizeKeys) || !sheet || !exactKeys(sheet, ['length', 'width', 'edgeGap', 'partGap'])) throw new ToolProjectError('invalid-field', 'Project dimensions are malformed')
+  if (!size || !exactKeys(size, sizeKeys) || !sheet || !exactKeys(sheet, ['length', 'width', 'edgeGap', 'partGap'])) throw new ToolProjectError('invalid-field', 'Размеры проекта заданы некорректно')
   const base: ProjectBase = {
     sheet: { length: number(sheet.length), width: number(sheet.width), edgeGap: number(sheet.edgeGap), partGap: number(sheet.partGap) }, copies: number(root.copies),
   }
-  if (!finite(base.sheet.length, 100, 6000) || !finite(base.sheet.width, 100, 6000) || !finite(base.sheet.edgeGap, 0, 100) || !finite(base.sheet.partGap, 0, 100) || !Number.isInteger(base.copies) || base.copies < 1 || base.copies > 10) throw new ToolProjectError('invalid-field', 'Project sheet or copy count is outside supported limits')
+  if (!finite(base.sheet.length, 100, 6000) || !finite(base.sheet.width, 100, 6000) || !finite(base.sheet.edgeGap, 0, 100) || !finite(base.sheet.partGap, 0, 100) || !Number.isInteger(base.copies) || base.copies < 1 || base.copies > 10) throw new ToolProjectError('invalid-field', 'Размер листа или количество копий выходит за поддерживаемые пределы')
   const common = { length: number(size.length), width: number(size.width), thickness: number(size.thickness) }
   let project: ToolProject
   switch (root.tool) {
@@ -105,19 +105,19 @@ export const toolSelectionsAtTable = (selections: ToolSelection[], table: ToolTa
     const hostGrid = new Set(fixtureGridPoints(Math.max(table.length, table.width), table.height, table).map(p => `${p.x}:${p.y}`))
     const mountingGrid = fixtureGridPoints(project.size.width, project.size.height, table)
     if (mountingGrid.some(p => !hostGrid.has(`${p.x}:${p.y}`)))
-      throw new ToolProjectError('mounting-grid-mismatch', 'The complete vise mounting grid must fit a host table side; increase the table side length/depth or reduce the module dimensions')
+      throw new ToolProjectError('mounting-grid-mismatch', 'Полная монтажная сетка тисков должна помещаться на боковой стороне стола; увеличьте длину или глубину стола либо уменьшите модуль')
   }
   return { ...row, project }
 })
 
 /** Dimensions other than stock (and the vise grid) and quantities are snapshots. */
 export const readToolSelections = (value: unknown, table?: ToolTableSettings): { kind: 'current' | 'migration'; selections: ToolSelection[]; message: string } => {
-  if (!Array.isArray(value) || value.length > 32) throw new ToolProjectError('invalid-field', 'Select at most 32 configured tools for a table cut job')
+  if (!Array.isArray(value) || value.length > 32) throw new ToolProjectError('invalid-field', 'В одно задание на резку стола можно выбрать не более 32 настроенных изделий')
   const ids = new Set<string>(), messages = new Set<string>()
   const selections: ToolSelection[] = value.map(item => {
     const row = object(item)
     if (!row || !exactKeys(row, ['id', 'project']) || typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(row.id) || ids.has(row.id))
-      throw new ToolProjectError('invalid-field', 'Each selected tool needs a unique safe ID and a project')
+      throw new ToolProjectError('invalid-field', 'Для каждого выбранного изделия нужны уникальный безопасный идентификатор и проект')
     ids.add(row.id)
     const loaded = table ? readToolProjectAtTable(JSON.stringify(row.project), table) : readToolProject(JSON.stringify(row.project))
     if (loaded.kind === 'migration') messages.add(loaded.message)
@@ -141,9 +141,9 @@ export const readToolProject = (text: string): { project: ToolProject; kind: 'cu
     let candidate: Record<string, unknown> = { ...root, version: root?.tool === 'extension' ? 4 : root?.tool === 'square' || root?.tool === 'cornerBracket' ? 3 : root?.version }
     if (root?.tool === 'viseModule') {
       const size = object(root.size)
-      if (!size || !exactKeys(size, [...Object.keys(viseModuleDefaults), 'slotLength'])) throw new ToolProjectError('invalid-field', 'Original vise dimensions are malformed')
+      if (!size || !exactKeys(size, [...Object.keys(viseModuleDefaults), 'slotLength'])) throw new ToolProjectError('invalid-field', 'Исходные размеры модуля тисков заданы некорректно')
       const { slotLength, ...dimensions } = size
-      if (!finite(slotLength, 30, 200)) throw new ToolProjectError('invalid-field', 'Original vise slot length is outside supported limits')
+      if (!finite(slotLength, 30, 200)) throw new ToolProjectError('invalid-field', 'Исходная длина паза тисков выходит за поддерживаемые пределы')
       candidate = { ...root, version: 2, size: dimensions }
     }
     return { project: parseToolProject(JSON.stringify(candidate)), kind: 'migration', message: error.message }
@@ -159,7 +159,7 @@ export const readToolProjectAtTable = (text: string, table: ToolTableSettings): 
   return {
     project,
     kind: loaded.kind === 'migration' || changed ? 'migration' : 'current',
-    message: [loaded.message, changed ? 'Saved tool stock or mounting grid differs from this table. Review the inherited geometry before cutting; the original JSON is retained.' : ''].filter(Boolean).join(' '),
+    message: [loaded.message, changed ? 'Толщина металла или монтажная сетка сохранённой оснастки отличается от этого стола. Перед резкой проверьте унаследованную геометрию; исходный JSON сохранён.' : ''].filter(Boolean).join(' '),
   }
 }
 

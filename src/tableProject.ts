@@ -34,33 +34,33 @@ export class TableProjectError extends Error {
 export type TableProjectLoad = { kind: 'current'; config: Config } | { kind: 'migration'; config: Config; change: 'table-grid' | 'tool-geometry'; message: string }
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const invalid = (field: string, requirement: string): never => { throw new TableProjectError('invalid-field', `${field}: ${requirement}`, field) }
-const finite = (value: unknown, field: string): number => typeof value === 'number' && Number.isFinite(value) ? value : invalid(field, 'must be a finite number')
-const identifier = (value: unknown, field: string): string | number => typeof value === 'string' || typeof value === 'number' && Number.isFinite(value) ? value : invalid(field, 'must be a string or finite number')
+const finite = (value: unknown, field: string): number => typeof value === 'number' && Number.isFinite(value) ? value : invalid(field, 'должно быть конечным числом')
+const identifier = (value: unknown, field: string): string | number => typeof value === 'string' || typeof value === 'number' && Number.isFinite(value) ? value : invalid(field, 'должно быть строкой или конечным числом')
 
 const customHoles = (value: unknown): CustomHole[] => {
-  if (!Array.isArray(value)) return invalid('customHoles', 'must be an array')
+  if (!Array.isArray(value)) return invalid('customHoles', 'должно быть массивом')
   const ids = new Set<string>()
   return value.map((item, index) => {
     const field = `customHoles[${index}]`
-    if (!record(item)) return invalid(field, 'must be an object')
+    if (!record(item)) return invalid(field, 'должно быть объектом')
     const part = readPart(item.part), id = identifier(item.id, `${field}.id`)
-    if (!part || ids.has(String(id))) return invalid(field, 'requires a known part and a unique serialized ID')
+    if (!part || ids.has(String(id))) return invalid(field, 'требуются известная деталь и уникальный сохраняемый идентификатор')
     ids.add(String(id))
     const d = finite(item.d, `${field}.d`)
-    if (d <= 0) return invalid(`${field}.d`, 'must be positive')
+    if (d <= 0) return invalid(`${field}.d`, 'должно быть положительным')
     return { part, id, x: finite(item.x, `${field}.x`), y: finite(item.y, `${field}.y`), d }
   })
 }
 const removedHoles = (value: unknown): Array<RemovedHole | string> => {
-  if (!Array.isArray(value)) return invalid('removedHoles', 'must be an array')
+  if (!Array.isArray(value)) return invalid('removedHoles', 'должно быть массивом')
   return value.map((item, index) => {
     if (typeof item === 'string') return item
     const field = `removedHoles[${index}]`
-    if (!record(item)) return invalid(field, 'must be a hole ID or coordinate object')
+    if (!record(item)) return invalid(field, 'должно быть идентификатором отверстия или объектом координат')
     const part = readPart(item.part)
-    if (!part) return invalid(`${field}.part`, 'unknown part')
+    if (!part) return invalid(`${field}.part`, 'неизвестная деталь')
     const r = finite(item.r, `${field}.r`)
-    if (r <= 0) return invalid(`${field}.r`, 'must be positive')
+    if (r <= 0) return invalid(`${field}.r`, 'должно быть положительным')
     return { part, id: identifier(item.id, `${field}.id`), x: finite(item.x, `${field}.x`), y: finite(item.y, `${field}.y`), r }
   })
 }
@@ -68,59 +68,59 @@ const removedHoles = (value: unknown): Array<RemovedHole | string> => {
 /** Legacy dimensions can be reviewed, never rendered/exported through the retired grid algorithm. */
 export const parseTableProject = (text: string): TableProjectLoad => {
   let raw: unknown
-  try { raw = JSON.parse(text) } catch { throw new TableProjectError('invalid-json', 'Project JSON is invalid.') }
-  if (!record(raw)) throw new TableProjectError('invalid-json', 'A table project must be a JSON object.')
+  try { raw = JSON.parse(text) } catch { throw new TableProjectError('invalid-json', 'Некорректный JSON проекта.') }
+  if (!record(raw)) throw new TableProjectError('invalid-json', 'Проект стола должен быть объектом JSON.')
   const legacy = raw.schemaVersion === undefined
-  const messages = legacy ? ['This project used a centred grid. The corrected grid is anchored to the table edges and working surface. Saved origins and manual hole coordinates are retained; select a standard origin explicitly if needed. Review hole removals and mating parts before cutting. The old geometry is not exported.'] : []
-  if (!legacy && raw.schemaVersion !== 2 && raw.schemaVersion !== tableProjectVersion) throw new TableProjectError('unsupported-version', 'Unsupported table project version.', 'schemaVersion')
+  const messages = legacy ? ['В этом проекте использовалась центрированная сетка. Исправленная сетка привязана к краям стола и рабочей поверхности. Сохранённые начала и ручные координаты отверстий оставлены; при необходимости явно выберите стандартное начало. Перед резкой проверьте удалённые отверстия и сопрягаемые детали. Старая геометрия не экспортируется.'] : []
+  if (!legacy && raw.schemaVersion !== 2 && raw.schemaVersion !== tableProjectVersion) throw new TableProjectError('unsupported-version', 'Версия проекта стола не поддерживается.', 'schemaVersion')
   const allowed = new Set([...Object.keys(defaults), ...Object.values(projectFields), 'schemaVersion', ...(legacy ? ['skirtHoleLayout'] : [])])
-  for (const field of Object.keys(raw)) if (!allowed.has(field)) throw new TableProjectError('unknown-field', `Unknown table project field: ${field}`, field)
+  for (const field of Object.keys(raw)) if (!allowed.has(field)) throw new TableProjectError('unknown-field', `Неизвестное поле проекта стола: ${field}`, field)
   const required = legacy ? ['length', 'width'] : Object.keys(projectConfig(defaults)).filter(key => raw.schemaVersion !== 2 || key !== 'nestingTools')
-  for (const field of required) if (!Object.hasOwn(raw, field)) throw new TableProjectError('missing-field', `Missing table project field: ${field}`, field)
+  for (const field of required) if (!Object.hasOwn(raw, field)) throw new TableProjectError('missing-field', `Отсутствует поле проекта стола: ${field}`, field)
   const value = { ...raw }
   for (const [key, field] of Object.entries(projectFields)) if (Object.hasOwn(raw, field)) {
-    if (Object.hasOwn(raw, key) && raw[key] !== raw[field]) return invalid(field, 'conflicts with its internal field name')
+    if (Object.hasOwn(raw, key) && raw[key] !== raw[field]) return invalid(field, 'конфликтует с внутренним именем поля')
     value[key] = raw[field]
   }
   const config: Config = { ...defaults, customHoles: [], removedHoles: [], nestingTools: [] }
   for (const key of numericKeys) if (Object.hasOwn(value, key)) {
     const number = finite(value[key], key), { min, max } = numericBounds[key]
-    if (number < min || number > max || integerKeys.includes(key) && !Number.isInteger(number)) return invalid(key, `must be ${min}–${max}${integerKeys.includes(key) ? ' and an integer' : ''}`)
+    if (number < min || number > max || integerKeys.includes(key) && !Number.isInteger(number)) return invalid(key, `должно быть от ${min} до ${max}${integerKeys.includes(key) ? ' и целым числом' : ''}`)
     config[key] = number
   }
   for (const key of booleanKeys) if (Object.hasOwn(value, key)) {
     const flag = value[key]
-    if (typeof flag !== 'boolean') return invalid(key, 'must be a boolean')
+    if (typeof flag !== 'boolean') return invalid(key, 'должно быть логическим значением')
     config[key] = flag
   }
   if (value.units !== undefined) {
-    if (value.units !== 'mm' && value.units !== 'inch' && value.units !== 'in') return invalid('units', 'unknown display units')
+    if (value.units !== 'mm' && value.units !== 'inch' && value.units !== 'in') return invalid('units', 'неизвестные единицы отображения')
     config.units = value.units === 'in' ? 'inch' : value.units
   }
   if (value.grid !== undefined) {
     if (value.grid === 'square' || value.grid === 'grid') config.grid = 'square'
     else if (value.grid === 'staggered' || value.grid === 'stagger') config.grid = 'staggered'
-    else return invalid('holePattern', 'unknown grid pattern')
+    else return invalid('holePattern', 'неизвестная схема сетки')
   }
   if (value.engravingMode !== undefined) {
-    if (value.engravingMode !== 'through' && value.engravingMode !== 'between') return invalid('engravePattern', 'unknown engraving layout')
+    if (value.engravingMode !== 'through' && value.engravingMode !== 'between') return invalid('engravePattern', 'неизвестная схема гравировки')
     config.engravingMode = value.engravingMode
   }
   if (value.legMountStyle !== undefined) {
     if (legacy && value.legMountStyle === 'squareSocket') config.legMountStyle = 'cornerPlate'
     else if (value.legMountStyle === 'boltPattern' || value.legMountStyle === 'cornerPlate') config.legMountStyle = value.legMountStyle
-    else return invalid('legMountStyle', 'unknown mounting style')
+    else return invalid('legMountStyle', 'неизвестный способ крепления')
   }
-  if (legacy && value.skirtHoleLayout !== undefined && value.skirtHoleLayout !== 'canonical' && value.skirtHoleLayout !== 'compact') return invalid('skirtHoleLayout', 'unknown legacy layout')
+  if (legacy && value.skirtHoleLayout !== undefined && value.skirtHoleLayout !== 'canonical' && value.skirtHoleLayout !== 'compact') return invalid('skirtHoleLayout', 'неизвестная устаревшая раскладка')
   if (value.customHoles !== undefined) config.customHoles = customHoles(value.customHoles)
   if (value.removedHoles !== undefined) config.removedHoles = removedHoles(value.removedHoles)
   if (value.nestingTools !== undefined) {
-    if (raw.schemaVersion !== tableProjectVersion) return invalid('nestingTools', 'requires the current cut-job schema')
+    if (raw.schemaVersion !== tableProjectVersion) return invalid('nestingTools', 'требуется текущая схема задания на резку')
     const loaded = readToolSelections(value.nestingTools, config)
     if (loaded.kind === 'migration') messages.push(loaded.message)
     config.nestingTools = toolSelectionsAtTable(loaded.selections, config)
   }
-  if (config.tabWidth > maxTabWidth(config)) return invalid('tabWidth', 'does not fit the selected height and stock')
+  if (config.tabWidth > maxTabWidth(config)) return invalid('tabWidth', 'не помещается при выбранной высоте и толщине металла')
 
   config.preset = 'Custom'
   for (const name of ['D16', 'D28'] as const) {
@@ -140,12 +140,12 @@ export const tableProjectQuery = (config: Config) => {
 export const tableProjectFromQuery = (params: URLSearchParams): string | undefined => {
   const keys = [...params.keys()]
   const navigationParameters = new Set(['workspace', 'view', 'toolProject'])
-  if (new Set(keys).size !== keys.length) return invalid('query', 'duplicate URL parameter')
+  if (new Set(keys).size !== keys.length) return invalid('query', 'параметр URL повторяется')
   if (params.has('state')) {
-    if (keys.some(key => key !== 'state' && !navigationParameters.has(key))) return invalid('state', 'cannot be mixed with other project parameters')
+    if (keys.some(key => key !== 'state' && !navigationParameters.has(key))) return invalid('state', 'нельзя сочетать с другими параметрами проекта')
     return params.get('state') ?? ''
   }
-  if (params.has('project')) throw new TableProjectError('unsupported-version', 'The retired combined tooling catalog project is not supported. Original data has not been replaced.', 'project')
+  if (params.has('project')) throw new TableProjectError('unsupported-version', 'Снятый с поддержки объединённый каталог оснастки не поддерживается. Исходные данные не заменены.', 'project')
   if (params.has('toolProject') && !params.has('schemaVersion') && !params.has('length')) return undefined
   const fields = [...params.entries()].filter(([key]) => !navigationParameters.has(key))
   if (!fields.length) return undefined
@@ -160,7 +160,7 @@ export const tableProjectFromQuery = (params: URLSearchParams): string | undefin
     if (numbers.has(key) || key === 'schemaVersion') value[key] = text.trim() === '' ? null : Number(text)
     else if (booleans.has(key)) value[key] = text === 'true' ? true : text === 'false' ? false : text
     else if (key === 'customHoles' || key === 'removedHoles' || key === 'nestingTools') {
-      try { value[key] = JSON.parse(text) } catch { return invalid(key, 'invalid JSON in URL') }
+      try { value[key] = JSON.parse(text) } catch { return invalid(key, 'некорректный JSON в URL') }
     } else value[key] = text
   }
   return JSON.stringify(value)

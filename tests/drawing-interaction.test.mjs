@@ -91,7 +91,7 @@ test('rotated nested parts retain exact hole centres and edge coordinates', () =
 
 test('vise native radial tips and corners yield the real 15 mm setbacks', () => {
   const project = tools.toolDefaults.viseModule
-  const part = tools.projectParts(project).find(part => part.name.endsWith('top') || part.label.toLowerCase().includes('top'))
+  const part = tools.projectParts(project).find(part => part.name === 'viseTop')
   assert.ok(part)
   const features = drawing.drawingFeatures([{ part, position: { x: 0, y: 0 }, rotation: 0 }])
   const arcs = part.contours.slice(1).flat().filter(segment => segment.type === 'arc')

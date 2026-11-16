@@ -184,7 +184,7 @@ type GridSettings = Pick<Config, 'pitch' | 'margin' | 'grid'>
 /** Coordinates from a fixed datum; the far edge takes any non-pitch remainder. */
 export const fixtureGridPoints = (width: number, height: number, c: GridSettings): Point[] => {
   if (![width, height, c.pitch, c.margin].every(Number.isFinite) || width <= 0 || height <= 0 || c.pitch <= 0 || c.margin < 0)
-    throw new FabricationError('invalid-grid', 'Grid dimensions must be finite and positive; the origin cannot be negative.')
+    throw new FabricationError('invalid-grid', 'Размеры сетки должны быть конечными положительными числами; начало сетки не может быть отрицательным.')
   const rowPitch = c.grid === 'staggered' ? c.pitch / 2 : c.pitch
   const rows = Math.max(0, Math.floor((height - 2 * c.margin) / rowPitch + epsilon) + 1)
   return Array.from({ length: rows }, (_, row) => {
@@ -281,7 +281,7 @@ const relievedPolygon = (vertices: Point[], c: Config, radiusCap?: (vertex: Poin
 }
 
 const topEdgeCenters = (span: number, c: Config, shortSide = false) => {
-  if (!Number.isFinite(c.tabWidth) || c.tabWidth <= 0) throw new FabricationError('tab-width', 'Locating tabs need a positive width.')
+  if (!Number.isFinite(c.tabWidth) || c.tabWidth <= 0) throw new FabricationError('tab-width', 'Ширина установочных шипов должна быть положительной.')
   const inset = 80 + (shortSide ? c.thickness : 0)
   const regularCount = Math.round((span - 2 * inset) / 250) + 1
   const fittingCount = Math.floor((span - (shortSide ? 2 * c.thickness : 0)) / c.tabWidth)
@@ -429,28 +429,28 @@ export const ribAccessHoleSpec = (c: Config) => {
 export const fabricationError = (c: Config): FabricationError | undefined => {
   if (![c.holeDiameter, c.pitch, c.margin, c.length, c.width, c.height, c.thickness].every(Number.isFinite)
     || Math.min(c.holeDiameter, c.pitch, c.length, c.width, c.height, c.thickness) <= 0)
-    return new FabricationError('invalid-grid', 'Table and grid dimensions must be finite and positive.')
+    return new FabricationError('invalid-grid', 'Размеры стола и сетки должны быть конечными положительными числами.')
   const spacing = c.grid === 'staggered' ? c.pitch / Math.SQRT2 : c.pitch
   if (spacing < c.holeDiameter + minimumHoleWeb - epsilon)
-    return new FabricationError('grid-spacing', 'The grid leaves insufficient metal between holes. Increase the pitch or reduce the hole diameter.', { spacing, minimum: c.holeDiameter + minimumHoleWeb })
+    return new FabricationError('grid-spacing', 'Между отверстиями сетки остаётся недостаточно металла. Увеличьте шаг или уменьшите диаметр отверстий.', { spacing, minimum: c.holeDiameter + minimumHoleWeb })
   if (c.margin < c.holeDiameter / 2 + minimumHoleWeb || 2 * c.margin > Math.min(c.length, c.width))
-    return new FabricationError('grid-origin', 'The grid origin must leave a safe edge web and at least one row on the top plate.', { margin: c.margin })
+    return new FabricationError('grid-origin', 'Начало сетки должно оставлять безопасную перемычку у края и хотя бы один ряд на столешнице.', { margin: c.margin })
   if (c.skirtHoles && (c.margin < c.thickness + c.holeDiameter / 2 + minimumHoleWeb - epsilon || 2 * c.margin > c.height))
-    return new FabricationError('skirt-clearance', 'The fixed skirt grid does not fit this stock or height. Increase the grid origin or skirt height, or reduce the stock thickness. Rows will not be shifted automatically.', { margin: c.margin, minimum: c.thickness + c.holeDiameter / 2 + minimumHoleWeb, height: c.height })
+    return new FabricationError('skirt-clearance', 'Фиксированная сетка юбки не помещается при этой толщине или высоте. Увеличьте отступ сетки или высоту юбки либо уменьшите толщину металла. Ряды не будут смещены автоматически.', { margin: c.margin, minimum: c.thickness + c.holeDiameter / 2 + minimumHoleWeb, height: c.height })
   if (!Number.isFinite(c.tabWidth) || c.tabWidth < 5 || c.tabWidth > Math.floor(Math.min(c.height - c.thickness, c.length, c.width) / 2) - 5)
-    return new FabricationError('tab-width', 'The locating tabs do not fit the selected table height and stock. Increase the height, reduce the stock thickness or adjust the tab width.')
+    return new FabricationError('tab-width', 'Установочные шипы не помещаются при выбранной высоте стола и толщине металла. Увеличьте высоту, уменьшите толщину или измените ширину шипов.')
   const positions = framePositions(c)
   if ([positions.short, positions.long].some(stations => stations.some((station, index) => stations.slice(index + 1).some(other => Math.abs(station - other) < epsilon))))
-    return new FabricationError('cut-clearance', 'There are too few distinct grid gaps for the selected ribs. Change rib spacing or the tooling grid before fabrication.')
+    return new FabricationError('cut-clearance', 'Для выбранных рёбер недостаточно отдельных промежутков сетки. Перед изготовлением измените шаг рёбер или сетку оснастки.')
   if (c.ribs && (!ribTabs(c.length, positions.short, c).length || !ribTabs(c.width, positions.long, c).length))
-    return new FabricationError('cut-clearance', 'No locating tab fits between the frame joints. Reduce the tab width or change the rib spacing before fabrication.')
-  if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return new FabricationError('leg-plates', 'The leg plates, joints or mounting holes do not fit the frame. Adjust the conflicting dimensions before fabrication export.')
+    return new FabricationError('cut-clearance', 'Между соединениями рамы не помещается установочный шип. Перед изготовлением уменьшите ширину шипа или измените шаг рёбер.')
+  if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return new FabricationError('leg-plates', 'Пластины ножек, соединения или монтажные отверстия не помещаются в раме. Перед экспортом измените конфликтующие размеры.')
   const access = ribAccessHoleSpec(c)
-  if (access && !access.valid) return new FabricationError('rib-access', `Rib access holes do not fit. Maximum diameter is ${access.maxDiameter.toFixed(2)} mm for the current ribs. Reduce the hole diameter or increase the available rib web. Fabrication export is disabled.`, { maximum: access.maxDiameter })
+  if (access && !access.valid) return new FabricationError('rib-access', `Технологические отверстия в рёбрах не помещаются. Для текущих рёбер максимальный диаметр — ${access.maxDiameter.toFixed(2)} мм. Уменьшите диаметр или увеличьте доступную перемычку ребра. Экспорт для изготовления отключён.`, { maximum: access.maxDiameter })
   const parts = makeParts(c)
   // No manufacturing cut may touch or cross the outline, including its tab notches.
   for (const part of parts) if (!internalCutsInsideOuter(part, minimumHoleWeb))
-    return new FabricationError('cut-clearance', `${part.label} has an internal cut too close to or crossing its outer contour. Adjust the ribs, tabs or stock before fabrication.`)
+    return new FabricationError('cut-clearance', `У детали «${part.label}» внутренний вырез слишком близок к внешнему контуру или пересекает его. Перед изготовлением измените рёбра, шипы или толщину металла.`)
   if (c.legMounts && c.legMountStyle === 'boltPattern') {
     for (const part of parts.filter(part => part.name === 'longSkirt' || part.name === 'shortSkirt')) {
       for (const [index, hole] of part.holes.entries()) {
@@ -458,13 +458,13 @@ export const fabricationError = (c: Config): FabricationError | undefined => {
         if (!pointInContour(hole, part.contours[0]) || nativePointContourDistance(hole, part.contours[0]) < hole.d / 2 + mountHoleWeb - epsilon
           || part.contours.slice(1).some(cut => pointInContour(hole, cut) || nativePointContourDistance(hole, cut) < hole.d / 2 + mountHoleWeb - epsilon)
           || part.holes.some((other, otherIndex) => otherIndex !== index && distance(hole, other) < (hole.d + other.d) / 2 + mountHoleWeb - epsilon))
-          return new FabricationError('leg-bolt-clearance', `${part.label} bolt pattern violates the material web or another cut. Adjust the pattern before fabrication export.`, { hole: hole.id })
+          return new FabricationError('leg-bolt-clearance', `Схема болтов детали «${part.label}» нарушает перемычку материала или пересекается с другим вырезом. Перед экспортом измените схему.`, { hole: hole.id })
       }
     }
   }
   if (c.customHoles.length) {
     if (new Set(c.customHoles.map(hole => String(hole.id))).size !== c.customHoles.length)
-      return new FabricationError('custom-hole', 'Custom holes require unique serialized IDs.')
+      return new FabricationError('custom-hole', 'Пользовательским отверстиям нужны уникальные сохраняемые идентификаторы.')
 
     for (const custom of c.customHoles) {
       const hole: Hole = { ...custom, id: `custom:${String(custom.id)}`, kind: 'custom' }
@@ -475,7 +475,7 @@ export const fabricationError = (c: Config): FabricationError | undefined => {
         || !pointInContour(hole, part.contours[0]) || nativePointContourDistance(hole, part.contours[0]) < web - epsilon
         || part.contours.slice(1).some(cut => pointInContour(hole, cut) || nativePointContourDistance(hole, cut) < web - epsilon)
         || part.holes.some(other => other.id !== hole.id && distance(hole, other) < (hole.d + other.d) / 2 + minimumHoleWeb - epsilon))
-        return new FabricationError('custom-hole', 'A custom hole is outside its active part, overlaps another cut or leaves insufficient metal. Adjust or remove it before fabrication.', { part: custom.part, id: String(custom.id) })
+        return new FabricationError('custom-hole', 'Пользовательское отверстие находится за пределами детали, пересекается с другим вырезом или оставляет недостаточно металла. Перед изготовлением измените или удалите его.', { part: custom.part, id: String(custom.id) })
     }
   }
 }
@@ -644,14 +644,14 @@ const definition = (c: Config): Array<{ name: PartName; width: number; height: n
   const positions = framePositions(c)
   const cornerPlate = legCornerPlateSpec(c)
   return [
-    { name: 'top', width: c.length, height: c.width, thickness: c.thickness, count: 1, label: 'TOP PLATE', outline: topOutline(c), grid: true },
-    { name: 'longSkirt', width: c.length, height: c.height, thickness: c.thickness, count: 2, label: 'LONG SKIRT', outline: skirtOutline(c.length, c, false), grid: c.skirtHoles },
-    { name: 'shortSkirt', width: c.width, height: c.height, thickness: c.thickness, count: 2, label: 'SHORT SKIRT', outline: skirtOutline(c.width, c, true), grid: c.skirtHoles },
-    { name: 'longRib', width: c.length, height: c.height - c.thickness, thickness: c.thickness, count: positions.long.length, label: 'LONG RIB', outline: ribOutline(c.length, c, true), grid: false },
-    { name: 'shortRib', width: c.width, height: c.height - c.thickness, thickness: c.thickness, count: positions.short.length, label: 'SHORT RIB', outline: ribOutline(c.width, c, false), grid: false },
-    { name: 'legCornerPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `LEG CORNER PLATE T${c.thickness}`, outline: cornerPlate ? cornerPlateOutline(c, cornerPlate) : [], grid: false },
-    { name: 'legJumper', width: cornerPlate?.jumperWidth ?? 0, height: cornerPlate?.jumperLength ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `LEG JUMPER ${cornerPlate?.jumperLength ?? 0}X${cornerPlate?.jumperWidth ?? 0} T${c.thickness}`, outline: cornerPlate ? legJumperOutline(c, cornerPlate) : [], grid: false },
-    { name: 'legMountPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: c.thickness, count: cornerPlate ? 4 : 0, label: `LEG MOUNT PLATE T${c.thickness}`, outline: cornerPlate ? legMountPlateOutline(cornerPlate.size) : [], grid: false },
+    { name: 'top', width: c.length, height: c.width, thickness: c.thickness, count: 1, label: 'СТОЛЕШНИЦА', outline: topOutline(c), grid: true },
+    { name: 'longSkirt', width: c.length, height: c.height, thickness: c.thickness, count: 2, label: 'ДЛИННАЯ ЮБКА', outline: skirtOutline(c.length, c, false), grid: c.skirtHoles },
+    { name: 'shortSkirt', width: c.width, height: c.height, thickness: c.thickness, count: 2, label: 'КОРОТКАЯ ЮБКА', outline: skirtOutline(c.width, c, true), grid: c.skirtHoles },
+    { name: 'longRib', width: c.length, height: c.height - c.thickness, thickness: c.thickness, count: positions.long.length, label: 'ПРОДОЛЬНОЕ РЕБРО', outline: ribOutline(c.length, c, true), grid: false },
+    { name: 'shortRib', width: c.width, height: c.height - c.thickness, thickness: c.thickness, count: positions.short.length, label: 'ПОПЕРЕЧНОЕ РЕБРО', outline: ribOutline(c.width, c, false), grid: false },
+    { name: 'legCornerPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `УГЛОВАЯ ПЛАСТИНА НОЖКИ T${c.thickness}`, outline: cornerPlate ? cornerPlateOutline(c, cornerPlate) : [], grid: false },
+    { name: 'legJumper', width: cornerPlate?.jumperWidth ?? 0, height: cornerPlate?.jumperLength ?? 0, thickness: cornerPlate?.thickness ?? c.thickness, count: cornerPlate ? 4 : 0, label: `ПЕРЕМЫЧКА НОЖКИ ${cornerPlate?.jumperLength ?? 0}X${cornerPlate?.jumperWidth ?? 0} T${c.thickness}`, outline: cornerPlate ? legJumperOutline(c, cornerPlate) : [], grid: false },
+    { name: 'legMountPlate', width: cornerPlate?.size ?? 0, height: cornerPlate?.size ?? 0, thickness: c.thickness, count: cornerPlate ? 4 : 0, label: `МОНТАЖНАЯ ПЛАСТИНА НОЖКИ T${c.thickness}`, outline: cornerPlate ? legMountPlateOutline(cornerPlate.size) : [], grid: false },
   ]
 }
 

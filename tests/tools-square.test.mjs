@@ -77,7 +77,7 @@ test('both tool project types round-trip without changing keys or accepting the 
     assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, size: { ...input.size, unknown: 1 } })))
     assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, tool: input.tool === 'square' ? 'extension' : 'square' })))
   }
-  assert.throws(() => projects.parseToolProject(JSON.stringify({ ...projects.defaultToolProject, version: 1 })), /retired box design/)
+  assert.throws(() => projects.parseToolProject(JSON.stringify({ ...projects.defaultToolProject, version: 1 })), /снятая с поддержки коробчатая конструкция/)
 })
 
 test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and reject stale exports', async () => {
@@ -88,9 +88,9 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   assert.equal(result.unplaced.length, 0)
   assert.equal(projects.validProjectLayout(project, result, key), true)
   const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key, { thickness: project.size.thickness }).generateAsync({ type: 'nodebuffer' }))
-  assert.ok(archive.file('parts/square_3pcs.dxf'))
+  assert.ok(archive.file('детали/square_3шт.dxf'))
   assert.deepEqual(JSON.parse(await archive.file('project.json').async('string')), project)
-  const assembly = JSON.parse(await archive.file('assembly.json').async('string'))
+  const assembly = JSON.parse(await archive.file('сборка.json').async('string'))
   assert.equal(assembly.tool, 'square')
   assert.equal(assembly.placements.length, 1)
   assert.equal(assembly.joinery, undefined)
@@ -98,7 +98,7 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   assert.equal(layout.placements.length, 3)
   let circleCount = 0, lineCount = 0
   for (const sheet of result.sheets) {
-    const text = await archive.file(`sheets/Sheet_${sheet.index + 1}.dxf`).async('string')
+    const text = await archive.file(`листы/Лист_${sheet.index + 1}.dxf`).async('string')
     assert.equal(text, dxf.nativeDxfForNestedSheet(sheet.placements))
     const parsed = new DxfParser().parseSync(text)
     circleCount += parsed.entities.filter(entity => entity.type === 'CIRCLE').length
@@ -110,7 +110,7 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   assert.equal(projects.validProjectLayout(projects.defaultToolProject, result, key), false)
   const tampered = structuredClone(result)
   tampered.placements[0].part.holes.pop()
-  assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: project.size.thickness }), /stale or invalid/)
+  assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: project.size.thickness }), /неполна, устарела/)
   const strip = new DxfParser().parseSync(toolExport.toolStripDxf(project, { thickness: project.size.thickness }))
   assert.equal(strip.entities.filter(entity => entity.type === 'CIRCLE').length, 9)
   assert.equal(strip.entities.filter(entity => entity.type === 'LINE').length, 18)

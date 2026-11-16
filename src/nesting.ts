@@ -279,7 +279,7 @@ const measureResult = (result: NestingResult, options: NestingOptions, polygons:
 function* searchNestingCore(parts: readonly Part[], options: NestingOptions): Generator<NestingResult> {
   if (!validOptions(options) || parts.some(p => !Number.isInteger(p.count) || p.count < 0) || parts.reduce((n, p) => n + p.count, 0) > 256) {
     const invalid = emptyResult()
-    invalid.validation = { valid: false, violations: [{ sheet: -1, message: 'Invalid nesting options or part count (limit 256)' }] }
+    invalid.validation = { valid: false, violations: [{ sheet: -1, message: 'Некорректные параметры раскладки или количество деталей превышает предел 256' }] }
     yield invalid
     return
   }
@@ -445,7 +445,7 @@ export const nestParts = (parts: readonly Part[], options: NestingOptions): Nest
 /** Validate original LINE/ARC boundaries analytically; fine polygons supply topology/containment checks. */
 export const validateNesting = (placements: readonly NestingPlacement[], options: NestingOptions): NestingValidation => {
   const violations: NestingViolation[] = []
-  if (!validOptions(options)) return { valid: false, violations: [{ sheet: -1, message: 'Invalid nesting options' }] }
+  if (!validOptions(options))    return { valid: false, violations: [{ sheet: -1, message: 'Некорректные параметры раскладки' }] }
   const tolerance = Math.min((options.arcTolerance ?? defaultArcTolerance) / 4, 0.01)
   const maxSheets = options.maxSheets ?? 1
   const shapes = placements.map(placement => ({ placement, shape: makeShape(placement.part, placement.rotation, tolerance),
@@ -455,12 +455,12 @@ export const validateNesting = (placements: readonly NestingPlacement[], options
     if (!shape || !finite(placement.translation.x) || !finite(placement.translation.y)
       || !(options.rotations ?? rotations).includes(placement.rotation)
       || placement.sheet < 0 || placement.sheet >= maxSheets || !Number.isInteger(placement.sheet)) {
-      violations.push({ sheet: placement.sheet, message: `Invalid placement for ${placement.part.name}` })
+      violations.push({ sheet: placement.sheet, message: `Некорректное размещение детали ${placement.part.name}` })
       continue
     }
     const box = nativeContourBounds(native)
     const edge = options.edgeClearance ?? defaultEdgeClearance
-    if (box.minX < edge - epsilon || box.minY < edge - epsilon || box.maxX > options.sheet.width - edge + epsilon || box.maxY > options.sheet.height - edge + epsilon) violations.push({ sheet: placement.sheet, message: `${placement.part.name} violates sheet edge clearance` })
+    if (box.minX < edge - epsilon || box.minY < edge - epsilon || box.maxX > options.sheet.width - edge + epsilon || box.maxY > options.sheet.height - edge + epsilon) violations.push({ sheet: placement.sheet, message: `Деталь ${placement.part.name} нарушает отступ от края листа` })
   }
   const gap = options.partClearance ?? defaultPartClearance
   for (let index = 0; index < shapes.length; index += 1) for (let other = index + 1; other < shapes.length; other += 1) {
@@ -473,7 +473,7 @@ export const validateNesting = (placements: readonly NestingPlacement[], options
     const dy = Math.max(aPolygon.box.minY - bPolygon.box.maxY, bPolygon.box.minY - aPolygon.box.maxY, 0)
     if ((dx > epsilon || dy > epsilon) && Math.hypot(dx, dy) > gap + aPolygon.error + bPolygon.error) continue
     if (pointInPolygon(aPolygon.points[0], bPolygon.points) || pointInPolygon(bPolygon.points[0], aPolygon.points)
-      || nativeContourDistance(a.native, b.native) < Math.max(epsilon, gap - epsilon)) violations.push({ sheet: a.placement.sheet, message: `${a.placement.part.name} and ${b.placement.part.name} overlap or violate part clearance` })
+      || nativeContourDistance(a.native, b.native) < Math.max(epsilon, gap - epsilon)) violations.push({ sheet: a.placement.sheet, message: `Детали ${a.placement.part.name} и ${b.placement.part.name} пересекаются или нарушают междетальный зазор` })
   }
   return { valid: violations.length === 0, violations }
 }

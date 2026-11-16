@@ -13,10 +13,10 @@ export const squareLimits: Record<keyof SquareConfig, { min: number; max: number
 export function squareParts(config: SquareConfig): FabricationPart<'square'>[] {
   for (const key of Object.keys(squareLimits) as Array<keyof SquareConfig>) {
     const value = config[key], { min, max } = squareLimits[key]
-    if (!Number.isFinite(value) || value < min || value > max) throw new Error(`Square ${key} must be between ${min} and ${max} mm`)
+    if (!Number.isFinite(value) || value < min || value > max) throw new Error(`Параметр угольника ${key} должен быть от ${min} до ${max} мм`)
   }
   const { length, width, armWidth, thickness, holeDiameter, endOffset } = config
-  if (armWidth >= Math.min(length, width)) throw new Error('Square arms must leave an open inside corner')
+  if (armWidth >= Math.min(length, width)) throw new Error('Плечи угольника должны оставлять открытый внутренний угол')
   const vertices = [{ x: 0, y: 0 }, { x: length, y: 0 }, { x: length, y: armWidth }, { x: armWidth, y: armWidth }, { x: armWidth, y: width }, { x: 0, y: width }]
   const contour: Contour = vertices.map((from, index) => ({ type: 'line', from, to: vertices[(index + 1) % vertices.length] }))
   const holes: Hole[] = [
@@ -25,8 +25,8 @@ export function squareParts(config: SquareConfig): FabricationPart<'square'>[] {
   const web = 5
   for (const [index, hole] of holes.entries()) {
     const inside = hole.x > 0 && hole.y > 0 && hole.x < length && hole.y < width && (hole.x < armWidth || hole.y < armWidth)
-    if (!inside || nativePointContourDistance(hole, contour) < hole.d / 2 + web - 1e-7) throw new Error('Square holes need at least 5 mm of material to every cut edge')
-    if (holes.slice(index + 1).some(other => Math.hypot(other.x - hole.x, other.y - hole.y) < hole.d + web)) throw new Error('Square mounting holes are too close together')
+    if (!inside || nativePointContourDistance(hole, contour) < hole.d / 2 + web - 1e-7) throw new Error('От отверстий угольника до каждой кромки реза должно оставаться не менее 5 мм металла')
+    if (holes.slice(index + 1).some(other => Math.hypot(other.x - hole.x, other.y - hole.y) < hole.d + web)) throw new Error('Монтажные отверстия угольника расположены слишком близко друг к другу')
   }
-  return [{ name: 'square', label: 'Flat welding square', width: length, height: width, thickness, count: 1, holes, slots: [], contours: [contour] }]
+  return [{ name: 'square', label: 'Плоский сварочный угольник', width: length, height: width, thickness, count: 1, holes, slots: [], contours: [contour] }]
 }

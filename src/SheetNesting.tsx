@@ -24,7 +24,7 @@ type Props = {
   batchLabel?: string; maxGap?: number
 }
 
-export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units: unitSystem, onChange, onNotice, render3D, onExport, onRun, getEngravings, isLayoutValid, batchLabel = 'Identical items in this cutting batch', maxGap = 1000 }: Props) {
+export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units: unitSystem, onChange, onNotice, render3D, onExport, onRun, getEngravings, isLayoutValid, batchLabel = 'Одинаковые изделия в партии резки', maxGap = 1000 }: Props) {
   const [snapshot, setSnapshot] = useState<{ key: string; run: NestingRun } | null>(null)
   const [stats, setStats] = useState<{ attempts: number; elapsedMs: number; search: NestingResult['stats'] | null }>({ attempts: 0, elapsedMs: 0, search: null })
   const [status, setStatus] = useState<'running' | 'pausing' | 'paused' | 'done' | 'error'>('running')
@@ -48,7 +48,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
     const timer = window.setTimeout(() => {
       let worker: Worker
       try { worker = new Worker(new URL('./nesting.worker.ts', import.meta.url), { type: 'module' }) }
-      catch { setError({ code: 'worker-unavailable', message: 'This browser cannot start the sheet calculation.' }); setStatus('error'); return }
+      catch { setError({ code: 'worker-unavailable', message: 'Браузер не может запустить расчёт раскладки.' }); setStatus('error'); return }
       const state = { worker, running: true, busy: true, exhausted: false }
       control.current = state
       worker.onmessage = (event: MessageEvent<NestingResponse>) => {
@@ -67,7 +67,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
           worker.postMessage({ type: 'continue', key } satisfies NestingRequest)
         } else { state.running = false; setStatus('paused') }
       }
-      worker.onerror = () => { if (active) { state.running = false; setError({ code: 'worker-failed', message: 'Calculation worker failed. You can keep the last verified result or restart.' }); setStatus('error') } }
+      worker.onerror = () => { if (active) { state.running = false; setError({ code: 'worker-failed', message: 'Сбой фонового расчёта. Можно сохранить последний проверенный результат или перезапустить расчёт.' }); setStatus('error') } }
       worker.postMessage({ type: 'start', key, job: sourceRef.current } satisfies NestingRequest)
     }, 250)
     return () => { active = false; clearTimeout(timer); control.current?.worker.terminate(); control.current = null }
@@ -93,50 +93,50 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const metric = result?.metrics.sheets[selected]
   const features = useMemo(() => sheet?.placements.map(item => drawingFeatures([{ part: item.part, position: item.translation, rotation: item.rotation }])) ?? [], [sheet])
   const focused = useMemo(() => result && sheet ? { ...result, sheets: [sheet], placements: sheet.placements } : undefined, [result, sheet])
-  const units = unitSystem === 'mm' ? 'mm' : 'in'
+  const units = unitSystem === 'mm' ? 'мм' : 'дюйм'
   const complete = status !== 'error' && run?.phase === 'nesting' && result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(run, key))
   const running = status === 'running' || status === 'pausing'
   const spacingField = (field: 'edgeGap' | 'partGap', label: string) => <NumberField label={`${label} (${units})`}
     aria-label={label} value={display(settings[field], unitSystem, 2)} min={0} max={Number(display(maxGap, unitSystem, 2))} step={unitSystem === 'mm' ? 0.5 : 0.01}
     onValue={value => { if (value !== Number(display(settings[field], unitSystem, 2))) return onChange({ [field]: Math.max(0, Math.min(maxGap, readDisplay(value, unitSystem))) }) }} />
 
-  const statusLabel = status === 'running' ? 'Optimizing' : status === 'pausing' ? 'Finishing pass' : status === 'paused' ? 'Paused' : error?.code === 'capacity-unavailable' ? 'No complete table layout' : status === 'error' ? 'Stopped' : complete ? 'Finished' : 'Search exhausted'
+  const statusLabel = status === 'running' ? 'Оптимизация' : status === 'pausing' ? 'Завершение прохода' : status === 'paused' ? 'Пауза' : error?.code === 'capacity-unavailable' ? 'Нет полной раскладки стола' : status === 'error' ? 'Остановлено' : complete ? 'Готово' : 'Варианты исчерпаны'
   const inspector = <>
-      <header>{wide && <h3 id="nesting-title">Sheet nesting</h3>}<span className="nesting-status">{statusLabel}</span></header>
-      <p className="nesting-summary" role="status">{error ? error.code === 'capacity-unavailable' ? 'No complete table layout. Tools were not placed; export is disabled.' : 'Calculation failed. Export is disabled.' : run?.phase === 'capacity' ? 'Calculating table-only capacity. Selected tools are not yet placed; export is disabled.' : result ? !result.validation.valid ? 'Validation failed. Export is disabled.' : result.unplaced.length ? `${result.unplaced.length} parts not placed on the available sheets. Export is disabled.` : !complete ? 'The layout cannot be exported. Restart with the current project settings.' : `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Calculating the first verified layout…'}</p>
+      <header>{wide && <h3 id="nesting-title">Раскладка на листах</h3>}<span className="nesting-status">{statusLabel}</span></header>
+      <p className="nesting-summary" role="status">{error ? error.code === 'capacity-unavailable' ? 'Полная раскладка стола не найдена. Оснастка не размещена; экспорт недоступен.' : 'Расчёт завершился с ошибкой. Экспорт недоступен.' : run?.phase === 'capacity' ? 'Проверяется вместимость только для стола. Выбранная оснастка ещё не размещена; экспорт недоступен.' : result ? !result.validation.valid ? 'Раскладка не прошла проверку. Экспорт недоступен.' : result.unplaced.length ? `Не размещено деталей: ${result.unplaced.length}. Экспорт недоступен.` : !complete ? 'Эту раскладку нельзя экспортировать. Перезапустите расчёт с текущими параметрами проекта.' : `Деталей: ${result.placements.length} · листов: ${result.sheets.length}` : 'Рассчитывается первая проверенная раскладка…'}</p>
       {error && <p role="alert" className="nesting-error" data-error-code={error.code}>{error.message}</p>}
       {result && !result.validation.valid && <p className="nesting-error">{result.validation.violations[0]?.message}</p>}
-      {run?.phase === 'nesting' && run.stock.kind === 'table-offcuts' && <p className="nesting-hint">Table-only capacity: {run.stock.baseline.sheets.length} sheet(s). No extra sheets for tools. Table parts may be rearranged. Export requires every selected tool in full.</p>}
-      {run?.phase === 'nesting' && result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>{result.unplaced.length} parts are missing. {status === 'done' ? 'Search exhausted.' : status === 'paused' ? 'Search paused.' : status === 'error' ? 'Calculation stopped.' : 'Search still running.'} The table-only sheet limit does not grow when tools are added. No partial job can be exported.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
-      <button className="nesting-export" disabled={!complete} onClick={() => { if (run?.phase === 'nesting') void onExport({ ...run, result: { ...run.result, stats: stats.search ?? run.result.stats } }).catch(error => onNotice(error instanceof Error ? error.message : 'Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet ZIP</button>
+      {run?.phase === 'nesting' && run.stock.kind === 'table-offcuts' && <p className="nesting-hint">Вместимость только для стола: {run.stock.baseline.sheets.length} лист. Дополнительные листы для оснастки не добавляются. Детали стола могут быть переставлены. Для экспорта нужно полностью разместить всю выбранную оснастку.</p>}
+      {run?.phase === 'nesting' && result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>Не хватает деталей: {result.unplaced.length}. {status === 'done' ? 'Варианты исчерпаны.' : status === 'paused' ? 'Поиск приостановлен.' : status === 'error' ? 'Расчёт остановлен.' : 'Поиск продолжается.'} При добавлении оснастки лимит листов для стола не увеличивается. Частичное задание нельзя экспортировать.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
+      <button className="nesting-export" disabled={!complete} onClick={() => { if (run?.phase === 'nesting') void onExport({ ...run, result: { ...run.result, stats: stats.search ?? run.result.stats } }).catch(error => onNotice(error instanceof Error ? error.message : 'Не удалось экспортировать раскладку. Пересчитайте её и повторите попытку.')) }}><Icon name="download" size={16} />Скачать ZIP с листами</button>
       {result && result.sheets.length > 0 && <>
-        <label className="field"><span>Preview sheet</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Sheet {i + 1} · {s.placements.length} parts</option>)}</select></label>
+        <label className="field"><span>Предпросмотр листа</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Лист {i + 1} · деталей: {s.placements.length}</option>)}</select></label>
         <dl className="nesting-metrics">
-          <div><dt>Outline coverage</dt><dd>{(100 * result.outlineArea / (result.sheets.length * settings.length * settings.width)).toFixed(1)}%</dd></div>
-          <div><dt>Area lower bound</dt><dd>{result.metrics.sheetLowerBound} sheet{result.metrics.sheetLowerBound === 1 ? '' : 's'}</dd></div>
-          {metric && <div><dt>Clear edge strip, this sheet</dt><dd>{display(metric.remnant.width, unitSystem, 1)} × {display(metric.remnant.height, unitSystem, 1)} {units}</dd></div>}
+          <div><dt>Покрытие по контуру</dt><dd>{(100 * result.outlineArea / (result.sheets.length * settings.length * settings.width)).toFixed(1)}%</dd></div>
+          <div><dt>Нижняя граница по площади</dt><dd>{result.metrics.sheetLowerBound} лист.</dd></div>
+          {metric && <div><dt>Свободная краевая полоса на листе</dt><dd>{display(metric.remnant.width, unitSystem, 1)} × {display(metric.remnant.height, unitSystem, 1)} {units}</dd></div>}
         </dl>
       </>}
       <div className="nesting-search">
-        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Pause search</button> : <button disabled={status !== 'paused'} onClick={resume}>Continue improving</button>}<button onClick={() => setRetry(value => value + 1)}>Restart</button></div>
-        <p>{stats.attempts} orders evaluated · {(stats.elapsedMs / 1000).toFixed(1)} s compute time.</p>
+        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Приостановить</button> : <button disabled={status !== 'paused'} onClick={resume}>Продолжить улучшение</button>}<button onClick={() => setRetry(value => value + 1)}>Перезапустить</button></div>
+        <p>Проверено порядков: {stats.attempts} · время расчёта: {(stats.elapsedMs / 1000).toFixed(1)} с.</p>
       </div>
-      <details><summary>Spacing & batch</summary>
-        <div className="fields">{spacingField('edgeGap', 'Sheet edge gap')}{spacingField('partGap', 'Part gap')}</div>
+      <details><summary>Зазоры и партия</summary>
+        <div className="fields">{spacingField('edgeGap', 'Зазор от края листа')}{spacingField('partGap', 'Зазор между деталями')}</div>
         <NumberField label={batchLabel} min={1} max={10} step={1} value={settings.copies} onValue={value => onChange({ copies: Math.max(1, Math.min(10, Math.floor(value))) })} />
-        <p>Rotations are chosen automatically: quarter turns first, then 15° refinements within the search budget. Batch affects sheet nesting only, not the assembled model or individual part geometry. Maximum 256 parts and 32 sheets. Holes are not used for placing other parts.</p>
+        <p>Повороты выбираются автоматически: сначала на 90°, затем с шагом 15° в пределах поиска. Размер партии влияет только на раскладку по листам, но не на собранную модель и геометрию отдельной детали. Допускается не более 256 деталей и 32 листов. В отверстия другие детали не вкладываются.</p>
       </details>
-      <details><summary>Layout & cutting notes</summary>
-        {result && <p className="nesting-hint">Coverage includes holes. Green in 2D marks an empty edge strip, not all reusable offcuts. {complete && result.sheets.length === result.metrics.sheetLowerBound ? 'Sheet count meets the area lower bound; offcut shape can still improve.' : 'The lower bound is not a promise that this sheet count is feasible.'}</p>}
-      <p className="nesting-hint">Native LINE / ARC / CIRCLE output, placement manifest and project settings. Contour search is heuristic, not a global optimum proof. Confirm kerf, lead-ins, clamps and cutting order in CAM.</p>
-        <p>Only Pause stops an active search early. The search ends after its order limit; export requires every part to be placed.</p>
+      <details><summary>Раскладка и резка</summary>
+        {result && <p className="nesting-hint">Площадь покрытия включает отверстия. Зелёным в 2D показана свободная краевая полоса, а не все пригодные остатки. {complete && result.sheets.length === result.metrics.sheetLowerBound ? 'Число листов достигло нижней границы по площади, но форму остатков ещё можно улучшить.' : 'Нижняя граница не гарантирует, что такого числа листов достаточно.'}</p>}
+      <p className="nesting-hint">Экспорт содержит исходные сущности LINE / ARC / CIRCLE, перечень размещений и параметры проекта. Контурный поиск эвристический и не доказывает глобальную оптимальность. Проверьте ширину реза, врезания, зажимы и порядок резки в CAM.</p>
+        <p>Досрочно остановить активный поиск можно только кнопкой «Приостановить». Поиск завершится после исчерпания лимита порядков; для экспорта должны быть размещены все детали.</p>
       </details>
   </>
 
   return <div className="sheet-workspace">
     <div className="sheet-canvas">
       {focused ? mode === '3d' ? render3D(focused)
-        : <DrawingViewport bounds={{ width: settings.length, height: settings.width }} parts={features} geometryKey={`${selected}:${JSON.stringify(features)}`} units={unitSystem} label={`Sheet ${selected + 1} cutting layout`} initialFocus="overview">
+        : <DrawingViewport bounds={{ width: settings.length, height: settings.width }} parts={features} geometryKey={`${selected}:${JSON.stringify(features)}`} units={unitSystem} label={`Раскладка резки на листе ${selected + 1}`} initialFocus="overview">
           {focusedPart => <g>
             <rect className="stock-outline" x={0} y={0} width={settings.length} height={settings.width} />
             <rect className="stock-margin" x={settings.edgeGap} y={settings.edgeGap} width={Math.max(0, settings.length - 2 * settings.edgeGap)} height={Math.max(0, settings.width - 2 * settings.edgeGap)} />
@@ -149,15 +149,15 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
             </g>)}
           </g>}
         </DrawingViewport>
-        : <div className="three-loading" role="status">{status === 'error' ? 'Calculation failed' : result ? 'No parts placed' : 'Preparing a first layout…'}</div>}
+        : <div className="three-loading" role="status">{status === 'error' ? 'Сбой расчёта' : result ? 'Детали не размещены' : 'Подготовка первой раскладки…'}</div>}
       <div className="sheet-view-tools">
         <button aria-pressed={mode === '3d'} onClick={() => setMode('3d')}>3D</button>
-        <button aria-pressed={mode === '2d'} onClick={() => setMode('2d')}>2D cut plan</button>
+        <button aria-pressed={mode === '2d'} onClick={() => setMode('2d')}>План резки 2D</button>
       </div>
     </div>
     {wide ? <section className="sheet-panel" aria-labelledby="nesting-title">{inspector}</section> : <>
-      <button className="sheet-mobile-summary" aria-haspopup="dialog" aria-controls="sheet-dialog" onClick={() => setInspectorOpen(true)}><span><strong>{error ? error.code === 'capacity-unavailable' ? 'Table not placed · no export' : 'Calculation failed · no export' : run?.phase === 'capacity' ? 'Table only · tools not placed' : run?.phase === 'nesting' && result?.unplaced.length ? `${result.unplaced.length} parts not placed · no export` : complete && result ? `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : result ? 'Layout unavailable · no export' : 'Sheet nesting'}</strong><small>{statusLabel} · Settings & export</small></span><Icon name="chevron" /></button>
-      <WorkspaceDialog id="sheet-dialog" title="Sheet nesting" className="sheet-dialog" open={inspectorOpen} onClose={() => setInspectorOpen(false)}><div className="sheet-inspector">{inspector}</div></WorkspaceDialog>
+      <button className="sheet-mobile-summary" aria-haspopup="dialog" aria-controls="sheet-dialog" onClick={() => setInspectorOpen(true)}><span><strong>{error ? error.code === 'capacity-unavailable' ? 'Стол не размещён · без экспорта' : 'Сбой расчёта · без экспорта' : run?.phase === 'capacity' ? 'Только стол · оснастка не размещена' : run?.phase === 'nesting' && result?.unplaced.length ? `Не размещено: ${result.unplaced.length} · без экспорта` : complete && result ? `Деталей: ${result.placements.length} · листов: ${result.sheets.length}` : result ? 'Раскладка недоступна · без экспорта' : 'Раскладка на листах'}</strong><small>{statusLabel} · параметры и экспорт</small></span><Icon name="chevron" /></button>
+      <WorkspaceDialog id="sheet-dialog" title="Раскладка на листах" className="sheet-dialog" open={inspectorOpen} onClose={() => setInspectorOpen(false)}><div className="sheet-inspector">{inspector}</div></WorkspaceDialog>
     </>}
   </div>
 }
@@ -167,18 +167,18 @@ export function TableSheetNesting({ config, dark, onChange, onNotice, baseline, 
   const key = nestingKey(config)
   const prepared = useMemo(() => {
     try { return { job: tableNestingJob(config, baseline) } }
-    catch (error) { return { error: error instanceof Error ? error : new Error('Invalid cutting job') } }
+    catch (error) { return { error: error instanceof Error ? error : new Error('Некорректное задание на резку') } }
   }, [key, baseline])
   if (!prepared.job) return <div className="three-loading socket-error" role="alert" data-error-code={prepared.error && 'code' in prepared.error ? String(prepared.error.code) : 'invalid-cut-job'}>{prepared.error?.message}</div>
   return <SheetNesting jobKey={key} job={prepared.job} units={config.units}
     sheetSettings={{ length: config.sheetLength, width: config.sheetWidth, edgeGap: config.sheetEdgeGap, partGap: config.sheetPartGap, copies: config.nestingCopies }}
     onChange={changes => onChange({ ...(changes.edgeGap === undefined ? {} : { sheetEdgeGap: changes.edgeGap }), ...(changes.partGap === undefined ? {} : { sheetPartGap: changes.partGap }), ...(changes.copies === undefined ? {} : { nestingCopies: changes.copies }) })}
-    onNotice={onNotice} onExport={({ result, stock }) => downloadNestedZip(config, result, stock)} batchLabel="Identical tables in this cutting batch"
+    onNotice={onNotice} onExport={({ result, stock }) => downloadNestedZip(config, result, stock)} batchLabel="Одинаковые столы в партии резки"
     isLayoutValid={({ result, stock }) => validateTableCut(config, result, stock)}
     onRun={run => {
       const table = run.phase === 'capacity' || run.stock.kind === 'new-sheets' ? run.result : run.stock.baseline
       if (table.validation.valid && !table.unplaced.length) onBaseline({ key: tableLayoutKey(config), result: table })
     }}
     getEngravings={part => tableCutEngravings(part, config)}
-    render3D={result => <Suspense fallback={<div className="three-loading">Loading 3D…</div>}><ThreeAssembly config={config} dark={dark} resetToken={0} nesting={result} /></Suspense>} />
+    render3D={result => <Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ThreeAssembly config={config} dark={dark} resetToken={0} nesting={result} /></Suspense>} />
 }

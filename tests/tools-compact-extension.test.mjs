@@ -181,17 +181,17 @@ test('compact codec and native archives preserve exact settings, every instance,
   assert.equal(project.validProjectLayout(p, result, project.projectKey(p)), true)
   const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, project.projectKey(p), { thickness: p.size.thickness }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(JSON.parse(await zip.file('project.json').async('string')), p)
-  assert.equal(JSON.parse(await zip.file('assembly.json').async('string')).placements.length, 3)
+  assert.equal(JSON.parse(await zip.file('сборка.json').async('string')).placements.length, 3)
   const parser = new DxfParser()
   for (const part of project.projectParts(p)) {
-    const parsed = parser.parseSync(await zip.file(`parts/${part.name}_${part.count}pcs.dxf`).async('string'))
+    const parsed = parser.parseSync(await zip.file(`детали/${part.name}_${part.count}шт.dxf`).async('string'))
     assert.equal(parsed.header.$INSUNITS, 4)
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, part.contours.flat().filter(s => s.type === 'arc').length)
     assert.equal(parsed.entities.filter(e => e.type === 'LINE').length, part.contours.flat().filter(s => s.type === 'line').length)
     for (const h of part.holes) assert.ok(parsed.entities.some(e => e.type === 'CIRCLE' && Math.hypot(e.center.x - h.x, e.center.y - h.y) < .001 && e.radius === h.d / 2))
   }
   for (const sheet of result.sheets) {
-    const parsed = parser.parseSync(await zip.file(`sheets/Sheet_${sheet.index + 1}.dxf`).async('string'))
+    const parsed = parser.parseSync(await zip.file(`листы/Лист_${sheet.index + 1}.dxf`).async('string'))
     assert.equal(parsed.entities.filter(e => e.type === 'CIRCLE').length, sheet.placements.reduce((n, p) => n + p.part.holes.length, 0))
   }
   assert.equal(project.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, project.projectKey(p)), false)

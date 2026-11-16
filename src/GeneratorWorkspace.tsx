@@ -28,29 +28,29 @@ export function Checkbox({ label, checked, onChange }: { label: string; checked:
 
 export function VisualizationSettings({ value, onChange }: { value: VisualSettings; onChange: (value: Partial<VisualSettings>) => void }) {
   return <div className="visualization">
-    <SliderField label="Exploded View" value={value.exploded} output={`${value.exploded}%`} min={0} max={100} step={1} onValue={exploded => onChange({ exploded })} />
-    <Checkbox label="Show Dimensions" checked={value.showDimensions} onChange={showDimensions => onChange({ showDimensions })} />
-    <Checkbox label="Render holes" checked={value.renderHoles} onChange={renderHoles => onChange({ renderHoles })} />
-    <Checkbox label="Highlight parts" checked={value.highlighting} onChange={highlighting => onChange({ highlighting })} />
+    <SliderField label="Разнесённый вид" value={value.exploded} output={`${value.exploded}%`} min={0} max={100} step={1} onValue={exploded => onChange({ exploded })} />
+    <Checkbox label="Показывать размеры" checked={value.showDimensions} onChange={showDimensions => onChange({ showDimensions })} />
+    <Checkbox label="Показывать отверстия" checked={value.renderHoles} onChange={renderHoles => onChange({ renderHoles })} />
+    <Checkbox label="Подсвечивать детали" checked={value.highlighting} onChange={highlighting => onChange({ highlighting })} />
   </div>
 }
 
 type Estimate = { kg: number; cut: number; holes: number; engraving?: number; fit: boolean }
 export function ProductionEstimate({ summary, units, sheet, onSheetChange, error }: { summary: Estimate; units: Config['units']; sheet: { length: number; width: number }; onSheetChange: (patch: Partial<{ length: number; width: number }>) => void; error?: string | null }) {
-  const unitLabel = units === 'mm' ? 'mm' : 'in', factor = units === 'mm' ? 1 : mmPerInch
+  const unitLabel = units === 'mm' ? 'мм' : 'дюйм', factor = units === 'mm' ? 1 : mmPerInch
   const amount = (value: number, conversion: number) => (units === 'mm' ? value : value * conversion).toFixed(1)
   return <section className="production-card">
-    <h3>Production estimate</h3>
-    {error ? <p className="socket-error">Estimates unavailable until the fabrication geometry is valid.</p> : <>
+    <h3>Оценка изготовления</h3>
+    {error ? <p className="socket-error">Расчёт недоступен, пока геометрия для изготовления некорректна.</p> : <>
       <div className="estimate">
-        <div><span>Weight</span><strong>{amount(summary.kg, 2.20462)}<small>{units === 'mm' ? 'kg' : 'lb'}</small></strong></div>
-        <div><span>Cut length</span><strong>{amount(summary.cut, 3.28084)}<small>{units === 'mm' ? 'm' : 'ft'}</small></strong></div>
+        <div><span>Масса</span><strong>{amount(summary.kg, 2.20462)}<small>{units === 'mm' ? 'кг' : 'фунт'}</small></strong></div>
+        <div><span>Длина реза</span><strong>{amount(summary.cut, 3.28084)}<small>{units === 'mm' ? 'м' : 'фут'}</small></strong></div>
       </div>
-      <div className="estimate-extra"><span>Holes <b>{summary.holes}</b></span>{Boolean(summary.engraving) && <span>Engraving <b>{amount(summary.engraving!, 3.28084)} {units === 'mm' ? 'm' : 'ft'}</b></span>}</div>
+      <div className="estimate-extra"><span>Отверстия <b>{summary.holes}</b></span>{Boolean(summary.engraving) && <span>Гравировка <b>{amount(summary.engraving!, 3.28084)} {units === 'mm' ? 'м' : 'фут'}</b></span>}</div>
       <div className="sheet-size">
-        <span>Stock sheet · {unitLabel}</span>
-        <div className="sheet-inputs"><NumberInput aria-label="Sheet length" value={String(Number(display(sheet.length, units, 3)))} min={0} step={50 / factor} onValue={value => onSheetChange({ length: readDisplay(value, units) })} /><span>×</span><NumberInput aria-label="Sheet width" value={String(Number(display(sheet.width, units, 3)))} min={0} step={50 / factor} onValue={value => onSheetChange({ width: readDisplay(value, units) })} /></div>
-        <p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? 'Individual parts fit. Check the complete layout in Sheets.' : 'Some parts do not fit this sheet.'}</p>
+        <span>Лист материала · {unitLabel}</span>
+        <div className="sheet-inputs"><NumberInput aria-label="Длина листа" value={String(Number(display(sheet.length, units, 3)))} min={0} step={50 / factor} onValue={value => onSheetChange({ length: readDisplay(value, units) })} /><span>×</span><NumberInput aria-label="Ширина листа" value={String(Number(display(sheet.width, units, 3)))} min={0} step={50 / factor} onValue={value => onSheetChange({ width: readDisplay(value, units) })} /></div>
+        <p className={summary.fit ? 'fit' : 'no-fit'}>{summary.fit ? 'Отдельные детали помещаются. Проверьте полную раскладку в разделе «Листы».' : 'Некоторые детали не помещаются на этот лист.'}</p>
       </div>
     </>}
   </section>
@@ -62,28 +62,28 @@ export function ProjectActions({ onOpen, onSave, onShare, fabrication, disabled 
   return <section className="exports">
     <input ref={input} hidden type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onOpen(file) }} />
     <div className="project-file-actions">
-      <button className="secondary" title="Open Project (.json)" onClick={() => input.current?.click()}><Icon name="folder" />Open</button>
-      <button className="secondary" title="Save Project (.json)" disabled={disabled} onClick={onSave}><Icon name="save" />Save</button>
-      <button className="secondary" title="Share project link" disabled={disabled} onClick={onShare}><Icon name="share" />Share</button>
+      <button className="secondary" title="Открыть проект (.json)" onClick={() => input.current?.click()}><Icon name="folder" />Открыть</button>
+      <button className="secondary" title="Сохранить проект (.json)" disabled={disabled} onClick={onSave}><Icon name="save" />Сохранить</button>
+      <button className="secondary" title="Поделиться ссылкой на проект" disabled={disabled} onClick={onShare}><Icon name="share" />Поделиться</button>
     </div>
     {fabrication.kind === 'parts' ? <>
-      <button className="zip" disabled={disabled} onClick={fabrication.onZip}><Icon name="archive" size={20} /><span>Download parts<small>Individual DXF files · ZIP archive</small></span><Icon name="download" /></button>
-      <button className="dxf secondary" disabled={disabled} onClick={fabrication.onDxf}><Icon name="download" />Parts strip DXF <span className="action-note">Not nested</span></button>
+      <button className="zip" disabled={disabled} onClick={fabrication.onZip}><Icon name="archive" size={20} /><span>Скачать детали<small>Отдельные DXF-файлы · ZIP-архив</small></span><Icon name="download" /></button>
+      <button className="dxf secondary" disabled={disabled} onClick={fabrication.onDxf}><Icon name="download" />DXF-полоса деталей <span className="action-note">Без раскладки</span></button>
     </> : <>
-      <button className="zip" disabled={disabled} onClick={fabrication.onOpenSheets}><Icon name="layers" size={20} /><span>Open shared sheet cut<small>Table and selected tools</small></span></button>
-      <p>Export is available in Sheets after the complete layout is verified.</p>
+      <button className="zip" disabled={disabled} onClick={fabrication.onOpenSheets}><Icon name="layers" size={20} /><span>Открыть общий раскрой<small>Стол и выбранная оснастка</small></span></button>
+      <p>Экспорт доступен в разделе «Листы» после проверки полной раскладки.</p>
     </>}
-    {disabled && <p className="socket-error" role="status">Resolve the project review or geometry error before saving or exporting.</p>}
+    {disabled && <p className="socket-error" role="status">Перед сохранением или экспортом завершите проверку проекта либо исправьте геометрию.</p>}
   </section>
 }
 
 function ProjectInfo({ children }: { children?: ReactNode }) {
   return <details className="legal-disclosure">
-    <summary>About & Legal Info<Icon name="chevron" size={14} /></summary>
+    <summary>О проекте и правовая информация<Icon name="chevron" size={14} /></summary>
     <div className="legal-content">
-      <p>This independent clean-room implementation preserves the public generator's workflow. It is not affiliated with or endorsed by the original author.</p>
-      <p>Models, layouts and DXF files are informational only. Confirm dimensions, kerf tolerances and structural integrity with a qualified professional before CNC or laser cutting.</p>
-      <a href="https://welding-table-generator.com/" target="_blank" rel="noopener noreferrer">Original project ↗</a>
+      <p>Это независимая реализация с нуля, повторяющая рабочий процесс общедоступного генератора. Она не связана с автором исходного проекта и не одобрена им.</p>
+      <p>Модели, раскладки и DXF-файлы носят справочный характер. Перед ЧПУ- или лазерной резкой поручите специалисту проверить размеры, припуск на ширину реза и прочность конструкции.</p>
+      <a href="https://welding-table-generator.com/" target="_blank" rel="noopener noreferrer">Исходный проект ↗</a>
       {children}
     </div>
   </details>
@@ -100,7 +100,7 @@ export function WorkspaceDialog({ id, title, open, onClose, className, children 
     const r = event.currentTarget.getBoundingClientRect()
     if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) onClose()
   }}>
-    <header className="dialog-heading"><h2 id={`${id}-title`}>{title}</h2><button className="icon" aria-label={`Close ${title}`} onClick={onClose}><Icon name="close" /></button></header>
+    <header className="dialog-heading"><h2 id={`${id}-title`}>{title}</h2><button className="icon" aria-label={`Закрыть: ${title}`} onClick={onClose}><Icon name="close" /></button></header>
     <div className="dialog-body">{children}</div>
   </dialog>
 }
@@ -108,8 +108,8 @@ export function WorkspaceDialog({ id, title, open, onClose, className, children 
 type PreferencesProps = { dark: boolean; onTheme: () => void; units: Config['units']; onUnits: (units: Config['units']) => void }
 function Preferences({ dark, onTheme, units, onUnits }: PreferencesProps) {
   return <>
-    <div className="segment" aria-label="Display units">{(['mm', 'inch'] as const).map(unit => <button key={unit} aria-pressed={units === unit} onClick={() => onUnits(unit)}>{unit === 'inch' ? 'in' : 'mm'}</button>)}</div>
-    <button className="icon" title={`Switch to ${dark ? 'light' : 'dark'} theme`} aria-label="Toggle color theme" onClick={onTheme}><Icon name={dark ? 'sun' : 'moon'} /></button>
+    <div className="segment" aria-label="Единицы измерения">{(['mm', 'inch'] as const).map(unit => <button key={unit} aria-pressed={units === unit} onClick={() => onUnits(unit)}>{unit === 'inch' ? 'дюйм' : 'мм'}</button>)}</div>
+    <button className="icon" title={`Переключить на ${dark ? 'светлую' : 'тёмную'} тему`} aria-label="Переключить цветовую тему" onClick={onTheme}><Icon name={dark ? 'sun' : 'moon'} /></button>
   </>
 }
 
@@ -144,29 +144,29 @@ export function GeneratorShell({ workspace, onWorkspace, dark, onTheme, units, o
   const preferences = { dark, onTheme, units, onUnits }
   const parameters = <div className="settings-scroll">{settings}</div>
   return <main className="app-shell" data-panel={docked && parametersVisible ? 'open' : 'closed'}>
-    <a className="skip-link" href="#workspace-view">Skip to drawing</a>
+    <a className="skip-link" href="#workspace-view">Перейти к чертежу</a>
     <header className="app-header">
-      <div className="brand"><svg className="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect x="1" y="1" width="26" height="26" rx="3" />{[7, 14, 21].flatMap(x => [7, 14, 21].map(y => <circle key={`${x}:${y}`} cx={x} cy={y} r="1.5" />))}</svg><h1>Welding Table<span>Generator</span></h1></div>
-      <nav className="workspace-navigation" aria-label="Product workspaces">{(['table', 'tools'] as const).map(value => <a key={value} href={workspaceUrl(new URL(location.href), { workspace: value, view }).toString()} aria-current={workspace === value ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onWorkspace(value) }}>{value === 'table' ? 'Table' : 'Tools'}</a>)}</nav>
+      <div className="brand"><svg className="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect x="1" y="1" width="26" height="26" rx="3" />{[7, 14, 21].flatMap(x => [7, 14, 21].map(y => <circle key={`${x}:${y}`} cx={x} cy={y} r="1.5" />))}</svg><h1>Сварочный стол<span>Генератор</span></h1></div>
+      <nav className="workspace-navigation" aria-label="Разделы продукта">{(['table', 'tools'] as const).map(value => <a key={value} href={workspaceUrl(new URL(location.href), { workspace: value, view }).toString()} aria-current={workspace === value ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onWorkspace(value) }}>{value === 'table' ? 'Стол' : 'Оснастка'}</a>)}</nav>
       <div className="mode-navigation">
-        <nav className="view-navigation" aria-label="Drawing views">{([{ id: '2d', label: 'Parts', icon: 'frame' }, { id: '3d', label: 'Assembly', icon: 'box' }, { id: 'sheet', label: 'Sheets', icon: 'layers' }] as const).map(mode => <a key={mode.id} href={workspaceUrl(new URL(location.href), { workspace, view: mode.id }).toString()} aria-label={mode.id === 'sheet' ? 'Sheets' : `${mode.id.toUpperCase()} ${mode.label}`} aria-current={view === mode.id ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onView(mode.id) }}><Icon name={mode.icon} /><span>{mode.label}</span></a>)}</nav>
-        <button className="settings-toggle" title="Parameters" aria-controls={docked ? 'settings-panel' : 'parameters-dialog'} aria-expanded={docked ? parametersVisible : parametersDialog} onClick={() => docked ? setParametersVisible(value => !value) : setParametersDialog(true)}><Icon name="settings" /><span>Parameters</span></button>
+        <nav className="view-navigation" aria-label="Виды чертежа">{([{ id: '2d', label: 'Детали', icon: 'frame' }, { id: '3d', label: 'Сборка', icon: 'box' }, { id: 'sheet', label: 'Листы', icon: 'layers' }] as const).map(mode => <a key={mode.id} href={workspaceUrl(new URL(location.href), { workspace, view: mode.id }).toString()} aria-label={mode.id === 'sheet' ? 'Листы' : `${mode.id.toUpperCase()} ${mode.label}`} aria-current={view === mode.id ? 'page' : undefined} onClick={event => { if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); onView(mode.id) }}><Icon name={mode.icon} /><span>{mode.label}</span></a>)}</nav>
+        <button className="settings-toggle" title="Параметры" aria-controls={docked ? 'settings-panel' : 'parameters-dialog'} aria-expanded={docked ? parametersVisible : parametersDialog} onClick={() => docked ? setParametersVisible(value => !value) : setParametersDialog(true)}><Icon name="settings" /><span>Параметры</span></button>
       </div>
       <div className="header-preferences"><Preferences {...preferences} /></div>
-      <button className="project-toggle" aria-haspopup="dialog" aria-controls="project-dialog" onClick={() => setProjectOpen(true)}><Icon name="download" /><span>Project</span></button>
+      <button className="project-toggle" aria-haspopup="dialog" aria-controls="project-dialog" onClick={() => setProjectOpen(true)}><Icon name="download" /><span>Проект</span></button>
     </header>
     {docked ? <aside id="settings-panel" className="settings" hidden={!parametersVisible} aria-labelledby="settings-heading">
-      <header className="panel-heading"><h2 id="settings-heading">Parameters</h2><button className="icon" aria-label="Close parameters" onClick={() => setParametersVisible(false)}><Icon name="close" /></button></header>
+      <header className="panel-heading"><h2 id="settings-heading">Параметры</h2><button className="icon" aria-label="Закрыть параметры" onClick={() => setParametersVisible(false)}><Icon name="close" /></button></header>
       {parameters}
-    </aside> : <WorkspaceDialog id="parameters-dialog" title="Parameters" className="settings-drawer" open={parametersDialog} onClose={() => setParametersDialog(false)}>
-      <div className="mobile-preferences"><span>Display</span><Preferences {...preferences} /></div>{parameters}
+    </aside> : <WorkspaceDialog id="parameters-dialog" title="Параметры" className="settings-drawer" open={parametersDialog} onClose={() => setParametersDialog(false)}>
+      <div className="mobile-preferences"><span>Отображение</span><Preferences {...preferences} /></div>{parameters}
     </WorkspaceDialog>}
     <section className="work-area" data-view={view} id="workspace-view" tabIndex={-1}>
-      {view !== '2d' && <details className="display-options"><summary title="3D display options"><Icon name="eye" /><span>Display</span></summary><div>{visualization}</div></details>}
+      {view !== '2d' && <details className="display-options"><summary title="Параметры отображения 3D"><Icon name="eye" /><span>Отображение</span></summary><div>{visualization}</div></details>}
       <div className="workspace-content">{children}</div>
-      {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label="Dismiss message" onClick={onDismissNotice}><Icon name="close" /></button></div>}
+      {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label="Закрыть сообщение" onClick={onDismissNotice}><Icon name="close" /></button></div>}
     </section>
-    <WorkspaceDialog id="project-dialog" title="Project & export" className="project-dialog" open={projectOpen} onClose={() => setProjectOpen(false)}>
+    <WorkspaceDialog id="project-dialog" title="Проект и экспорт" className="project-dialog" open={projectOpen} onClose={() => setProjectOpen(false)}>
       {actions(() => setProjectOpen(false))}{production}<ProjectInfo>{seo}</ProjectInfo>
     </WorkspaceDialog>
   </main>

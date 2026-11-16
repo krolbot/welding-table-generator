@@ -21,17 +21,17 @@ export const tableCutInventory = (config: Config) => {
   const parts: FabricationPart[] = [...tableParts]
   const savedSelections = parseToolSelections(config.nestingTools)
   const mismatched = savedSelections.find(row => row.project.size.thickness !== config.thickness)
-  if (mismatched) throw new TableCutJobError('thickness-mismatch', `Selected tool ${mismatched.id} has different stock thickness. Reopen and review the project before exporting.`, mismatched.id)
+  if (mismatched) throw new TableCutJobError('thickness-mismatch', `У выбранной оснастки ${mismatched.id} другая толщина металла. Перед экспортом заново откройте и проверьте проект.`, mismatched.id)
   const selections = toolSelectionsAtTable(savedSelections, config)
   selections.forEach(({ id, project }, index) => {
     for (const source of projectModelParts(project)) {
-      if (source.thickness !== config.thickness) throw new TableCutJobError('thickness-mismatch', `${toolLabels[project.tool]} #${index + 1} uses ${source.thickness} mm stock; the table uses ${config.thickness} mm. Change the tool explicitly or remove it from this cut job.`, id)
+      if (source.thickness !== config.thickness) throw new TableCutJobError('thickness-mismatch', `${toolLabels[project.tool]} № ${index + 1}: металл ${source.thickness} мм, у стола — ${config.thickness} мм. Явно измените оснастку или удалите её из задания на резку.`, id)
       const name = `tool:${id}:${source.name}`
-      parts.push({ ...source, name, label: `${toolLabels[project.tool]} #${index + 1} — ${source.label}`, count: source.count * project.copies })
+      parts.push({ ...source, name, label: `${toolLabels[project.tool]} № ${index + 1} — ${source.label}`, count: source.count * project.copies })
       sources[name] = { kind: 'tool', selectionId: id, tool: project.tool, part: source.name, perCopy: source.count }
     }
   })
-  if (parts.reduce((count, part) => count + part.count, 0) > 256) throw new TableCutJobError('part-limit', 'The table and selected tools exceed the 256-part cutting limit. Reduce quantities or remove a tool.')
+  if (parts.reduce((count, part) => count + part.count, 0) > 256) throw new TableCutJobError('part-limit', 'Стол и выбранная оснастка превышают предел 256 деталей. Уменьшите количество или удалите оснастку.')
   return { tableParts, parts, sources, selections, stock: { material: 'steel' as const, thickness: config.thickness } }
 }
 
@@ -61,5 +61,5 @@ export const validateTableCut = (config: Config, result: NestingResult, stock: N
 }
 
 export const assertTablePartsExport = (config: Config) => {
-  if (config.nestingTools.length) throw new TableCutJobError('sheet-export-required', 'This project includes selected tools. Use the verified shared sheet ZIP; a table-only parts export would omit them.')
+  if (config.nestingTools.length) throw new TableCutJobError('sheet-export-required', 'В проект добавлена оснастка. Используйте проверенный общий ZIP с листами: экспорт только деталей стола не включит оснастку.')
 }

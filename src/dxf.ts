@@ -49,13 +49,13 @@ const nativePartEntities = (part: FabricationPart, offset: Point = point(0, 0)) 
   + part.holes.map(hole => circle(shifted(hole, offset), hole.d / 2)).join('')
 
 export const nativeDxfForPart = (part: FabricationPart) => {
-  if (!part.contours.length) throw new Error('Cannot export a part without a contour')
+  if (!part.contours.length) throw new Error('Нельзя экспортировать деталь без контура')
   const offset = point(0, 0)
   return header(boundsFor([{ part, offset }])) + nativePartEntities(part, offset) + footer
 }
 
 export const nativeDxfForNestedSheet = (placements: readonly NestingPlacement[], options: { engravings?: (part: FabricationPart) => EngravingLine[] } = {}) => {
-  if (!placements.length) throw new Error('Cannot export an empty sheet')
+  if (!placements.length) throw new Error('Нельзя экспортировать пустой лист')
   const boxes = placements.map(value => nativeContourBounds(transformNestingContour(value.part.contours[0], value)))
   const bounds = { minX: Math.min(...boxes.map(value => value.minX)), minY: Math.min(...boxes.map(value => value.minY)), maxX: Math.max(...boxes.map(value => value.maxX)), maxY: Math.max(...boxes.map(value => value.maxY)) }
   const entities = placements.map(placement => {
@@ -89,7 +89,7 @@ export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlaceme
   const parts = new Map(tableCutInventory(c).parts.map(part => [part.name, part]))
   for (const placement of placements) {
     if (JSON.stringify(parts.get(placement.part.name)) !== JSON.stringify(placement.part))
-      throw new TableCutJobError('invalid-layout', `Stale nesting part: ${placement.part.name}`)
+      throw new TableCutJobError('invalid-layout', `Устаревшая деталь раскладки: ${placement.part.name}`)
   }
   return nativeDxfForNestedSheet(placements, { engravings: part => tableCutEngravings(part, c) })
 }
@@ -97,12 +97,12 @@ export const dxfForNestedSheet = (c: Config, placements: readonly NestingPlaceme
 export const validateNestedExport = (c: Config, result: NestingResult, stock: NestingStock = { kind: 'new-sheets' }) => validateTableCut(c, result, stock)
 
 export const nestedArchive = (c: Config, result: NestingResult, stock: NestingStock = { kind: 'new-sheets' }) => {
-  if (!validateNestedExport(c, result, stock)) throw new TableCutJobError('invalid-layout', 'The sheet layout is incomplete, stale or invalid for the selected table and tools')
+  if (!validateNestedExport(c, result, stock)) throw new TableCutJobError('invalid-layout', 'Раскладка на листах неполна, устарела или не соответствует выбранному столу и оснастке')
   const inventory = tableCutInventory(c)
   const zip = new JSZip()
   const sheetIndexes = [...new Set(result.placements.map(placement => placement.sheet))].sort((a, b) => a - b)
-  sheetIndexes.forEach(index => zip.file(`Sheet_${index + 1}.dxf`, dxfForNestedSheet(c, result.placements.filter(placement => placement.sheet === index))))
-  zip.file('README.txt', `Sheet size: ${c.sheetLength} x ${c.sheetWidth} mm\nMinimum edge gap: ${c.sheetEdgeGap} mm\nMinimum part gap: ${c.sheetPartGap} mm\nSheet count: ${sheetIndexes.length}\nAll parts placed: ${result.placements.length}\nStock: steel, ${c.thickness} mm (confirm grade before cutting)\nSelected tools: ${c.nestingTools.length}; copies apply to the entire job, not to each table.\n${stock.kind === 'table-offcuts' ? `No additional sheets: limit ${stock.baseline.sheets.length} from the verified table-only layout. Tables may be rearranged to fit complete tools.\n` : ''}Coordinates are nominal geometry. Kerf, lead-ins, clamps and cutting order require CAM verification.\n`)
+  sheetIndexes.forEach(index => zip.file(`Лист_${index + 1}.dxf`, dxfForNestedSheet(c, result.placements.filter(placement => placement.sheet === index))))
+  zip.file('ПРОЧТИ_МЕНЯ.txt', `Размер листа: ${c.sheetLength} × ${c.sheetWidth} мм\nМинимальный отступ от края: ${c.sheetEdgeGap} мм\nМинимальный зазор между деталями: ${c.sheetPartGap} мм\nКоличество листов: ${sheetIndexes.length}\nРазмещено деталей: ${result.placements.length}\nМатериал: сталь, ${c.thickness} мм (перед резкой подтвердите марку)\nВыбрано изделий оснастки: ${c.nestingTools.length}; количество относится ко всему заданию, а не к каждому столу.\n${stock.kind === 'table-offcuts' ? `Дополнительных листов нет: предел ${stock.baseline.sheets.length} по проверенной раскладке только стола. Столы могут быть переставлены, чтобы разместить полные комплекты оснастки.\n` : ''}Координаты задают номинальную геометрию. Компенсация реза, заходы, зажимы и порядок резки требуют проверки в CAM.\n`)
   zip.file('project.json', JSON.stringify(projectConfig({ ...c, nestingTools: inventory.selections }), null, 2))
   zip.file('layout.json', JSON.stringify({
     schemaVersion: 2, engine: 'contour-nfp-v2', units: 'mm', tableCopies: c.nestingCopies,
@@ -116,7 +116,7 @@ export const nestedArchive = (c: Config, result: NestingResult, stock: NestingSt
     parts: inventory.parts,
     sources: inventory.sources,
     placements: result.placements.map(p => ({ part: p.part.name, source: inventory.sources[p.part.name], copy: Math.floor(p.instance / inventory.sources[p.part.name].perCopy), instance: p.instance, sheet: p.sheet, rotation: p.rotation, translation: p.translation })),
-    coordinateConvention: 'Millimetres, sheet lower-left origin, counterclockwise rotation about part origin followed by translation',
+    coordinateConvention: 'Миллиметры; начало координат в левом нижнем углу листа; поворот против часовой стрелки вокруг начала детали, затем перенос',
     holesNestable: false, nominalContours: true, globalOptimalityProven: false,
   }, null, 2))
   return zip
@@ -124,7 +124,7 @@ export const nestedArchive = (c: Config, result: NestingResult, stock: NestingSt
 
 export const downloadNestedZip = async (c: Config, result: NestingResult, stock: NestingStock = { kind: 'new-sheets' }) => {
   const zip = nestedArchive(c, result, stock)
-  download(await zip.generateAsync({ type: 'blob' }), `WeldingTable_Sheets_${c.length}x${c.width}.zip`)
+  download(await zip.generateAsync({ type: 'blob' }), `СварочныйСтол_Листы_${c.length}x${c.width}.zip`)
 }
 
 const download = (blob: Blob, name: string) => {
@@ -137,15 +137,15 @@ const download = (blob: Blob, name: string) => {
 }
 
 export const downloadFull = (c: Config) =>
-  download(new Blob([fullDxf(c)], { type: 'application/dxf' }), `WeldingTable_Assembly_${c.length}x${c.width}.dxf`)
+  download(new Blob([fullDxf(c)], { type: 'application/dxf' }), `СварочныйСтол_Сборка_${c.length}x${c.width}.dxf`)
 
 export const downloadZip = async (c: Config) => {
   assertTablePartsExport(c)
   assertFabricationReady(c)
   const zip = new JSZip()
   makeParts(c).forEach((part, index) => {
-    zip.file(`${index + 1}_${part.label.replaceAll(' ', '_')}_${part.count}pcs.dxf`, dxfForPart(part, c))
+    zip.file(`${index + 1}_${part.label.replaceAll(' ', '_')}_${part.count}шт.dxf`, dxfForPart(part, c))
   })
-  zip.file(`0_Layout_All_${c.length}x${c.width}.dxf`, fullDxf(c))
-  download(await zip.generateAsync({ type: 'blob' }), `WeldingTable_Parts_${c.length}x${c.width}.zip`)
+  zip.file(`0_Раскладка_Все_${c.length}x${c.width}.dxf`, fullDxf(c))
+  download(await zip.generateAsync({ type: 'blob' }), `СварочныйСтол_Детали_${c.length}x${c.width}.zip`)
 }

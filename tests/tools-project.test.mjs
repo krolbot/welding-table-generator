@@ -25,7 +25,7 @@ test('project codec rejects malformed, unknown, versioned and out-of-range data'
     JSON.stringify({ ...project.defaultToolProject, copies: 0 }),
     JSON.stringify({ ...project.defaultToolProject, size: { ...project.defaultToolProject.size, length: Number.NaN } }),
   ]) assert.throws(() => project.parseToolProject(value))
-  assert.throws(() => project.parseToolProject(JSON.stringify({ ...project.defaultToolProject, version: 1 })), /retired box design/)
+  assert.throws(() => project.parseToolProject(JSON.stringify({ ...project.defaultToolProject, version: 1 })), /снятая с поддержки коробчатая конструкция/)
 })
 
 test('ZIP contains canonical parts, sheets and manifests, and rejects a tampered layout', async () => {
@@ -35,14 +35,14 @@ test('ZIP contains canonical parts, sheets and manifests, and rejects a tampered
   assert.equal(project.validProjectLayout(input, result, key), true)
   const archive = toolExport.toolArchive(input, result, key, { thickness: input.size.thickness })
   const readback = await JSZip.loadAsync(await archive.generateAsync({ type: 'nodebuffer' }))
-  for (const name of ['project.json', 'layout.json', 'assembly.json', 'README.txt', 'parts/top_1pcs.dxf', 'sheets/Sheet_1.dxf']) assert.ok(readback.file(name), name)
-  assert.equal(Object.keys(readback.files).filter(name => /^parts\/.*\.dxf$/.test(name)).length, 5)
-  const assembly = JSON.parse(await readback.file('assembly.json').async('string'))
+  for (const name of ['project.json', 'layout.json', 'сборка.json', 'ПРОЧТИ_МЕНЯ.txt', 'детали/top_1шт.dxf', 'листы/Лист_1.dxf']) assert.ok(readback.file(name), name)
+  assert.equal(Object.keys(readback.files).filter(name => /^детали\/.*\.dxf$/.test(name)).length, 5)
+  const assembly = JSON.parse(await readback.file('сборка.json').async('string'))
   assert.equal(assembly.version, 2)
   assert.equal(assembly.placements.length, 7)
   assert.equal(assembly.joinery.tipHeight, 50)
   assert.equal(assembly.joinery.clearance, .2)
-  assert.match(assembly.axes, /Z up/)
+  assert.match(assembly.axes, /Z вверх/)
   assert.deepEqual(JSON.parse(await readback.file('project.json').async('string')), input)
   assert.equal(project.validProjectLayout(input, result, 'old-project-key'), false)
   assert.equal(project.validProjectLayout(input, { ...result, placements: result.placements.slice(1) }, key), false)
@@ -50,5 +50,5 @@ test('ZIP contains canonical parts, sheets and manifests, and rejects a tampered
   const tampered = structuredClone(result)
   tampered.placements[0].translation.x = -1
   assert.equal(project.validProjectLayout(input, tampered, key), false)
-  assert.throws(() => toolExport.toolArchive(input, tampered, key, { thickness: input.size.thickness }), /stale or invalid/)
+  assert.throws(() => toolExport.toolArchive(input, tampered, key, { thickness: input.size.thickness }), /неполна, устарела/)
 })

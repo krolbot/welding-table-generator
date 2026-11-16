@@ -72,7 +72,7 @@ const loadedTable = (): { config: Config; review: ProjectReview | null } => {
       ? { config, review: { ...parsed, original } }
       : { config: preserveView(parsed.config, config), review: null }
   } catch (error) {
-    return { config, review: { kind: 'rejected', original, message: error instanceof Error ? error.message : 'The saved/shared project could not be read. It has not been overwritten.' } }
+    return { config, review: { kind: 'rejected', original, message: error instanceof Error ? error.message : 'Не удалось прочитать сохранённый проект или проект по ссылке. Исходные данные не перезаписаны.' } }
   }
 }
 
@@ -81,7 +81,7 @@ export default function App() {
   const [initial] = useState(loadedTable)
   const [config, setConfig] = useState<Config>(initial.config)
   const [review, setReview] = useState<ProjectReview | null>(initial.review)
-  const navigation = useWorkspaceNavigation(setNotice, review ? { workspace: 'table', message: 'Resolve the table project review before opening Tools.' } : null)
+  const navigation = useWorkspaceNavigation(setNotice, review ? { workspace: 'table', message: 'Завершите проверку проекта стола перед переходом к оснастке.' } : null)
   const { workspace, view, selectWorkspace, selectView: setView } = navigation
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
   const [tableLayout, setTableLayout] = useState<TableLayoutSnapshot>()
@@ -89,7 +89,7 @@ export default function App() {
 
   const cutJob = useMemo(() => {
     try { return { inventory: tableCutInventory(config) } }
-    catch (error) { return { error: error instanceof Error ? error.message : 'Invalid cutting job' } }
+    catch (error) { return { error: error instanceof Error ? error.message : 'Некорректное задание на резку' } }
   }, [config])
   const summary = useMemo(() => ({
     ...fabricationEstimate(cutJob.inventory?.parts ?? [], { length: config.sheetLength, width: config.sheetWidth }),
@@ -99,7 +99,7 @@ export default function App() {
   const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
   const ribAccess = useMemo(() => ribAccessHoleSpec(config), [config])
   const geometryError = useMemo(() => fabricationError(config), [config])
-  const unitLabel = config.units === 'mm' ? 'mm' : 'in'
+  const unitLabel = config.units === 'mm' ? 'мм' : 'дюйм'
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
@@ -109,7 +109,7 @@ export default function App() {
     try {
       if (!review) localStorage.setItem('tableGenParams', JSON.stringify(projectConfig(config)))
       localStorage.setItem('tableGenUI', JSON.stringify({ viewMode: workspace === 'table' ? view : readStorage('tableGenUI').viewMode ?? '2d', renderHoles3D: config.renderHoles, enableHoverEffect: config.highlighting, explodeFactor: config.exploded, showDims: config.showDimensions, units: config.units === 'inch' ? 'in' : 'mm', theme: dark ? 'dark' : 'light' }))
-    } catch { setNotice('Browser autosave is unavailable. Use Save to keep your project.') }
+    } catch { setNotice('Автосохранение в браузере недоступно. Сохраните проект в файл.') }
   }, [config, dark, view, workspace, review])
 
   useEffect(() => {
@@ -132,20 +132,20 @@ export default function App() {
       setConfig(next)
       return true
     } catch (error) {
-      setNotice(`Table settings were not changed: ${error instanceof Error ? error.message : 'Invalid selected tool geometry'}`)
+      setNotice(`Параметры стола не изменены: ${error instanceof Error ? error.message : 'Некорректная геометрия выбранной оснастки'}`)
       return false
     }
   }
   const patch = <K extends keyof Config>(key: K, value: Config[K]) => applyTableConfig({ ...config, [key]: value })
   const setPreset = (preset: Config['preset']) => {
     const values = preset === 'Custom' ? {} : presetValues[preset]
-    if (applyTableConfig({ ...config, ...values, preset }) && preset === 'Custom') setNotice('Enter any hole diameter, pitch and margin in the fields below.')
+    if (applyTableConfig({ ...config, ...values, preset }) && preset === 'Custom') setNotice('Укажите диаметр отверстий, шаг и начало сетки в полях ниже.')
   }
   const setNumeric = (key: NumericKey, value: number) => {
     if (!Number.isFinite(value)) return false
     const next = { ...config, [key]: clampNumeric(key, value) }
     if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key) && maxTabWidth(next) < numericBounds.tabWidth.min) {
-      setNotice('Table height and stock leave no room for locating tabs. Increase the height or reduce thickness.')
+      setNotice('Высота стола и толщина металла не оставляют места для установочных шипов. Увеличьте высоту или уменьшите толщину.')
       return false
     }
     if (['length', 'width', 'height', 'thickness', 'tabWidth'].includes(key)) next.tabWidth = Math.min(next.tabWidth, maxTabWidth(next))
@@ -173,7 +173,7 @@ export default function App() {
     part ??= readPart(hole.id.split(':')[0])
     if (!part) return
     patch('removedHoles', [...config.removedHoles, { id: crypto.randomUUID(), part, x: hole.x, y: hole.y, r: hole.d / 2 }])
-    setNotice('Hole removed. Restore it from the Removed Holes list.')
+    setNotice('Отверстие удалено. Его можно восстановить в списке удалённых отверстий.')
   }
   const addHole = () => {
     patch('customHoles', [...config.customHoles, { id: crypto.randomUUID(), part: 'top', x: 0, y: 0, d: 10 }])
@@ -186,7 +186,7 @@ export default function App() {
       return Number.isFinite(number) && (key !== 'd' || number > 0) ? { ...hole, [key]: readDisplay(number, config.units) } : hole
     }))
   }
-  const save = () => downloadFile(JSON.stringify(projectConfig(config), null, 2), `WeldingTable_Project_${config.length}x${config.width}.json`)
+  const save = () => downloadFile(JSON.stringify(projectConfig(config), null, 2), `Проект_сварочного_стола_${config.length}x${config.width}.json`)
   const replaceProject = (candidate: Config) => {
     const next = preserveView(candidate, config)
     const url = new URL(location.href)
@@ -203,19 +203,19 @@ export default function App() {
   const acceptReview = (candidate: Config) => {
     if (!review) return
     try { localStorage.setItem('tableGenParams.previous', review.original) }
-    catch { setNotice('The original project could not be backed up. It has not been replaced. Download the original data and free browser storage before continuing.'); return }
+    catch { setNotice('Не удалось создать резервную копию исходного проекта. Проект не заменён. Скачайте исходные данные и освободите место в хранилище браузера.'); return }
     replaceProject(candidate)
-    setNotice('Original data preserved. Review the corrected geometry before fabrication.')
+    setNotice('Исходные данные сохранены. Перед изготовлением проверьте исправленную геометрию.')
   }
-  const reportError = (error: unknown) => setNotice(error instanceof Error ? error.message : 'The operation failed. No export was created.')
+  const reportError = (error: unknown) => setNotice(error instanceof Error ? error.message : 'Операция завершилась с ошибкой. Файл экспорта не создан.')
   const open = async (file: File) => {
-    if (review) { setNotice('Resolve the pending project review before replacing it with another file.'); return }
+    if (review) { setNotice('Завершите проверку текущего проекта перед его заменой другим файлом.'); return }
     let original = ''
     try {
       original = await file.text()
       const parsed = parseTableProject(original)
       if (parsed.kind === 'migration') setReview({ ...parsed, original })
-      else { replaceProject(parsed.config); setNotice('Project loaded.') }
+      else { replaceProject(parsed.config); setNotice('Проект загружен.') }
     } catch (error) { reportError(error) }
   }
   const share = async () => {
@@ -224,110 +224,110 @@ export default function App() {
     url.searchParams.set('workspace', 'table'); url.searchParams.set('view', view)
     try {
       await copyText(url.toString())
-      setNotice('Full metric project link copied to clipboard.')
+      setNotice('Ссылка на проект с исходными метрическими параметрами скопирована.')
     } catch {
-      setNotice('Clipboard access was denied. Use Save to preserve this project.')
+      setNotice('Нет доступа к буферу обмена. Сохраните проект в файл.')
     }
   }
 
   const withSelectedTool = (project: ToolProject) => {
-    if (review) throw new Error('Resolve the table project review before adding tools.')
+    if (review) throw new Error('Завершите проверку проекта стола перед добавлением оснастки.')
     const next = { ...config, nestingTools: toolSelectionsAtTable([...config.nestingTools, { id: crypto.randomUUID(), project }], config) }
     tableCutInventory(next)
     return next
   }
   const toolAdmissionError = (project: ToolProject) => {
     try { withSelectedTool(project); return undefined }
-    catch (error) { return error instanceof Error ? error.message : 'Tool cannot be added to this table cut job' }
+    catch (error) { return error instanceof Error ? error.message : 'Оснастку нельзя добавить в это задание на резку стола' }
   }
   const addToTable = (project: ToolProject) => {
     try {
       setConfig(withSelectedTool(project)); navigation.navigate({ workspace: 'table', view: 'sheet' })
-      setNotice('Tool selected. Export remains blocked until the complete shared layout fits.')
+      setNotice('Оснастка выбрана. Экспорт останется недоступным, пока полная общая раскладка не поместится на листы.')
     } catch (error) { reportError(error) }
   }
   const rememberTableLayout = (snapshot: TableLayoutSnapshot) => setTableLayout(current => current?.key === snapshot.key && compareNesting(current.result, snapshot.result) <= 0 ? current : snapshot)
 
-  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Loading tools…</div>}><ToolsWorkspace view={view} onView={setView} onNavigationGuard={navigation.setGuard} notice={notice} onDismissNotice={() => setNotice('')} tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
+  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Загрузка оснастки…</div>}><ToolsWorkspace view={view} onView={setView} onNavigationGuard={navigation.setGuard} notice={notice} onDismissNotice={() => setNotice('')} tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
   return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
     settings={<>
-          {review && <section role="alert" className="project-review"><h3>Project review required</h3><p className="socket-error">{review.message}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'welding-table-original.txt', 'text/plain')}>Download original data</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Apply {migrationPreset} origin ({presetValues[migrationPreset].margin} mm)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? review.change === 'table-grid' ? `Keep saved origin (${review.config.margin} mm)` : 'Apply corrected tool geometry' : 'Start a new table project'}</button></section>}
+          {review && <section role="alert" className="project-review"><h3>Требуется проверка проекта</h3><p className="socket-error">{review.message}</p><button className="secondary full" onClick={() => downloadFile(review.original, 'исходный-проект-сварочного-стола.txt', 'text/plain')}>Скачать исходные данные</button>{review.kind === 'migration' && migrationPreset && <button className="secondary full" onClick={() => acceptReview({ ...review.config, ...presetValues[migrationPreset], preset: migrationPreset })}>Применить начало сетки {migrationPreset} ({presetValues[migrationPreset].margin} мм)</button>}<button className="secondary full" onClick={() => acceptReview(review.kind === 'migration' ? review.config : defaults)}>{review.kind === 'migration' ? review.change === 'table-grid' ? `Сохранить прежнее начало сетки (${review.config.margin} мм)` : 'Применить исправленную геометрию оснастки' : 'Создать новый проект стола'}</button></section>}
           <fieldset className="table-settings" disabled={Boolean(review)}>
-          <ParameterGroup title={<>Dimensions ({unitLabel})</>} defaultOpen>
-            {slider('length', 'Length (L)', 500, 5000, 50)}
-            {slider('width', 'Width (W)', 400, 5000, 50)}
-            {slider('height', 'Table Height (H)', 50, 500, 10)}
+          <ParameterGroup title={<>Размеры ({unitLabel})</>} defaultOpen>
+            {slider('length', 'Длина (L)', 500, 5000, 50)}
+            {slider('width', 'Ширина (W)', 400, 5000, 50)}
+            {slider('height', 'Высота стола (H)', 50, 500, 10)}
           </ParameterGroup>
-          <ParameterGroup title={<>Fixture System</>} defaultOpen>
+          <ParameterGroup title={<>Система оснастки</>} defaultOpen>
 
-            <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={12} />}{preset}</button>)}</div>
-            <div className="fields three">{numericInput('holeDiameter', 'Hole Ø', numericBounds.holeDiameter.min, numericBounds.holeDiameter.max, 1)}{numericInput('pitch', 'Pitch', config.holeDiameter + 10, numericBounds.pitch.max, 5)}{numericInput('margin', 'Grid origin', config.holeDiameter / 2 + 5, Math.min(config.length, config.width) / 2 - 10, 5)}</div>
-            <details className="field-help"><summary>Grid origin & compatibility</summary>
-            <p className="grid-summary">Ø{numberLabel(config.holeDiameter, 3)} / {numberLabel(config.pitch, 3)} {unitLabel} pitch. Origin: {numberLabel(config.margin, 3)} {unitLabel} from the top plate’s −X / −Z edges; skirt rows start {numberLabel(config.margin, 3)} {unitLabel} below the working surface.</p>
-            <p>Origins do not move when dimensions change. Any remainder stays at the far edges. Joint cuts and manual hole edits can interrupt the grid. Displaying inches does not select a 5/8″ fixture system.</p>
+            <div className="preset">{(['D16', 'D28', 'Custom'] as const).map(preset => <button key={preset} className={config.preset === preset ? 'active' : ''} onClick={() => setPreset(preset)}>{preset === 'Custom' && <Icon name="target" size={12} />}{preset === 'Custom' ? 'Своя' : preset}</button>)}</div>
+            <div className="fields three">{numericInput('holeDiameter', 'Диаметр отверстия Ø', numericBounds.holeDiameter.min, numericBounds.holeDiameter.max, 1)}{numericInput('pitch', 'Шаг', config.holeDiameter + 10, numericBounds.pitch.max, 5)}{numericInput('margin', 'Начало сетки', config.holeDiameter / 2 + 5, Math.min(config.length, config.width) / 2 - 10, 5)}</div>
+            <details className="field-help"><summary>Начало сетки и совместимость</summary>
+            <p className="grid-summary">Ø{numberLabel(config.holeDiameter, 3)} / шаг {numberLabel(config.pitch, 3)} {unitLabel}. Начало: {numberLabel(config.margin, 3)} {unitLabel} от граней −X / −Z верхней плиты; ряды на юбках начинаются на {numberLabel(config.margin, 3)} {unitLabel} ниже рабочей поверхности.</p>
+            <p>Начало сетки не смещается при изменении размеров. Остаток остаётся у дальних краёв. Вырезы соединений и ручные изменения отверстий могут прерывать сетку. Отображение в дюймах не включает систему оснастки 5/8″.</p>
             </details>
-            <div className="hole-pattern"><span>Hole Pattern</span><div className="grid-buttons"><button className={config.grid === 'square' ? 'active' : ''} onClick={() => patch('grid', 'square')}>Square grid</button><button className={config.grid === 'staggered' ? 'active' : ''} onClick={() => patch('grid', 'staggered')}>Diagonal grid</button></div>{config.grid === 'staggered' && <p>Square grid plus cell-centre holes: half-pitch rows and alternating half-pitch column offsets, identical on the top and skirts.</p>}</div>
-            <div className="fixture-options">{toggle('skirtHoles', 'Skirt Holes')}
+            <div className="hole-pattern"><span>Схема отверстий</span><div className="grid-buttons"><button className={config.grid === 'square' ? 'active' : ''} onClick={() => patch('grid', 'square')}>Квадратная сетка</button><button className={config.grid === 'staggered' ? 'active' : ''} onClick={() => patch('grid', 'staggered')}>Диагональная сетка</button></div>{config.grid === 'staggered' && <p>К квадратной сетке добавляются отверстия в центрах ячеек: ряды с половинным шагом и чередующимся смещением столбцов на полшага, одинаковые на столешнице и юбках.</p>}</div>
+            <div className="fixture-options">{toggle('skirtHoles', 'Отверстия в юбках')}
 
-              {toggle('engraving', 'Grid Engraving')}
-              {config.engraving && <div className="engraving-options"><span>Engraving layout</span><div className="grid-buttons"><button title="Lines run through the hole centres" className={config.engravingMode === 'through' ? 'active' : ''} onClick={() => patch('engravingMode', 'through')}>Through holes</button><button title="Lines run between the holes, forming cells" className={config.engravingMode === 'between' ? 'active' : ''} onClick={() => patch('engravingMode', 'between')}>Between (cells)</button></div></div>}
-              {toggle('nameMarking', 'Part Name Marking')}
+              {toggle('engraving', 'Гравировка сетки')}
+              {config.engraving && <div className="engraving-options"><span>Схема гравировки</span><div className="grid-buttons"><button title="Линии проходят через центры отверстий" className={config.engravingMode === 'through' ? 'active' : ''} onClick={() => patch('engravingMode', 'through')}>По центрам отверстий</button><button title="Линии проходят между отверстиями и образуют ячейки" className={config.engravingMode === 'between' ? 'active' : ''} onClick={() => patch('engravingMode', 'between')}>Между отверстиями</button></div></div>}
+              {toggle('nameMarking', 'Маркировка деталей')}
             </div>
           </ParameterGroup>
-          <ParameterGroup title={<>Internal Frame</>}>{toggle('ribs', 'Generate Support Ribs')}
+          <ParameterGroup title={<>Внутренняя рама</>}>{toggle('ribs', 'Создать опорные рёбра')}
             {config.ribs && <div className="indented">
-              {slider('ribSpacing', `Rib Spacing (${unitLabel})`, 200, 600, 50)}
-              {toggle('ribAccessHoles', 'Rib access holes')}
+              {slider('ribSpacing', `Шаг рёбер (${unitLabel})`, 200, 600, 50)}
+              {toggle('ribAccessHoles', 'Отверстия доступа в рёбрах')}
               {config.ribAccessHoles && <>
-                <div className="fields">{numericInput('ribAccessHoleDiameter', `Access hole Ø (${unitLabel})`, 1, 1000, 5)}<label className="field"><span>Maximum for this frame</span><output>{numberLabel(ribAccess?.maxDiameter ?? 0, 2)} {unitLabel}</output></label></div>
-                <p>One circular opening in every bay of each long and short rib. At least {numberLabel(ribAccess?.web ?? 0, 2)} {unitLabel} of material remains around the opening, clear of the cross-lap slots. This geometric spacing is not a load rating.</p>
+                <div className="fields">{numericInput('ribAccessHoleDiameter', `Диаметр отверстия доступа Ø (${unitLabel})`, 1, 1000, 5)}<label className="field"><span>Максимум для этой рамы</span><output>{numberLabel(ribAccess?.maxDiameter ?? 0, 2)} {unitLabel}</output></label></div>
+                <p>По одному круглому отверстию в каждом пролёте продольных и поперечных рёбер. Вокруг отверстия остаётся не менее {numberLabel(ribAccess?.web ?? 0, 2)} {unitLabel} материала вне пазов перекрёстных соединений. Этот геометрический зазор не определяет допустимую нагрузку.</p>
               </>}
             </div>}
           </ParameterGroup>
-          <ParameterGroup title={<>Tabs & Slots (Joints)</>}>
+          <ParameterGroup title={<>Шипы и пазы</>}>
             <div className="joint-fields">
-              {numericInput('thickness', `Metal Thickness (${unitLabel})`, numericBounds.thickness.min, numericBounds.thickness.max, 1)}
-              {numericInput('tabWidth', `Tab Width (${unitLabel})`, numericBounds.tabWidth.min, maxTabWidth(config), 5)}
-              <div className="joint-clearance">{numericInput('clearance', `Joint Clearance (${unitLabel})`, 0, 2.5, 0.05, 2)}<p className="clearance-note">Max {numberLabel(2.5, 4)} {unitLabel}</p></div>
-              <div className="relief-options">{toggle('dogBones', 'Dog-bone Reliefs')}
-                {config.dogBones && <div className="indented relief-control">{slider('dogBoneDiameter', `Diameter (${unitLabel})`, 0.5, 5, 0.5)}</div>}
+              {numericInput('thickness', `Толщина металла (${unitLabel})`, numericBounds.thickness.min, numericBounds.thickness.max, 1)}
+              {numericInput('tabWidth', `Ширина шипа (${unitLabel})`, numericBounds.tabWidth.min, maxTabWidth(config), 5)}
+              <div className="joint-clearance">{numericInput('clearance', `Зазор в соединении (${unitLabel})`, 0, 2.5, 0.05, 2)}<p className="clearance-note">Макс. {numberLabel(2.5, 4)} {unitLabel}</p></div>
+              <div className="relief-options">{toggle('dogBones', 'Угловые разгрузки')}
+                {config.dogBones && <div className="indented relief-control">{slider('dogBoneDiameter', `Диаметр (${unitLabel})`, 0.5, 5, 0.5)}</div>}
               </div>
             </div>
           </ParameterGroup>
-          <ParameterGroup title={<>Ergonomics (Construction)</>}>
-            {toggle('legMounts', 'Leg Mounts')}
+          <ParameterGroup title={<>Конструкция ножек</>}>
+            {toggle('legMounts', 'Крепления ножек')}
             {config.legMounts && <div className="leg-options">
-              <div className="grid-buttons leg-style"><button className={config.legMountStyle === 'boltPattern' ? 'active' : ''} onClick={() => patch('legMountStyle', 'boltPattern')}>Bolt pattern</button><button className={config.legMountStyle === 'cornerPlate' ? 'active' : ''} onClick={() => patch('legMountStyle', 'cornerPlate')}>Corner plates</button></div>
+              <div className="grid-buttons leg-style"><button className={config.legMountStyle === 'boltPattern' ? 'active' : ''} onClick={() => patch('legMountStyle', 'boltPattern')}>Схема болтов</button><button className={config.legMountStyle === 'cornerPlate' ? 'active' : ''} onClick={() => patch('legMountStyle', 'cornerPlate')}>Угловые пластины</button></div>
               {config.legMountStyle === 'boltPattern' ? <>
-                <div className="fields"><label className="field"><span>Bolt size (M)</span><NumberInput value={numberLabel(config.legBoltDiameter, 2)} min={1 / (config.units === 'mm' ? 1 : mmPerInch)} max={100 / (config.units === 'mm' ? 1 : mmPerInch)} step={config.units === 'mm' ? 1 : 0.0625} onValue={value => setNumeric('legBoltDiameter', readDisplay(value, config.units))} /></label><label className="field"><span>Hole Ø (auto)</span><output>{numberLabel(config.legBoltDiameter + 1.5, 3)} {unitLabel}</output></label></div>
-                <div className="fields">{numericInput('legPatternX', 'Pattern X', config.legBoltDiameter * 1.5, 1000, 5)}{numericInput('legPatternY', 'Pattern Y', config.legBoltDiameter * 1.5, 1000, 5)}</div>
-                <div className="fields">{(['legCols', 'legRows'] as const).map((key, index) => <label className="field" key={key}><span>{index ? 'Rows' : 'Holes per row'}</span><select value={config[key]} onChange={event => setNumeric(key, Number(event.target.value))}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>)}</div>
-                <div className="fields">{numericInput('legEdgeOffset', 'From edge', 0, 1000, 5)}{numericInput('legBottomOffset', 'From bottom', 0, 1000, 5)}</div>
-                <p>{config.legCols * config.legRows} holes per corner, both ends of every skirt. Minimum spacing for M{config.legBoltDiameter}: {numberLabel(config.legBoltDiameter * 1.5, 2)} {unitLabel}.</p>
+                <div className="fields"><label className="field"><span>Размер болта (M)</span><NumberInput value={numberLabel(config.legBoltDiameter, 2)} min={1 / (config.units === 'mm' ? 1 : mmPerInch)} max={100 / (config.units === 'mm' ? 1 : mmPerInch)} step={config.units === 'mm' ? 1 : 0.0625} onValue={value => setNumeric('legBoltDiameter', readDisplay(value, config.units))} /></label><label className="field"><span>Диаметр отверстия Ø (авто)</span><output>{numberLabel(config.legBoltDiameter + 1.5, 3)} {unitLabel}</output></label></div>
+                <div className="fields">{numericInput('legPatternX', 'Шаг по X', config.legBoltDiameter * 1.5, 1000, 5)}{numericInput('legPatternY', 'Шаг по Y', config.legBoltDiameter * 1.5, 1000, 5)}</div>
+                <div className="fields">{(['legCols', 'legRows'] as const).map((key, index) => <label className="field" key={key}><span>{index ? 'Ряды' : 'Отверстий в ряду'}</span><select value={config[key]} onChange={event => setNumeric(key, Number(event.target.value))}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>)}</div>
+                <div className="fields">{numericInput('legEdgeOffset', 'От края', 0, 1000, 5)}{numericInput('legBottomOffset', 'От низа', 0, 1000, 5)}</div>
+                <p>Отверстий на угол: {config.legCols * config.legRows}, на обоих концах каждой юбки. Минимальный шаг для M{config.legBoltDiameter}: {numberLabel(config.legBoltDiameter * 1.5, 2)} {unitLabel}.</p>
               </> : <>
-                <div className="fields">{numericInput('legPlateSize', 'Plate size', 80, 400, 5)}<label className="field"><span>Plate & jumper thickness</span><output>{numberLabel(config.thickness, 2)} {unitLabel} — table stock</output></label></div>
-                <div className="fields"><label className="field"><span>Jumper length (auto)</span><output>{numberLabel(config.height - config.thickness, 2)} {unitLabel}</output></label><label className="field"><span>Jumper width (auto)</span><output>{numberLabel(config.height * 0.3, 2)} {unitLabel}</output></label></div>
-                <div className="fields">{numericInput('legPlateHoleDiameter', 'Mounting hole Ø', 1, 40, 1)}{numericInput('legPlateHoleSpacing', 'Hole pattern', 20, 350, 5)}</div>
-                <div className="fields">{numericInput('legProfileSize', 'Square tube', 20, 200, 5)}{numericInput('legLength', 'Leg assembly below frame', 100, 1500, 25)}</div>
-                {cornerPlate ? <p>4 fixed corner plates and 4 removable leg mounting plates {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with four Ø{numberLabel(cornerPlate.holeDiameter, 2)} holes on a {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel} pattern. Four support jumpers: {numberLabel(cornerPlate.jumperLength, 2)} × {numberLabel(cornerPlate.jumperWidth, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, each with a {numberLabel(cornerPlate.jumperTabWidth, 2)} {unitLabel} partial-width tab.</p> : <p className="socket-error">The corner plate, jumper, tabs, slots or hole pattern do not fit the current table and internal frame. Increase the table or plate size, or reduce the conflicting inputs.</p>}
-                <p>The upper corner plate underside and the uninterrupted skirt lower edge share the finished frame-bottom plane. Only the corner seat steps up by one stock thickness. At each skirt joint, a partial tab mechanically locates the plate while the adjacent open edge provides an internal corner for a fillet weld; the physical plate corner remains intact. Each jumper supports the inner free corner and rises to the tabletop underside: length is H − stock thickness and width is 0.3 × H. Plates and jumpers use the selected table stock; H100 / T6 produces the 94 × 30 mm reference blank.</p>
-                <p>Each plain lower mounting plate bolts to its corner plate through the matching holes. The tube is welded to the lower plate, not the table. Lower plates have no tabs or slots; bolts are not shown in 3D. Tube cut length is {numberLabel(cornerPlate?.legTubeLength ?? config.legLength - config.thickness, 2)} {unitLabel}; the plate plus tube preserve the specified distance below the frame. Finish the mating faces flush before bolting.</p>
+                <div className="fields">{numericInput('legPlateSize', 'Размер пластины', 80, 400, 5)}<label className="field"><span>Толщина пластин и перемычек</span><output>{numberLabel(config.thickness, 2)} {unitLabel} — металл стола</output></label></div>
+                <div className="fields"><label className="field"><span>Длина перемычки (авто)</span><output>{numberLabel(config.height - config.thickness, 2)} {unitLabel}</output></label><label className="field"><span>Ширина перемычки (авто)</span><output>{numberLabel(config.height * 0.3, 2)} {unitLabel}</output></label></div>
+                <div className="fields">{numericInput('legPlateHoleDiameter', 'Монтажное отверстие Ø', 1, 40, 1)}{numericInput('legPlateHoleSpacing', 'Шаг отверстий', 20, 350, 5)}</div>
+                <div className="fields">{numericInput('legProfileSize', 'Квадратная труба', 20, 200, 5)}{numericInput('legLength', 'Длина ножки ниже рамы', 100, 1500, 25)}</div>
+                {cornerPlate ? <p>4 неподвижные угловые пластины и 4 съёмные монтажные пластины ножек {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.size, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}; в каждой по четыре отверстия Ø{numberLabel(cornerPlate.holeDiameter, 2)} с шагом {numberLabel(cornerPlate.holeSpacing, 2)} × {numberLabel(cornerPlate.holeSpacing, 2)} {unitLabel}. Четыре опорные перемычки {numberLabel(cornerPlate.jumperLength, 2)} × {numberLabel(cornerPlate.jumperWidth, 2)} × {numberLabel(cornerPlate.thickness, 2)} {unitLabel}, каждая с шипом неполной ширины {numberLabel(cornerPlate.jumperTabWidth, 2)} {unitLabel}.</p> : <p className="socket-error">Угловая пластина, перемычка, шипы, пазы или схема отверстий не помещаются в текущий стол и внутреннюю раму. Увеличьте стол или пластину либо уменьшите конфликтующие размеры.</p>}
+                <p>Нижняя сторона верхней угловой пластины и непрерывная нижняя кромка юбки лежат в одной плоскости низа рамы. Только посадочное место в углу поднято на толщину металла. В каждом соединении с юбкой шип неполной ширины фиксирует пластину, а соседняя открытая кромка образует внутренний угол под угловой сварной шов; физический угол пластины остаётся целым. Каждая перемычка поддерживает свободный внутренний угол и поднимается до нижней стороны столешницы: длина равна H минус толщина металла, ширина — 0,3 × H. Пластины и перемычки вырезаются из выбранного металла стола; H100 / T6 даёт эталонную заготовку 94 × 30 мм.</p>
+                <p>Каждая простая нижняя монтажная пластина крепится болтами к угловой пластине через совпадающие отверстия. Труба приваривается к нижней пластине, а не к столу. На нижних пластинах нет шипов и пазов; болты в 3D не показаны. Длина заготовки трубы: {numberLabel(cornerPlate?.legTubeLength ?? config.legLength - config.thickness, 2)} {unitLabel}; пластина и труба сохраняют заданное расстояние ниже рамы. Перед затяжкой болтов обработайте сопрягаемые поверхности заподлицо.</p>
               </>}
             </div>}
-            {toggle('liftingHoles', 'Lifting Holes')}
+            {toggle('liftingHoles', 'Отверстия для подъёма')}
           </ParameterGroup>
-          <ParameterGroup title={<>Custom Holes</>}><p>X and Y are measured from the centre of the part — the same origin the exported DXF uses. A hole is added to every copy of the selected part.</p>
+          <ParameterGroup title={<>Пользовательские отверстия</>}><p>X и Y отсчитываются от центра детали — это же начало координат используется в экспортируемом DXF. Отверстие добавляется в каждую копию выбранной детали.</p>
             {config.customHoles.map(hole => <div className="hole-row" key={hole.id}>
-              <div className="hole-part"><select aria-label="Part" value={hole.part} onChange={event => updateHole(hole.id, 'part', event.target.value)}>{partNames.map(name => <option key={name} value={name}>{partLabels[name]}</option>)}</select><button title="Remove this hole" aria-label="Remove hole" onClick={() => patch('customHoles', config.customHoles.filter(item => item.id !== hole.id))}><Icon name="trash" size={12} /></button></div>
-              <div className="fields three">{(['x', 'y', 'd'] as const).map(key => <label className="field" key={key}><span>{key === 'd' ? 'Ø' : key.toUpperCase()}</span><NumberInput aria-label={key === 'd' ? 'Diameter' : key.toUpperCase()} step={(key === 'd' ? 1 : 5) / (config.units === 'mm' ? 1 : mmPerInch)} min={key === 'd' ? 0.1 / (config.units === 'mm' ? 1 : mmPerInch) : undefined} value={numberLabel(hole[key], 3)} onValue={value => updateHole(hole.id, key, String(value))} /></label>)}</div>
+              <div className="hole-part"><select aria-label="Деталь" value={hole.part} onChange={event => updateHole(hole.id, 'part', event.target.value)}>{partNames.map(name => <option key={name} value={name}>{partLabels[name]}</option>)}</select><button title="Удалить это отверстие" aria-label="Удалить отверстие" onClick={() => patch('customHoles', config.customHoles.filter(item => item.id !== hole.id))}><Icon name="trash" size={12} /></button></div>
+              <div className="fields three">{(['x', 'y', 'd'] as const).map(key => <label className="field" key={key}><span>{key === 'd' ? 'Ø' : key.toUpperCase()}</span><NumberInput aria-label={key === 'd' ? 'Диаметр' : key.toUpperCase()} step={(key === 'd' ? 1 : 5) / (config.units === 'mm' ? 1 : mmPerInch)} min={key === 'd' ? 0.1 / (config.units === 'mm' ? 1 : mmPerInch) : undefined} value={numberLabel(hole[key], 3)} onValue={value => updateHole(hole.id, key, String(value))} /></label>)}</div>
             </div>)}
-            <button className="secondary full" onClick={addHole}><Icon name="plus" size={14} />Add hole</button>{config.customHoles.length > 0 && <p>Use Measure in 2D to check hole positions.</p>}
+            <button className="secondary full" onClick={addHole}><Icon name="plus" size={14} />Добавить отверстие</button>{config.customHoles.length > 0 && <p>Проверьте положение отверстий инструментом «Измерить» в 2D.</p>}
           </ParameterGroup>
-          <ParameterGroup title={<>Removed Holes{config.removedHoles.length > 0 && <small>{config.removedHoles.length}</small>}</>}>
+          <ParameterGroup title={<>Удалённые отверстия{config.removedHoles.length > 0 && <small>{config.removedHoles.length}</small>}</>}>
             {config.removedHoles.length ? <><ul className="removed">{config.removedHoles.map((hole, index) => <li key={typeof hole === 'string' ? hole : hole.id}>
               {typeof hole === 'string' ? <code>{hole}</code> : <><span>{partLabels[hole.part]}</span><code>{numberLabel(hole.x, 2)} : {numberLabel(hole.y, 2)}</code></>}
-              <button title="Restore this hole" aria-label="Restore hole" onClick={() => patch('removedHoles', config.removedHoles.filter((_, item) => item !== index))}><Icon name="plus" size={12} /></button>
-            </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Restore all</button><p>A removed hole disappears from every copy of that part. Coordinates are relative to the part centre.</p></> : <p>In Parts, choose Remove holes and click a hole. Removed holes are listed here and can be restored.</p>}
+              <button title="Восстановить это отверстие" aria-label="Восстановить отверстие" onClick={() => patch('removedHoles', config.removedHoles.filter((_, item) => item !== index))}><Icon name="plus" size={12} /></button>
+            </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Восстановить все</button><p>Удалённое отверстие исчезает из каждой копии этой детали. Координаты отсчитываются от центра детали.</p></> : <p>В разделе «Детали» выберите «Удалить отверстия» и нажмите на отверстие. Удалённые отверстия появятся здесь, откуда их можно восстановить.</p>}
           </ParameterGroup>
           <TableTools config={config} onChange={nestingTools => patch('nestingTools', nestingTools)} onChoose={() => selectWorkspace('tools')} onNotice={setNotice} />
           </fieldset>
@@ -335,10 +335,10 @@ export default function App() {
     visualization={<VisualizationSettings value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} />}
     production={<fieldset className="table-settings" disabled={Boolean(review)}><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={review ? review.message : geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
     actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={save} onShare={() => { onClose(); void share() }} disabled={Boolean(review || geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => { onClose(); setView('sheet') } } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
-    seo={<article className="seo"><div><h1>Welding Table Free Generator - DIY DXF Plans & 3D CAD</h1><p>Design a parametric welding table in your browser. Explore the 3D assembly, adjust its dimensions and joints, then export individual parts or the full layout as DXF.</p><h3>D16 and D28 Fixture Systems</h3><p>Choose D16/50, D28/100 or a custom hole diameter, pitch and grid origin. Square and diagonal grids share fixed edge and working-surface datums across the top and skirts. Grid geometry alone does not certify accessory fit.</p><h3>Tab and Slot Construction (Interlocking Design)</h3><p>Set sheet thickness, tab width and joint clearance to plan the interlocking perimeter and support frame. Inspect the generated contours and check the fit before cutting.</p><h3>Dog-Bone Corner Reliefs</h3><p>Optional corner reliefs provide clearance for the tabs. The DXF keeps circular holes and relief arcs as native entities on separate cutting and engraving layers.</p><h3>Internal Support Frame and Ribs</h3><p>Adjust the support rib spacing and inspect the assembled or exploded table. Use the original skirt bolt pattern or generate four horizontal corner plates that interlock with both adjoining skirts and bolt to separate plain plates welded to the removable square-tube legs, and add lifting openings or coordinate-based custom holes to the relevant parts.</p><h3>Download Welding Table DXF Files</h3><p>Download individual part DXFs in a ZIP archive, export a complete layout, save the project as JSON or share its parameters with a link. Always have dimensions, tolerances and structural suitability verified before fabrication.</p></div></article>}>
-    {review ? <div className="three-loading socket-error" role="alert">Preserve the original project, then review the corrected geometry in Parameters.</div>
-      : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Interactive 2D welding table parts layout" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
+    seo={<article className="seo"><div><h1>Бесплатный генератор сварочных столов — DXF-чертежи и 3D CAD</h1><p>Создайте параметрический сварочный стол в браузере. Изучите 3D-сборку, настройте размеры и соединения, затем экспортируйте отдельные детали или полную раскладку в DXF.</p><h3>Системы оснастки D16 и D28</h3><p>Выберите D16/50, D28/100 либо задайте диаметр отверстий, шаг и начало сетки вручную. У квадратной и диагональной сеток фиксированные начала координат от краёв и рабочей поверхности столешницы и юбок. Одна только геометрия сетки не подтверждает совместимость оснастки.</p><h3>Конструкция на шипах и пазах</h3><p>Задайте толщину листа, ширину шипов и зазор в соединениях, чтобы построить взаимно фиксирующиеся детали периметра и опорной рамы. Перед резкой проверьте построенные контуры и посадку соединений.</p><h3>Угловые разгрузки</h3><p>Дополнительные угловые разгрузки обеспечивают место для шипов. В DXF круглые отверстия и дуги разгрузок остаются исходными сущностями на отдельных слоях резки и гравировки.</p><h3>Внутренняя опорная рама и рёбра</h3><p>Настройте шаг опорных рёбер и изучите собранный либо разнесённый стол. Можно использовать исходную схему болтов на юбках или создать четыре горизонтальные угловые пластины, которые соединяются с обеими соседними юбками и крепятся болтами к отдельным простым пластинам на съёмных ножках из квадратной трубы. В нужные детали также можно добавить отверстия для подъёма и пользовательские отверстия по координатам.</p><h3>Скачать DXF-файлы сварочного стола</h3><p>Скачайте DXF отдельных деталей в ZIP-архиве, экспортируйте полную раскладку, сохраните проект как JSON или поделитесь ссылкой с его параметрами. Перед изготовлением обязательно проверьте размеры, допуски и пригодность конструкции.</p></div></article>}>
+    {review ? <div className="three-loading socket-error" role="alert">Сохраните исходный проект, затем проверьте исправленную геометрию в разделе «Параметры».</div>
+      : geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Интерактивная 2D-раскладка деталей сварочного стола" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
       : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} baseline={tableLayout} onBaseline={rememberTableLayout} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
-      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Loading 3D assembly…</div>}><ThreeAssembly config={config} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}
+      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D-сборки…</div>}><ThreeAssembly config={config} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}
   </GeneratorShell>
 }

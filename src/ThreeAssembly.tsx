@@ -12,11 +12,11 @@ type PartInfo = AssemblyPartInfo
 type PartMesh = AssemblyPartMesh
 
 const partTitles: Record<string, string> = {
-  top: 'Main Top Plate', longSkirt: 'Longitudinal Skirt', shortSkirt: 'Transverse Skirt',
-  longRib: 'Longitudinal Support Rib', shortRib: 'Transverse Support Rib',
-  legCornerPlate: 'Leg Corner Plate',
-  legJumper: 'Leg Support Jumper',
-  legMountPlate: 'Leg Mounting Plate',
+  top: 'Основная верхняя плита', longSkirt: 'Продольная юбка', shortSkirt: 'Поперечная юбка',
+  longRib: 'Продольное опорное ребро', shortRib: 'Поперечное опорное ребро',
+  legCornerPlate: 'Угловая пластина ножки',
+  legJumper: 'Опорная перемычка ножки',
+  legMountPlate: 'Монтажная пластина ножки',
 }
 
 const plate = (
@@ -31,7 +31,7 @@ const plate = (
   const width = part.width - (tableName === 'shortSkirt' || tableName?.endsWith('Rib') ? 2 * config.thickness : 0)
   const height = part.height - (!tableName || part.name === 'top' || (part.name.endsWith('Skirt') && config.legMounts && config.legMountStyle === 'cornerPlate') || part.name === 'legCornerPlate' || part.name === 'legJumper' || part.name === 'legMountPlate' ? 0 : config.thickness)
   const metricWeight = Number(partWeight(part).toFixed(1))
-  const unit = config.units === 'mm' ? 'mm' : 'in'
+  const unit = config.units === 'mm' ? 'мм' : 'дюйм'
   const mesh: PartMesh = Object.assign(
     extrudedPartMesh(part, runtime.metal, { renderHoles: runtime.renderHoles, edgeColor: runtime.colors.edge }),
     { userData: {
@@ -43,7 +43,7 @@ const plate = (
       currentFactor: runtime.factor,
       dims: `${display(width, config.units, 0)} × ${display(height, config.units, 0)} ${unit}`,
       weight: config.units === 'mm' ? metricWeight : (metricWeight * 2.20462).toFixed(1),
-      weightUnit: config.units === 'mm' ? 'kg' : 'lb',
+      weightUnit: config.units === 'mm' ? 'кг' : 'фунт',
       holesCount: part.holes.length,
     } satisfies PartInfo },
   )
@@ -58,7 +58,7 @@ const squareTubeLeg = (runtime: AssemblyRuntime, config: Config, mountingPlate: 
   // Plate-local +Z points down. Parenting keeps the welded tube with its plate when exploded.
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(config.legProfileSize, config.legProfileSize, length), runtime.metal)
   mesh.position.z = (config.thickness + length) / 2
-  mesh.name = 'Square tube leg'
+  mesh.name = 'Ножка из квадратной трубы'
   mesh.add(new THREE.LineSegments(
     new THREE.EdgesGeometry(mesh.geometry),
     new THREE.LineBasicMaterial({ color: runtime.colors.edge }),
@@ -77,7 +77,7 @@ const rebuildDimensions = (runtime: AssemblyRuntime, config: Config) => {
   addDimensionLine(runtime.dimensions, new THREE.Vector3(-config.length / 2, 0, z), new THREE.Vector3(config.length / 2, 0, z), new THREE.Vector3(0, 0, 1), runtime.colors.dim)
   addDimensionLine(runtime.dimensions, new THREE.Vector3(x, 0, config.width / 2), new THREE.Vector3(x, 0, -config.width / 2), new THREE.Vector3(1, 0, 0), runtime.colors.dim)
   addDimensionLine(runtime.dimensions, new THREE.Vector3(x, 0, z), new THREE.Vector3(x, -config.height, z), verticalNormal, runtime.colors.dim)
-  const unit = config.units === 'mm' ? 'mm' : 'in'
+  const unit = config.units === 'mm' ? 'мм' : 'дюйм'
   ;[
     dimensionLabel(`${display(config.length, config.units, 0)} ${unit}`, new THREE.Vector3(0, 0, z + 40), runtime.colors),
     dimensionLabel(`${display(config.width, config.units, 0)} ${unit}`, new THREE.Vector3(x + 40, 0, 0), runtime.colors),
@@ -236,8 +236,8 @@ export function ThreeAssembly({ config, resetToken, dark, nesting }: Props) {
     build={build}
     resetCamera={reset}
     initialExtent={Math.max(config.length, config.width)}
-    ariaLabel={nesting ? 'Interactive 3D sheet layout' : 'Interactive 3D welding table assembly'}
-    errorMessage="3D rendering is unavailable in this browser. The 2D layout and exports are still available."
+    ariaLabel={nesting ? 'Интерактивная 3D-раскладка на листах' : 'Интерактивная 3D-сборка сварочного стола'}
+    errorMessage="3D-рендеринг недоступен в этом браузере. 2D-раскладка и экспорт по-прежнему доступны."
     hostClassName="three-canvas"
     errorClassName="three-loading"
     renderHoles={nesting ? true : config.renderHoles}

@@ -49,13 +49,13 @@ const assertConfig = (config: ViseModuleConfig) => {
   for (const key of Object.keys(viseModuleLimits) as Array<keyof typeof viseModuleLimits>) {
     const value = config[key], { min, max } = viseModuleLimits[key]
     if (!Number.isFinite(value) || value < min || value > max)
-      throw new FabricationError('invalid-dimensions', `Vise module ${key} must be ${min}–${max} mm`, { field: key, min, max })
+      throw new FabricationError('invalid-dimensions', `Параметр модуля тисков ${key} должен быть от ${min} до ${max} мм`, { field: key, min, max })
   }
   if (config.grid !== 'square' && config.grid !== 'staggered')
-    throw new FabricationError('invalid-grid', 'Vise module grid must follow a supported table pattern')
+    throw new FabricationError('invalid-grid', 'Сетка модуля тисков должна соответствовать поддерживаемой схеме стола')
   if (config.tipHeight >= config.height
     || config.tabWidth + config.clearance >= config.tipHeight - config.thickness - config.clearance / 2)
-    throw new FabricationError('invalid-dimensions', 'The curved sides, radial slots and locating joints must fit the vise module envelope')
+    throw new FabricationError('invalid-dimensions', 'Криволинейные боковины, радиальные пазы и установочные соединения должны помещаться в габарит модуля тисков')
 }
 
 /** Five flat plates from the reference; exact grids, curves, slots and joints are proposed. */
@@ -86,7 +86,7 @@ export const viseModuleParts = (config: ViseModuleConfig = viseModuleDefaults): 
   const lastStation = (span: number) => holeInset + Math.floor((span - 2 * holeInset) / holePitch) * holePitch
   const topFar = (span: number) => holeInset + (Math.floor((span - 2 * holeInset) / holePitch) - 1) * holePitch
   if (topFar(length) <= topNear || topFar(width) <= topNear)
-    throw new FabricationError('missing-grid-row', 'The vise module needs eight peripheral top holes and usable staggered wall rows')
+    throw new FabricationError('missing-grid-row', 'Для модуля тисков нужны восемь крайних отверстий на верхней пластине и пригодные диагональные ряды на стенках')
   const radialSlots = Array.from({ length: 8 }, (_, index) => {
     const angle = index * 45, radians = angle * Math.PI / 180, ux = Math.cos(radians), uy = Math.sin(radians)
     const boundary = Math.min(length / (2 * Math.abs(ux)), width / (2 * Math.abs(uy)))
@@ -104,15 +104,15 @@ export const viseModuleParts = (config: ViseModuleConfig = viseModuleDefaults): 
     || pointInContour(p, side) && nativePointContourDistance(p, [side[0]]) >= holeDiameter / 2 + holeWeb)
   const mountHoles = grid(width, height), frontHoles = grid(width, config.tipHeight).map(p => ({ ...p, y: p.y - tipBottom }))
   if (!mountHoles.length || !frontHoles.length || !sideHoles.length)
-    throw new FabricationError('missing-grid-row', 'Every vise module wall needs a usable table-grid row')
+    throw new FabricationError('missing-grid-row', 'На каждой стенке модуля тисков должен помещаться пригодный ряд сетки стола')
   const part = (name: ViseModulePartName, label: string, width: number, height: number, count: number, contours: Contour[], holes: Hole[]): Part => ({
     name, label, width, height, thickness, count, contours, holes, slots: [],
   })
   const parts = [
-    part('viseTop', 'Vise working top', length, width, 1, [top, ...radialSlots], topHoles),
-    part('viseMount', 'Vise mounting wall', width, height, 1, [end(height, mountJoint)], mountHoles),
-    part('viseFront', 'Vise free-end wall', width, config.tipHeight, 1, [end(config.tipHeight, frontJoint - tipBottom)], frontHoles),
-    part('viseSide', 'Vise curved side', length, height, 2, [side], sideHoles),
+    part('viseTop', 'Рабочая поверхность модуля тисков', length, width, 1, [top, ...radialSlots], topHoles),
+    part('viseMount', 'Монтажная стенка модуля тисков', width, height, 1, [end(height, mountJoint)], mountHoles),
+    part('viseFront', 'Свободная торцевая стенка модуля тисков', width, config.tipHeight, 1, [end(config.tipHeight, frontJoint - tipBottom)], frontHoles),
+    part('viseSide', 'Криволинейная боковина модуля тисков', length, height, 2, [side], sideHoles),
   ]
   for (const part of parts) validateToolPart(part, { holeWeb, cutWeb: 8 })
   return parts

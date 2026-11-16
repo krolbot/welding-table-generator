@@ -114,14 +114,14 @@ export const defaults: Config = {
 }
 
 export const partLabels: Record<PartName, string> = {
-  top: 'Top plate',
-  longSkirt: 'Long skirt',
-  shortSkirt: 'Short skirt',
-  longRib: 'Long rib',
-  shortRib: 'Short rib',
-  legCornerPlate: 'Leg corner plate',
-  legJumper: 'Leg support jumper',
-  legMountPlate: 'Leg mounting plate',
+  top: 'Столешница',
+  longSkirt: 'Длинная юбка',
+  shortSkirt: 'Короткая юбка',
+  longRib: 'Продольное ребро',
+  shortRib: 'Поперечное ребро',
+  legCornerPlate: 'Угловая пластина ножки',
+  legJumper: 'Опорная перемычка ножки',
+  legMountPlate: 'Монтажная пластина ножки',
 }
 
 export const mmPerInch = 25.4
