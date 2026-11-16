@@ -245,6 +245,17 @@ test('export refuses stale tools, stock, quantities, duplicates, changed sheet a
   assert.equal(settings.nestingKey(c), settings.nestingKey({ ...c, units: 'inch', exploded: 75, showDimensions: true }))
 })
 
+test('table capacity failure rejects a mixed job instead of finishing on a table-only preview', () => {
+  const c = table({ sheetLength: 700, sheetWidth: 700, nestingTools: [selection('square', 'square')] })
+  const job = cut.tableNestingJob(c)
+  job.options.attempts = 2
+  const iterator = jobs.searchNestingJob(job)
+  const first = iterator.next().value
+  assert.equal(first.phase, 'capacity')
+  assert.ok(first.result.unplaced.length > 0)
+  assert.throws(() => [...iterator], error => error.code === 'capacity-unavailable')
+})
+
 test('first-time mixed job exposes a non-exportable table-capacity phase before bounded shared search', () => {
   const c = table({ nestingTools: [selection('square', 'square')] })
   const job = cut.tableNestingJob(c); job.options.attempts = 2

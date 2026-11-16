@@ -10,7 +10,7 @@ export type NestingStock = { kind: 'new-sheets' } | { kind: 'table-offcuts'; bas
 export type NestingRun = { phase: 'capacity'; result: NestingResult } | { phase: 'nesting'; result: NestingResult; stock: NestingStock }
 export class NestingJobError extends Error {
   readonly name = 'NestingJobError'
-  constructor(readonly code: 'stale-baseline', message: string) { super(message) }
+  constructor(readonly code: 'stale-baseline' | 'capacity-unavailable', message: string) { super(message) }
 }
 const tableCapacityPasses = 48
 
@@ -49,7 +49,7 @@ export function* searchNestingJob(job: NestingJob): Generator<NestingRun> {
       yield { phase: 'capacity', result }
     }
   }
-  if (!baseline || !validNestingInventory(job.stock.tableParts, baseline, job.options)) return
+  if (!baseline || !validNestingInventory(job.stock.tableParts, baseline, job.options)) throw new NestingJobError('capacity-unavailable', 'The table-only search did not find a complete layout within the configured sheets. Selected tools were not laid out. Restart or change the table or sheet settings.')
   const stock: NestingStock = { kind: 'table-offcuts', baseline }
   for (const result of searchNesting(job.parts, { ...job.options, maxSheets: baseline.sheets.length })) {
     yield { phase: 'nesting', result, stock }

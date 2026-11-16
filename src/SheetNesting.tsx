@@ -29,20 +29,17 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const [stats, setStats] = useState<{ attempts: number; elapsedMs: number; search: NestingResult['stats'] | null }>({ attempts: 0, elapsedMs: 0, search: null })
   const [status, setStatus] = useState<'running' | 'pausing' | 'paused' | 'done' | 'error'>('running')
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
-  const [budget, setBudget] = useState(30)
   const [sheetIndex, setSheetIndex] = useState(0)
   const [mode, setMode] = useState<'3d' | '2d'>('3d')
   const [retry, setRetry] = useState(0)
   const wide = useWideWorkspace()
   const [inspectorOpen, setInspectorOpen] = useState(false)
   useEffect(() => setInspectorOpen(false), [wide])
-  const control = useRef<{ worker: Worker; running: boolean; busy: boolean; limit: number; elapsed: number; exhausted: boolean } | null>(null)
+  const control = useRef<{ worker: Worker; running: boolean; busy: boolean; exhausted: boolean } | null>(null)
   const sourceRef = useRef(job)
   sourceRef.current = job
   const onRunRef = useRef(onRun)
   onRunRef.current = onRun
-  const budgetRef = useRef(budget)
-  budgetRef.current = budget
 
   useEffect(() => {
     let active = true
@@ -52,20 +49,20 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
       let worker: Worker
       try { worker = new Worker(new URL('./nesting.worker.ts', import.meta.url), { type: 'module' }) }
       catch { setError({ code: 'worker-unavailable', message: 'This browser cannot start the sheet calculation.' }); setStatus('error'); return }
-      const state = { worker, running: true, busy: true, limit: budgetRef.current * 1000, elapsed: 0, exhausted: false }
+      const state = { worker, running: true, busy: true, exhausted: false }
       control.current = state
       worker.onmessage = (event: MessageEvent<NestingResponse>) => {
         const message = event.data
         if (!active || message.key !== key) return
         state.busy = false
         if ('error' in message) { state.running = false; setError(message.error); setStatus('error'); return }
-        state.elapsed = message.elapsedMs
         state.exhausted = message.done
         setStats({ attempts: message.run.result.stats.attempts, elapsedMs: message.elapsedMs, search: message.run.result.stats })
         setSnapshot(previous => previous?.key === key && previous.run.phase === message.run.phase && previous.run.result.stats.improvements === message.run.result.stats.improvements ? previous : { key, run: message.run })
         onRunRef.current?.(message.run)
-        if (message.done || !message.run.result.validation.valid) { state.running = false; setStatus('done'); return }
-        if (state.running && message.elapsedMs < state.limit) {
+        if (!message.run.result.validation.valid) { state.running = false; setStatus('error'); return }
+        if (message.done) { state.running = false; setStatus('done'); return }
+        if (state.running) {
           state.busy = true
           worker.postMessage({ type: 'continue', key } satisfies NestingRequest)
         } else { state.running = false; setStatus('paused') }
@@ -85,7 +82,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const resume = () => {
     const state = control.current
     if (!state || state.exhausted || state.busy) return
-    state.running = true; state.busy = true; state.limit = state.elapsed + budget * 1000
+    state.running = true; state.busy = true
     setStatus('running')
     state.worker.postMessage({ type: 'continue', key } satisfies NestingRequest)
   }
@@ -103,14 +100,14 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
     aria-label={label} value={display(settings[field], unitSystem, 2)} min={0} max={Number(display(maxGap, unitSystem, 2))} step={unitSystem === 'mm' ? 0.5 : 0.01}
     onValue={value => { if (value !== Number(display(settings[field], unitSystem, 2))) return onChange({ [field]: Math.max(0, Math.min(maxGap, readDisplay(value, unitSystem))) }) }} />
 
-  const statusLabel = status === 'running' ? 'Optimizing' : status === 'pausing' ? 'Finishing pass' : status === 'paused' ? 'Paused' : status === 'error' ? 'Stopped' : 'Finished'
+  const statusLabel = status === 'running' ? 'Optimizing' : status === 'pausing' ? 'Finishing pass' : status === 'paused' ? 'Paused' : error?.code === 'capacity-unavailable' ? 'No complete table layout' : status === 'error' ? 'Stopped' : complete ? 'Finished' : 'Search exhausted'
   const inspector = <>
       <header>{wide && <h3 id="nesting-title">Sheet nesting</h3>}<span className="nesting-status">{statusLabel}</span></header>
-      <p className="nesting-summary" role="status">{run?.phase === 'capacity' ? 'Calculating table-only capacity. Selected tools are not yet placed; export is disabled.' : result ? !result.validation.valid ? 'Validation failed. Export is disabled.' : result.unplaced.length ? `${result.unplaced.length} parts not placed. Export is disabled.` : `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Calculating the first verified layout…'}</p>
+      <p className="nesting-summary" role="status">{error ? error.code === 'capacity-unavailable' ? 'No complete table layout. Tools were not placed; export is disabled.' : 'Calculation failed. Export is disabled.' : run?.phase === 'capacity' ? 'Calculating table-only capacity. Selected tools are not yet placed; export is disabled.' : result ? !result.validation.valid ? 'Validation failed. Export is disabled.' : result.unplaced.length ? `${result.unplaced.length} parts not placed on the available sheets. Export is disabled.` : !complete ? 'The layout cannot be exported. Restart with the current project settings.' : `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Calculating the first verified layout…'}</p>
       {error && <p role="alert" className="nesting-error" data-error-code={error.code}>{error.message}</p>}
       {result && !result.validation.valid && <p className="nesting-error">{result.validation.violations[0]?.message}</p>}
       {run?.phase === 'nesting' && run.stock.kind === 'table-offcuts' && <p className="nesting-hint">Table-only capacity: {run.stock.baseline.sheets.length} sheet(s). No extra sheets for tools. Table parts may be rearranged. Export requires every selected tool in full.</p>}
-      {result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>Not placed in this search. Continue improving, change quantities or remove tools; no partial job can be exported.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
+      {run?.phase === 'nesting' && result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>{result.unplaced.length} parts are missing. {status === 'done' ? 'Search exhausted.' : status === 'paused' ? 'Search paused.' : status === 'error' ? 'Calculation stopped.' : 'Search still running.'} The table-only sheet limit does not grow when tools are added. No partial job can be exported.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
       <button className="nesting-export" disabled={!complete} onClick={() => { if (run?.phase === 'nesting') void onExport({ ...run, result: { ...run.result, stats: stats.search ?? run.result.stats } }).catch(error => onNotice(error instanceof Error ? error.message : 'Could not export this layout. Recalculate and try again.')) }}><Icon name="download" size={16} />Download sheet ZIP</button>
       {result && result.sheets.length > 0 && <>
         <label className="field"><span>Preview sheet</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Sheet {i + 1} · {s.placements.length} parts</option>)}</select></label>
@@ -121,8 +118,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
         </dl>
       </>}
       <div className="nesting-search">
-        <label className="field"><span>Search budget per run</span><select value={budget} onChange={event => setBudget(Number(event.target.value))}><option value={30}>30 seconds</option><option value={60}>1 minute</option><option value={180}>3 minutes</option></select></label>
-        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Pause search</button> : <button disabled={status === 'done' || status === 'error'} onClick={resume}>Continue improving</button>}<button onClick={() => setRetry(value => value + 1)}>Restart</button></div>
+        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Pause search</button> : <button disabled={status !== 'paused'} onClick={resume}>Continue improving</button>}<button onClick={() => setRetry(value => value + 1)}>Restart</button></div>
         <p>{stats.attempts} orders evaluated · {(stats.elapsedMs / 1000).toFixed(1)} s compute time.</p>
       </div>
       <details><summary>Spacing & batch</summary>
@@ -133,7 +129,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
       <details><summary>Layout & cutting notes</summary>
         {result && <p className="nesting-hint">Coverage includes holes. Green in 2D marks an empty edge strip, not all reusable offcuts. {complete && result.sheets.length === result.metrics.sheetLowerBound ? 'Sheet count meets the area lower bound; offcut shape can still improve.' : 'The lower bound is not a promise that this sheet count is feasible.'}</p>}
       <p className="nesting-hint">Native LINE / ARC / CIRCLE output, placement manifest and project settings. Contour search is heuristic, not a global optimum proof. Confirm kerf, lead-ins, clamps and cutting order in CAM.</p>
-        <p>Pausing or reaching the budget finishes the current pass. Export keeps the best verified layout.</p>
+        <p>Only Pause stops an active search early. The search ends after its order limit; export requires every part to be placed.</p>
       </details>
   </>
 
@@ -160,7 +156,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
       </div>
     </div>
     {wide ? <section className="sheet-panel" aria-labelledby="nesting-title">{inspector}</section> : <>
-      <button className="sheet-mobile-summary" aria-haspopup="dialog" aria-controls="sheet-dialog" onClick={() => setInspectorOpen(true)}><span><strong>{complete && result ? `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : 'Sheet nesting'}</strong><small>{statusLabel} · Settings & export</small></span><Icon name="chevron" /></button>
+      <button className="sheet-mobile-summary" aria-haspopup="dialog" aria-controls="sheet-dialog" onClick={() => setInspectorOpen(true)}><span><strong>{error ? error.code === 'capacity-unavailable' ? 'Table not placed · no export' : 'Calculation failed · no export' : run?.phase === 'capacity' ? 'Table only · tools not placed' : run?.phase === 'nesting' && result?.unplaced.length ? `${result.unplaced.length} parts not placed · no export` : complete && result ? `${result.placements.length} parts · ${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'}` : result ? 'Layout unavailable · no export' : 'Sheet nesting'}</strong><small>{statusLabel} · Settings & export</small></span><Icon name="chevron" /></button>
       <WorkspaceDialog id="sheet-dialog" title="Sheet nesting" className="sheet-dialog" open={inspectorOpen} onClose={() => setInspectorOpen(false)}><div className="sheet-inspector">{inspector}</div></WorkspaceDialog>
     </>}
   </div>
