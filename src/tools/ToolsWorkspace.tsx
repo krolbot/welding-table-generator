@@ -82,8 +82,8 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, onNavigati
   }, [key, rejected, fabrication.error])
   const parts = fabrication.parts
   const batchParts = useMemo(() => parts?.map(part => ({ ...part, count: part.count * project.copies })), [parts, project.copies])
-  const layout = useMemo(() => parts && arrangeParts(parts), [parts])
-  const summary = useMemo(() => parts && fabricationEstimate(parts, project.sheet), [parts, project.sheet])
+  const layout = useMemo(() => batchParts && arrangeParts(batchParts), [batchParts])
+  const summary = useMemo(() => batchParts && fabricationEstimate(batchParts, project.sheet), [batchParts, project.sheet])
   const admissionError = rejected ? loadError : fabrication.error ?? tableAdmissionError(project)
   const factor = units === 'mm' ? 1 : mmPerInch, unitLabel = units === 'mm' ? 'mm' : 'in'
 

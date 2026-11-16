@@ -94,7 +94,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const features = useMemo(() => sheet?.placements.map(item => drawingFeatures([{ part: item.part, position: item.translation, rotation: item.rotation }])) ?? [], [sheet])
   const focused = useMemo(() => result && sheet ? { ...result, sheets: [sheet], placements: sheet.placements } : undefined, [result, sheet])
   const units = unitSystem === 'mm' ? 'mm' : 'in'
-  const complete = run?.phase === 'nesting' && result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(run, key))
+  const complete = status !== 'error' && run?.phase === 'nesting' && result && result.validation.valid && !result.unplaced.length && result.placements.length > 0 && (!isLayoutValid || isLayoutValid(run, key))
   const running = status === 'running' || status === 'pausing'
   const spacingField = (field: 'edgeGap' | 'partGap', label: string) => <NumberField label={`${label} (${units})`}
     aria-label={label} value={display(settings[field], unitSystem, 2)} min={0} max={Number(display(maxGap, unitSystem, 2))} step={unitSystem === 'mm' ? 0.5 : 0.01}

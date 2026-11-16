@@ -1,6 +1,6 @@
 import type { Config, PartName, RemovedHole } from './model'
 import { strokeGlyphs } from './strokeGlyphs.js'
-import { nativePointContourDistance, type ArcSegment, type Contour, type LineSegment, type Point } from './contourGeometry'
+import { nativeContourDistance, nativePointContourDistance, type ArcSegment, type Contour, type LineSegment, type Point } from './contourGeometry'
 export type { ArcSegment, Contour, ContourSegment, LineSegment, Point } from './contourGeometry'
 export type Hole = Point & { id: string; d: number; kind: 'grid' | 'custom' | 'mount' | 'lift' | 'access' }
 export type Slot = Point & { width: number; height: number }
@@ -28,10 +28,21 @@ const epsilon = 1e-6
 const point = (x: number, y: number): Point => ({ x, y })
 const key = (part: PartName, x: number, y: number) => `${part}:${x.toFixed(3)}:${y.toFixed(3)}`
 const radians = (degrees: number) => degrees * Math.PI / 180
-const arcPoint = (center: Point, radius: number, angle: number) => point(
+const arcPoint = (center: Point, radius: number, angle: number): Point => point(
   center.x + radius * Math.cos(radians(angle)),
   center.y + radius * Math.sin(radians(angle)),
 )
+
+/** All contours after the first describe voids, never separate solid islands. */
+export const internalCutsInsideOuter = (part: FabricationPart, web = 0): boolean => {
+  const outer = part.contours[0]
+  return Boolean(outer?.length) && part.contours.slice(1).every(cut => {
+    const first = cut[0]
+    if (!first) return false
+    const start = first.type === 'line' ? first.from : arcPoint(first.center, first.radius, first.start)
+    return pointInContour(start, outer) && nativeContourDistance(cut, outer) > Math.max(epsilon, web - epsilon)
+  })
+}
 
 const line = (from: Point, to: Point): LineSegment => ({ type: 'line', from, to })
 const distance = (a: Point, b: Point) => Math.hypot(b.x - a.x, b.y - a.y)
@@ -416,10 +427,16 @@ export const fabricationError = (c: Config): FabricationError | undefined => {
     return new FabricationError('skirt-clearance', 'The fixed skirt grid does not fit this stock or height. Increase the grid origin or skirt height, or reduce the stock thickness. Rows will not be shifted automatically.', { margin: c.margin, minimum: c.thickness + c.holeDiameter / 2 + minimumHoleWeb, height: c.height })
   if (!Number.isFinite(c.tabWidth) || c.tabWidth < 5 || c.tabWidth > Math.floor(Math.min(c.height - c.thickness, c.length, c.width) / 2) - 5)
     return new FabricationError('tab-width', 'The locating tabs do not fit the selected table height and stock. Increase the height, reduce the stock thickness or adjust the tab width.')
+  const positions = framePositions(c)
+  if ([positions.short, positions.long].some(stations => stations.some((station, index) => stations.slice(index + 1).some(other => Math.abs(station - other) < epsilon))))
+    return new FabricationError('cut-clearance', 'Two ribs snap to the same station. Change rib spacing or the tooling grid before fabrication.')
   if (c.legMounts && c.legMountStyle === 'cornerPlate' && !legCornerPlateSpec(c)) return new FabricationError('leg-plates', 'The leg plates, joints or mounting holes do not fit the frame. Adjust the conflicting dimensions before fabrication export.')
   const access = ribAccessHoleSpec(c)
   if (access && !access.valid) return new FabricationError('rib-access', `Rib access holes do not fit. Maximum diameter is ${access.maxDiameter.toFixed(2)} mm for the current ribs. Reduce the hole diameter or increase the available rib web. Fabrication export is disabled.`, { maximum: access.maxDiameter })
   const parts = makeParts(c)
+  // No manufacturing cut may touch or cross the outline, including its tab notches.
+  for (const part of parts) if (!internalCutsInsideOuter(part, minimumHoleWeb))
+    return new FabricationError('cut-clearance', `${part.label} has an internal cut too close to or crossing its outer contour. Adjust the ribs, tabs or stock before fabrication.`)
   if (c.legMounts && c.legMountStyle === 'boltPattern') {
     for (const part of parts.filter(part => part.name === 'longSkirt' || part.name === 'shortSkirt')) {
       for (const [index, hole] of part.holes.entries()) {

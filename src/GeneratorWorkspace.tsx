@@ -38,7 +38,7 @@ export function VisualizationSettings({ value, onChange }: { value: VisualSettin
 type Estimate = { kg: number; cut: number; holes: number; engraving?: number; fit: boolean }
 export function ProductionEstimate({ summary, units, sheet, onSheetChange, error }: { summary: Estimate; units: Config['units']; sheet: { length: number; width: number }; onSheetChange: (patch: Partial<{ length: number; width: number }>) => void; error?: string | null }) {
   const unitLabel = units === 'mm' ? 'mm' : 'in', factor = units === 'mm' ? 1 : mmPerInch
-  const amount = (value: number, conversion: number) => (units === 'mm' ? value : Number(value.toFixed(1)) * conversion).toFixed(1)
+  const amount = (value: number, conversion: number) => (units === 'mm' ? value : value * conversion).toFixed(1)
   return <section className="production-card">
     <h3>Production estimate</h3>
     {error ? <p className="socket-error">Estimates unavailable until the fabrication geometry is valid.</p> : <>

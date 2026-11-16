@@ -8,7 +8,7 @@ import { extensionDimensions } from './extension'
 import { compactExtensionDimensions } from './compactExtension'
 import { viseModuleDimensions } from './viseModule'
 import { cornerBracketDimensions } from './cornerBracket'
-import { parseToolProject, projectJson, projectParts, projectAssembly, projectModelParts, projectNestingOptions, validProjectLayout, ToolProjectError, type ToolProject } from './project'
+import { parseToolProject, projectJson, projectParts, projectAssembly, projectNestingOptions, validProjectLayout, ToolProjectError, type ToolProject } from './project'
 
 const fabricationNotes = (project: ToolProject) => project.tool === 'viseModule'
   ? 'Vise mounting module: 250x250x100 mm reference envelope, five flat plates: slotted top, mounting wall, shallow front wall, two curved sides; open underside. Eight separate radial slots and a separate central round hole. Every outer rounded tip stops 15 mm before the plate boundary along its ray, including to the corners on a square top; lengths are derived, not equal. This is not perpendicular side clearance. Stock and mounting-hole diameter/pitch/origin/pattern inherit from the host table. The full mounting-wall grid is measured down from the working surface; side lower rows are clipped to the curved silhouette. Align the working faces and edge datums; verify the actual retained host holes. Slots, free-end depth, curved profile and locating joints are design assumptions, not factory dimensions. Wall tabs seat flush in top edge notches; side tabs locate in end-wall notches. Confirm vise bolt pattern, fastener clearance/grip, sample joint fit and welding access. Reference pattern: https://umetalli.com/products/vise-mount-01-250x250x100-6-mm (no dimensioned slot drawing).\n'
@@ -55,6 +55,6 @@ export const downloadToolParts = async (project: ToolProject, table: Pick<Config
 export const toolStripDxf = (project: ToolProject, table: Pick<Config, 'thickness'>) => {
   parseToolProject(projectJson(project))
   assertTableStock(project, table)
-  return nativeDxfForNestedSheet(arrangeParts(projectModelParts(project)).instances.map(({ part, instance, position }) => ({ part, instance, translation: position, rotation: 0, sheet: 0 })))
+  return nativeDxfForNestedSheet(arrangeParts(projectParts(project)).instances.map(({ part, instance, position }) => ({ part, instance, translation: position, rotation: 0, sheet: 0 })))
 }
 export const downloadToolStrip = (project: ToolProject, table: Pick<Config, 'thickness'>) => downloadFile(toolStripDxf(project, table), `WeldingTable_${project.tool}_Strip.dxf`, 'application/dxf')

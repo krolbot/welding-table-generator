@@ -112,5 +112,6 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   tampered.placements[0].part.holes.pop()
   assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: project.size.thickness }), /stale or invalid/)
   const strip = new DxfParser().parseSync(toolExport.toolStripDxf(project, { thickness: project.size.thickness }))
-  assert.equal(strip.entities.filter(entity => entity.type === 'CIRCLE').length, 3)
+  assert.equal(strip.entities.filter(entity => entity.type === 'CIRCLE').length, 9)
+  assert.equal(strip.entities.filter(entity => entity.type === 'LINE').length, 18)
 })

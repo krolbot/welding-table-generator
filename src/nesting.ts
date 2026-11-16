@@ -1,4 +1,4 @@
-import { signedContourArea, type Contour, type FabricationPart, type Point } from './geometry'
+import { internalCutsInsideOuter, signedContourArea, type Contour, type FabricationPart, type Point } from './geometry'
 import { ContactCache, type ContactShape } from './nestingNfp'
 import { nativeContourBounds, nativeContourDistance } from './contourGeometry'
 
@@ -183,6 +183,7 @@ const translated = (polygon: Polygon, translation: Point): Polygon => {
 }
 
 const makeShape = (part: Part, rotation: Rotation, tolerance: number): Shape | undefined => {
+  if (!internalCutsInsideOuter(part)) return undefined
   const polygon = tessellateOuter(part.contours[0] ?? [], tolerance)
   if (!polygon) return undefined
   const points = polygon.points.map(point => rotate(point, rotation))

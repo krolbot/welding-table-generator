@@ -88,13 +88,13 @@ export default function App() {
   const [reset2dToken, setReset2dToken] = useState(0)
 
   const cutJob = useMemo(() => {
-    if (!config.nestingTools.length) return null
     try { return { inventory: tableCutInventory(config) } }
     catch (error) { return { error: error instanceof Error ? error.message : 'Invalid cutting job' } }
   }, [config])
-  const summary = useMemo(() => cutJob?.inventory
-    ? { ...fabricationEstimate(cutJob.inventory.parts, { length: config.sheetLength, width: config.sheetWidth }), engraving: totals(config).engraving * config.nestingCopies }
-    : totals(config), [config, cutJob])
+  const summary = useMemo(() => ({
+    ...fabricationEstimate(cutJob.inventory?.parts ?? [], { length: config.sheetLength, width: config.sheetWidth }),
+    engraving: cutJob.inventory ? totals(config).engraving * config.nestingCopies : 0,
+  }), [config, cutJob])
   const layout = useMemo(() => layoutParts(config), [config])
   const cornerPlate = useMemo(() => legCornerPlateSpec(config), [config])
   const ribAccess = useMemo(() => ribAccessHoleSpec(config), [config])
