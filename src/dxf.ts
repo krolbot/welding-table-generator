@@ -1,8 +1,7 @@
 import JSZip from 'jszip'
 import { assertFabricationReady, contourPoints, engravingLines, layoutParts, makeParts, type Contour, type EngravingLine, type FabricationPart, type Part, type Point } from './geometry'
-import { projectConfig, type Config } from './model'
-import { nestingOptions } from './nestingSettings'
-import { assertTablePartsExport, tableCutInventory, tableCutEngravings, validateTableCut, TableCutJobError } from './tableCutJob'
+import type { Config } from './model'
+import { tableCutInventory, tableCutEngravings, validateTableCut, TableCutJobError } from './tableCutJob'
 import type { NestingStock } from './nestingJob'
 import { nativeContourBounds } from './contourGeometry'
 import { transformNestingPoint, transformNestingContour, type NestingPlacement, type NestingResult } from './nesting'
@@ -77,7 +76,6 @@ export const dxfForPart = (part: Part, c: Config) => {
 }
 
 export const fullDxf = (c: Config) => {
-  assertTablePartsExport(c)
   assertFabricationReady(c)
   const layout = layoutParts(c)
   const parts = layout.instances.map(item => ({ part: item.part, offset: item.position }))
@@ -98,27 +96,9 @@ export const validateNestedExport = (c: Config, result: NestingResult, stock: Ne
 
 export const nestedArchive = (c: Config, result: NestingResult, stock: NestingStock = { kind: 'new-sheets' }) => {
   if (!validateNestedExport(c, result, stock)) throw new TableCutJobError('invalid-layout', 'Раскладка на листах неполна, устарела или не соответствует выбранному столу и оснастке')
-  const inventory = tableCutInventory(c)
   const zip = new JSZip()
   const sheetIndexes = [...new Set(result.placements.map(placement => placement.sheet))].sort((a, b) => a - b)
   sheetIndexes.forEach(index => zip.file(`Лист_${index + 1}.dxf`, dxfForNestedSheet(c, result.placements.filter(placement => placement.sheet === index))))
-  zip.file('ПРОЧТИ_МЕНЯ.txt', `Размер листа: ${c.sheetLength} × ${c.sheetWidth} мм\nМинимальный отступ от края: ${c.sheetEdgeGap} мм\nМинимальный зазор между деталями: ${c.sheetPartGap} мм\nКоличество листов: ${sheetIndexes.length}\nРазмещено деталей: ${result.placements.length}\nМатериал: сталь, ${c.thickness} мм (перед резкой подтвердите марку)\nВыбрано изделий оснастки: ${c.nestingTools.length}; количество относится ко всему заданию, а не к каждому столу.\n${stock.kind === 'table-offcuts' ? `Дополнительных листов нет: предел ${stock.baseline.sheets.length} по проверенной раскладке только стола. Столы могут быть переставлены, чтобы разместить полные комплекты оснастки.\n` : ''}Координаты задают номинальную геометрию. Компенсация реза, заходы, зажимы и порядок резки требуют проверки в CAM.\n`)
-  zip.file('project.json', JSON.stringify(projectConfig({ ...c, nestingTools: inventory.selections }), null, 2))
-  zip.file('layout.json', JSON.stringify({
-    schemaVersion: 2, engine: 'contour-nfp-v2', units: 'mm', tableCopies: c.nestingCopies,
-    sheet: { length: c.sheetLength, width: c.sheetWidth, thickness: c.thickness },
-    clearance: { edge: c.sheetEdgeGap, part: c.sheetPartGap, serializationReserve: 0.002 },
-    allowedRotations: nestingOptions(c).rotations,
-    search: result.stats, metrics: result.metrics, outlineArea: result.outlineArea,
-    stock: inventory.stock,
-    selectedTools: inventory.selections,
-    capacity: stock.kind === 'table-offcuts' ? { policy: stock.kind, sheetLimit: stock.baseline.sheets.length, tableLayout: stock.baseline } : { policy: stock.kind },
-    parts: inventory.parts,
-    sources: inventory.sources,
-    placements: result.placements.map(p => ({ part: p.part.name, source: inventory.sources[p.part.name], copy: Math.floor(p.instance / inventory.sources[p.part.name].perCopy), instance: p.instance, sheet: p.sheet, rotation: p.rotation, translation: p.translation })),
-    coordinateConvention: 'Миллиметры; начало координат в левом нижнем углу листа; поворот против часовой стрелки вокруг начала детали, затем перенос',
-    holesNestable: false, nominalContours: true, globalOptimalityProven: false,
-  }, null, 2))
   return zip
 }
 
@@ -140,7 +120,6 @@ export const downloadFull = (c: Config) =>
   download(new Blob([fullDxf(c)], { type: 'application/dxf' }), `СварочныйСтол_Сборка_${c.length}x${c.width}.dxf`)
 
 export const downloadZip = async (c: Config) => {
-  assertTablePartsExport(c)
   assertFabricationReady(c)
   const zip = new JSZip()
   makeParts(c).forEach((part, index) => {

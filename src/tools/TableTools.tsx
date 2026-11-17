@@ -1,16 +1,16 @@
 import { NumberField, ParameterGroup } from '../GeneratorWorkspace'
 import { Icon } from '../Icon'
 import { display, type Config } from '../model'
-import { tableCutInventory } from '../tableCutJob'
+
 import { toolLabels, type ToolSelection } from './project'
 
-type Props = { config: Config; onChange: (tools: ToolSelection[]) => void; onChoose: () => void; onNotice: (message: string) => void }
-export function TableTools({ config, onChange, onChoose, onNotice }: Props) {
+type Props = { config: Config; onChange: (tools: ToolSelection[]) => void; onChoose: () => void }
+export function TableTools({ config, onChange, onChoose }: Props) {
   const units = config.units === 'mm' ? 'мм' : 'дюйм'
   const quantity = (id: string, copies: number) => {
     const selections = config.nestingTools.map(row => row.id === id ? { ...row, project: { ...row.project, copies } } : row)
-    try { tableCutInventory({ ...config, nestingTools: selections }); onChange(selections); return true }
-    catch (error) { onNotice(error instanceof Error ? error.message : 'Некорректное количество оснастки'); return false }
+    onChange(selections)
+    return true
   }
   return <ParameterGroup title={<>Оснастка в задании на резку стола</>}>
     {config.nestingTools.length ? <><ul>{config.nestingTools.map(({ id, project }, index) => <li key={id}>

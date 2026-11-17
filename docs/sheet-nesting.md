@@ -1,29 +1,29 @@
 # Sheet nesting
 
-The sheet planner packs complete sets of welding-table parts and selected Tools in the browser. It uses the same nominal contours as the assembly and DXF exporters. Tool selection does **not** change table geometry, holes or weld joints. Table-only projects retain strip and individual-part exports; mixed jobs export only their verified complete sheet plan.
+The sheet planner sends the complete welding-table project and selected Tools to the application server. A Node worker thread calculates the layout from the same nominal contours used by the assembly and DXF exporters; the browser only displays the returned result. Tool selection does **not** change table geometry, holes or weld joints. Table-only DXFs remain separate from verified sheet-plan DXFs.
 
 ## Using it
 
 1. Set **Sheet size** in the sidebar and open **Sheet nesting**.
-2. The first verified layout appears while the worker continues improving it. Select the sheet to inspect and switch between **3D** and **2D cut plan**. The green rectangle in 2D is a clear edge strip, with the requested part gap excluded; it is not a cut line or a complete inventory of usable offcuts.
+2. The first verified layout appears while the server worker continues improving it. Select the sheet to inspect and switch between **3D** and **2D cut plan**. The green rectangle in 2D is a clear edge strip, with the requested part gap excluded; it is not a cut line or a complete inventory of usable offcuts.
 3. In **Spacing & batch**, set the edge and inter-part gaps and number of identical tables to cut together. These settings are saved in project JSON and share links. Batch quantity changes only sheet nesting; rotation is automatic.
-4. The search stops automatically when a complete validated layout has reached the area-based lower bound for sheet count and eight following variants do not improve the objective. A 60-second compute limit bounds searches that cannot reach that condition. **Pause search** finishes the current pass; **Continue improving** resumes the same search and contact cache. **Restart**, changing fabrication settings, or leaving this view terminates that worker. The retained result is the best verified layout found, not a proof of global optimality. The displayed time is worker compute time, not wall-clock time spent paused or rendering.
+4. The search stops automatically when a complete validated layout has reached the area-based lower bound for sheet count and eight following variants do not improve the objective. A 60-second compute limit bounds searches that cannot reach that condition. **Pause search** finishes the current pass; **Continue improving** resumes the same server job and contact cache. **Restart**, changing fabrication settings, or leaving this view deletes that job. The retained result is the best verified layout found, not a proof of global optimality. The displayed time is worker compute time, not wall-clock time spent paused or rendering.
 5. **Download sheet DXFs (ZIP)** exports the best verified result available at that moment, even while the search continues. Missing parts, invalid geometry, stale settings, duplicates and clearance violations prevent export.
 
 The search automatically starts with 0°/90°/180°/270°, then explores every 15° orientation after up to 48 passes. If a part cannot fit the sheet at a quarter turn, it tries all orientations immediately. Current projects contain no rotation policy; unsupported obsolete fields are rejected rather than applied as a hidden alternate mode. No mirroring is performed. Limits: 256 part instances, 32 sheets, 24 orientations and 4,096 search passes. A numeric edit is debounced; changing theme or mm/in display does not restart the calculation.
 
 ## Tools on table sheets
 
-1. Open **Tools**, choose and configure an existing product, and set **Tool copies in the cutting batch**. **Add to table cut job** saves those exact settings and opens the table's **Sheet nesting** view. Several tools, including separately configured copies of the same family, can be selected.
-2. **Tools in table cut job** lists saved selections. Change quantities or remove a selection there. Editing the separate Tools workspace does not silently change a saved selection; remove and add it again to replace its geometry. Tool quantities apply to the whole cutting job, not to every table copy.
+1. Open **Tools**, choose and configure an existing product, set its quantity, then use the visible **Add to nesting** action above the 2D/3D preview. This saves those exact settings and opens the table's **Sheet nesting** view. Several tools, including separately configured copies of the same family, can be selected.
+2. **Tools in nesting** lists saved selections both in the table parameters and directly in the nesting inspector. Change quantities or remove a selection in either place. Removal immediately invalidates the old server job and starts a new calculation. Editing the separate Tools workspace does not silently change a saved selection; remove and add it again to replace its geometry. Tool quantities apply to the whole cutting job, not to every table copy.
 3. All current products use steel; every selected part must match the table's exact thickness. Compact extensions inherit that thickness and regenerate their locating joints when it changes; an unsafe combination rejects the change. Their other dimensions and quantities remain snapshots. Other tools retain independent thickness and explicit mismatch rejection. There is no extra stock group. The generator does not choose/verify a steel grade: use one appropriate grade for the physical sheet. The table's sheet dimensions and edge/part gaps override each tool's standalone sheet settings.
 4. The most recent verified table-only layout is reused while it matches the current fabrication parameters. If no such layout exists, the same nesting engine first evaluates 48 table-only orders. This **capacity** phase is not exportable. The full table + Tools inventory is then repacked, with the sheet count capped at that table-only layout's count. Table positions may change, but tools cannot cause another sheet to be added. The baseline is transient; reload or changed table geometry computes a fresh one.
 5. Export is all-or-nothing for the complete selected job. A partial tool may be visible during search, but no archive can be exported until all table parts and every copy of every selected tool are present. Incomplete search results identify the missing parts. Continue the search, reduce quantities, remove selections, or explicitly change the table's sheet settings. A failed heuristic search is **not** proof that a feasible layout cannot exist.
-6. Save/share/import and browser autosave preserve tool IDs, parameters and quantities in table project **schema 3**. Schema 2 files still import without changing their fixed grid, with no selected tools. Malformed selections and legacy tool grids are rejected rather than silently omitted or migrated. The retired catalog remains unsupported.
+6. Save/share/import and browser autosave preserve tool IDs, parameters and quantities in table project **schema 3**. Retired schemas, malformed selections and legacy tool grids are rejected rather than silently omitted or migrated. The retired catalog remains unsupported.
 
-The table's **2D Layout** and **3D Assembly** still show the table; **Sheet nesting** shows the combined cut in 2D and 3D. With selected tools, table-only ZIP/strip actions are replaced by **Open shared sheet cut** so an apparently successful export cannot silently omit the tools. The estimate includes the full selected cut-job inventory and table batch count; it is not a sheet-fit guarantee.
+The table's **2D Layout** and **3D Assembly** still show the table; **Sheet nesting** shows the combined cut in 2D and 3D. The files dialog keeps editable project files, table-only DXFs and sheet-plan DXFs as separate actions so an operator can choose exactly what to send. The estimate includes the full selected cut-job inventory and table batch count; it is not a sheet-fit guarantee.
 
-Mixed exports retain native LINE/ARC/CIRCLE entities; table engraving does not leak onto a tool also named `top`. Manifest **schema 2** contains `selectedTools`, a per-part `sources` map, per-placement source/copy identity, stock, and the verified table-only layout and sheet-count limit under `capacity`. Export revalidates exact canonical geometry, unique instances, consistent sheet arrays, stock capacity and analytic clearance. It does not merely trust the worker's validity flag.
+Mixed exports retain native LINE/ARC/CIRCLE entities; table engraving does not leak onto a tool also named `top`. Before returning a DXF, the server regenerates canonical geometry and revalidates inventory, unique instances, consistent sheet arrays, stock capacity and analytic clearance. It does not merely trust the worker's validity flag. Operator archives contain only DXF files; project JSON, manifests and explanatory text remain outside manufacturing downloads.
 
 ## Geometry and search
 
@@ -31,9 +31,9 @@ Mixed exports retain native LINE/ARC/CIRCLE entities; table engraving does not l
 - **Solid containment:** a raw closed-path Minkowski boundary sweep has a hole when one solid is completely inside another. The forbidden region includes `A − B[0]` and `A[0] − B` as well as the sweep before union/offset. Treating every NFP hole as free material would be unsafe.
 - **Feasible translations:** intersect the rectangular sheet's inset placement region with the complement of the translated forbidden regions. Vertices include contacts between contours, other forbidden regions and sheet edges. Bounding-box-only candidates are retained as cheap initial seeds, not the only possible placements.
 - **Search:** up to 48 quarter-turn passes secure a fast baseline; a fresh search then tries all 15° orientations in its first twelve orders. Costly contact-region passes keep quarter turns and test one finer orientation for one part family per pass while exploring seed orders and mutations of elite placement order **and per-instance orientation**. If a part cannot fit the sheet in any quarter-turn orientation, the fine search starts immediately. The objective is lexicographic: valid result, fewer unplaced parts, fewer sheets, larger total clear edge strips, smaller occupied bounding area. The incumbent never worsens under that objective.
-- **Bounded work:** contact paths share rotation-covariant caches, capped at 250,000 vertices. Large source pairs are progressively simplified for candidate generation and their offsets enlarged; the temporary pair product is limited to 16,384 vertices. This may miss a tight fit. Coarse candidates are never a safety oracle: acceptance uses original fine outlines, and final validation independently checks native curves. `coarsenedPairs` is recorded in the manifest.
+- **Bounded work:** contact paths share rotation-covariant caches, capped at 250,000 vertices. Large source pairs are progressively simplified for candidate generation and their offsets enlarged; the temporary pair product is limited to 16,384 vertices. This may miss a tight fit. Coarse candidates are never a safety oracle: acceptance uses original fine outlines, and final validation independently checks native curves.
 - **Validation:** original `LINE` / circular `ARC` boundaries provide analytic edge extrema and line–line, line–arc and arc–arc distances. A separately regenerated fine polygon supplies topology and containment checks. Numeric floating-point predicates are not a formal exact-arithmetic proof. Every selected incumbent is revalidated, and export regenerates canonical parts and validates again.
-- **Serialization:** DXF entities retain native lines, arcs and circles, rotated and translated from canonical coordinates. Coordinates, radii and angles have three decimal places. The worker reserves an additional 0.002 mm at edges and between parts for serialization.
+- **Serialization:** DXF entities retain native lines, arcs and circles, rotated and translated from canonical coordinates. Coordinates, radii and angles have three decimal places. The server worker reserves an additional 0.002 mm at edges and between parts for serialization.
 
 The contact search is heuristic and uses a finite set of orientations. It is not globally optimal, and it does not place parts inside internal cutouts, share cutting lines, compensate kerf, choose lead-ins, order cuts or model clamps and thermal distortion. Those remain CAM responsibilities. No manufacturing cost reduction is inferred solely from an area percentage.
 
@@ -47,14 +47,9 @@ The contact search is heuristic and uses a finite set of orientations. It is not
 
 ## Reproducible exports
 
-The ZIP contains:
+The nesting workspace downloads one selected sheet directly as DXF. When the result spans several sheets, **All DXF · ZIP** contains only `Sheet_N.dxf` files with nominal cutting and engraving geometry. It never adds project JSON, a layout manifest, README or other explanatory files to an operator archive.
 
-- `Sheet_N.dxf` — nominal cutting/engraving geometry for each sheet;
-- `layout.json` — versioned manifest with canonical part geometry, instance identity, zero-based sheet index, rigid translation, counterclockwise rotation, sheet settings, metrics and search statistics;
-- `project.json` — generator settings, table batch quantity and exact selected tool projects;
-- `README.txt` — dimensions, clearances and CAM reminder.
-
-The coordinate origin is the lower-left corner of the sheet. Rotate about the source part origin, then translate. `layout.json` records the actual placements; replaying the same time budget on a slower computer can evaluate fewer orders. For deterministic comparisons use a fixed pass count.
+The coordinate origin is the lower-left corner of the sheet. Placements rotate about the source part origin and then translate. The active server job retains exact transforms for validation and DXF generation; they are not exposed as a second operator-facing data format.
 
 ## Verification and benchmarks
 
@@ -63,10 +58,7 @@ npm test
 npm run build
 npm run bench:nesting -- 96
 npm run bench:nesting -- 96 constrained-corner
-npm run audit:nesting -- /path/to/WeldingTable_Sheets_1450x1150.zip
 ```
-
-The export audit uses `dxf-parser` to parse the actual archive, compares every native cutting and engraving entity with the manifest and regenerated project, checks intersections with independent `polygon-clipping`, and checks native boundary distances and sheet margins. Its polygon intersection test samples arcs; the reported chord error states that approximation. It does not substitute for a machine-specific CAM review.
 
 `benchmarks/nesting-baseline.json` records the exact inputs and measured sheet counts from commit `640b7e96565ae6b2d42431621a1fd3da10a0b879` (12 orders). These are historical measurements. The command now applies those dimensions and saved origins to the corrected datum grid and complete current inventory, so its historical counts are informational rather than an identical-geometry comparison or an equal-time speed claim.
 

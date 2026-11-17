@@ -6,7 +6,7 @@ import DxfParser from 'dxf-parser'
 
 const server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
 const { extensionParts, extensionDefaults, extensionDimensions, extensionAssembly } = await server.ssrLoadModule('/src/tools/extension.ts')
-const { defaultToolProject } = await server.ssrLoadModule('/src/tools/project.ts')
+const { defaultToolProject, projectParts, projectAssembly } = await server.ssrLoadModule('/src/tools/project.ts')
 const { toolGroup } = await server.ssrLoadModule('/src/tools/ToolAssembly3d.tsx')
 const { contourPoints } = await server.ssrLoadModule('/src/geometry.ts')
 const { nativeContourBounds, nativeContourDistance, nativePointContourDistance } = await server.ssrLoadModule('/src/contourGeometry.ts')
@@ -128,7 +128,8 @@ test('tab and mortise centres mate in world space without positive-volume plate 
 
 test('actual extruded 3D meshes leave mounting slots, holes, access windows and mortises open', () => {
   const config = extensionDefaults, parts = new Map(extensionParts(config).map(part => [part.name, part]))
-  const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), group = toolGroup({ ...defaultToolProject, size: config }, material)
+  const project = { ...defaultToolProject, size: config }
+  const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), group = toolGroup(projectParts(project), projectAssembly(project), material)
   group.updateMatrixWorld(true)
   const mesh = name => group.getObjectByName(`${name}:0`)
   const hits = (name, origin, direction, far = 1000) => new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...direction), 0, far).intersectObject(mesh(name), false).length

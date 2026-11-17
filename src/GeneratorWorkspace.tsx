@@ -59,23 +59,21 @@ export function ProductionEstimate({ summary, units, sheet, onSheetChange, error
   </section>
 }
 
-type FabricationActions = { kind: 'parts'; onZip: () => void; onDxf: () => void } | { kind: 'shared-sheets'; onOpenSheets: () => void }
-export function ProjectActions({ onOpen, onSave, onShare, fabrication, disabled = false }: { onOpen: (file: File) => void; onSave: () => void; onShare: () => void; fabrication: FabricationActions; disabled?: boolean }) {
+type FabricationActions = { kind: 'parts'; onZip: () => void; onDxf: () => void; onOpenSheets?: () => void }
+export function ProjectActions({ onOpen, onSave, onShare, fabrication, disabled = false, subject = 'стола' }: { onOpen: (file: File) => void; onSave: () => void; onShare: () => void; fabrication: FabricationActions; disabled?: boolean; subject?: 'стола' | 'инструмента' }) {
   const input = useRef<HTMLInputElement>(null)
   return <section className="exports">
-    <input ref={input} hidden type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onOpen(file) }} />
+    <h3>Редактируемый проект</h3>
+    <input ref={input} hidden type="file" accept=".wtable,.wtool,application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onOpen(file) }} />
     <div className="project-file-actions">
-      <button className="secondary" title="Открыть проект (.json)" onClick={() => input.current?.click()}><Icon name="folder" />Открыть</button>
-      <button className="secondary" title="Сохранить проект (.json)" disabled={disabled} onClick={onSave}><Icon name="save" />Сохранить</button>
+      <button className="secondary" title="Открыть редактируемый проект" onClick={() => input.current?.click()}><Icon name="folder" />Открыть</button>
+      <button className="secondary" title="Сохранить редактируемый проект" disabled={disabled} onClick={onSave}><Icon name="save" />Сохранить</button>
       <button className="secondary" title="Поделиться ссылкой на проект" disabled={disabled} onClick={onShare}><Icon name="share" />Поделиться</button>
     </div>
-    {fabrication.kind === 'parts' ? <>
-      <button className="zip" disabled={disabled} onClick={fabrication.onZip}><Icon name="archive" size={20} /><span>Скачать детали<small>Отдельные DXF-файлы · ZIP-архив</small></span><Icon name="download" /></button>
-      <button className="dxf secondary" disabled={disabled} onClick={fabrication.onDxf}><Icon name="download" />DXF-полоса деталей <span className="action-note">Без раскладки</span></button>
-    </> : <>
-      <button className="zip" disabled={disabled} onClick={fabrication.onOpenSheets}><Icon name="layers" size={20} /><span>Открыть общий раскрой<small>Стол и выбранная оснастка</small></span></button>
-      <p>Экспорт доступен в разделе «Раскрой» после проверки полной раскладки.</p>
-    </>}
+    <h3>DXF для производства</h3>
+    <button className="zip" disabled={disabled} onClick={fabrication.onZip}><Icon name="archive" size={20} /><span>DXF деталей {subject}<small>Отдельные DXF · ZIP без служебных файлов</small></span><Icon name="download" /></button>
+    <button className="dxf secondary" disabled={disabled} onClick={fabrication.onDxf}><Icon name="download" />Один DXF {subject} <span className="action-note">Без раскладки</span></button>
+    {fabrication.onOpenSheets && <><button className="zip" disabled={disabled} onClick={fabrication.onOpenSheets}><Icon name="layers" size={20} /><span>Открыть раскрой<small>Проверенные DXF листов · стол и оснастка</small></span></button><p>В «Раскрое» можно скачать выбранный лист как DXF или все листы одним архивом только из DXF.</p></>}
     {disabled && <p className="socket-error" role="status">Перед сохранением или экспортом завершите проверку проекта либо исправьте геометрию.</p>}
   </section>
 }
@@ -156,7 +154,7 @@ export function GeneratorShell({ workspace, onWorkspace, dark, onTheme, units, o
         <button className="settings-toggle" title="Параметры" aria-controls={docked ? 'settings-panel' : 'parameters-dialog'} aria-expanded={docked ? parametersVisible : parametersDialog} onClick={() => docked ? setParametersVisible(value => !value) : setParametersDialog(true)}><Icon name="settings" /><span>Параметры</span></button>
       </div>
       <div className="header-preferences"><Preferences {...preferences} /></div>
-      <button className="project-toggle" aria-haspopup="dialog" aria-controls="project-dialog" onClick={() => setProjectOpen(true)}><Icon name="download" /><span>Проект</span></button>
+      <button className="project-toggle" aria-haspopup="dialog" aria-controls="project-dialog" onClick={() => setProjectOpen(true)}><Icon name="download" /><span>Скачать</span></button>
     </header>
     {docked ? <aside id="settings-panel" className="settings" data-open={parametersVisible} aria-hidden={!parametersVisible} aria-labelledby="settings-heading">
       <header className="panel-heading"><h2 id="settings-heading">Параметры</h2><button className="icon" aria-label="Закрыть параметры" onClick={() => setParametersVisible(false)}><Icon name="close" /></button></header>
@@ -169,7 +167,7 @@ export function GeneratorShell({ workspace, onWorkspace, dark, onTheme, units, o
       <div className="workspace-content">{children}</div>
       {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label="Закрыть сообщение" onClick={onDismissNotice}><Icon name="close" /></button></div>}
     </section>
-    <WorkspaceDialog id="project-dialog" title="Проект и экспорт" className="project-dialog" open={projectOpen} onClose={() => setProjectOpen(false)}>
+    <WorkspaceDialog id="project-dialog" title="Файлы проекта и DXF" className="project-dialog" open={projectOpen} onClose={() => setProjectOpen(false)}>
       {actions(() => setProjectOpen(false))}{production}<ProjectInfo>{seo}</ProjectInfo>
     </WorkspaceDialog>
   </main>

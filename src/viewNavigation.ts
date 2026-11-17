@@ -7,11 +7,11 @@ export type WorkspaceRoute = { workspace: Workspace; view: ViewMode }
 const historyKey = 'weldingNavigation'
 const isView = (value: unknown): value is ViewMode => value === '2d' || value === '3d' || value === 'sheet'
 
-export function readWorkspaceRoute(url: URL, saved: Partial<Record<Workspace, ViewMode>> = {}): WorkspaceRoute {
+export function readWorkspaceRoute(url: URL): WorkspaceRoute {
   const workspace = url.searchParams.get('workspace') === 'table' ? 'table'
     : url.searchParams.get('workspace') === 'tools' || url.searchParams.has('toolProject') ? 'tools' : 'table'
   const requested = url.searchParams.get('view')
-  const preferred = isView(requested) ? requested : saved[workspace] ?? '2d'
+  const preferred = isView(requested) ? requested : '2d'
   return { workspace, view: workspace === 'tools' && preferred === 'sheet' ? '2d' : preferred }
 }
 
@@ -22,17 +22,8 @@ export function workspaceUrl(url: URL, route: WorkspaceRoute): URL {
   return next
 }
 
-const preferences = (): Partial<Record<Workspace, ViewMode>> => {
-  try {
-    const table: unknown = JSON.parse(localStorage.getItem('tableGenUI') ?? '{}')
-    const view = typeof table === 'object' && table !== null && 'viewMode' in table ? table.viewMode : undefined
-    const tools = localStorage.getItem('weldingToolsView')
-    return { table: isView(view) ? view : '2d', tools: isView(tools) && tools !== 'sheet' ? tools : '2d' }
-  } catch { return {} }
-}
-
 export function useWorkspaceNavigation() {
-  const [route, setRoute] = useState(() => readWorkspaceRoute(new URL(location.href), preferences()))
+  const [route, setRoute] = useState(() => readWorkspaceRoute(new URL(location.href)))
   const current = useRef(route)
   const position = useRef<number>(history.state?.[historyKey] ?? 0)
   current.current = route
@@ -41,7 +32,7 @@ export function useWorkspaceNavigation() {
   useEffect(() => {
     history.replaceState({ ...history.state, [historyKey]: position.current }, '', workspaceUrl(new URL(location.href), current.current))
     const pop = (event: PopStateEvent) => {
-      const next = readWorkspaceRoute(new URL(location.href), preferences())
+      const next = readWorkspaceRoute(new URL(location.href))
       const nextPosition: number = event.state?.[historyKey] ?? 0
       position.current = nextPosition
       setRoute(next)
@@ -59,7 +50,7 @@ export function useWorkspaceNavigation() {
   return {
     ...route,
     navigate,
-    selectWorkspace: (workspace: Workspace) => navigate({ workspace, view: preferences()[workspace] ?? '2d' }),
+    selectWorkspace: (workspace: Workspace) => navigate({ workspace, view: '2d' }),
     selectView: (view: ViewMode) => navigate({ ...current.current, view }),
   }
 }

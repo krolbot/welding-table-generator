@@ -121,7 +121,7 @@ test('corner world interfaces seat four flush tabs with the declared clearances 
 test('shared Three extrusion has actual through holes, open capsule and open top/diagonal', () => {
   const parts = bracket.cornerBracketParts(), config = bracket.cornerBracketDefaults
   const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-  const group = viewer.toolGroup(projects.defaultCornerBracketProject, material)
+  const group = viewer.toolGroup(projects.projectParts(projects.defaultCornerBracketProject), projects.projectAssembly(projects.defaultCornerBracketProject), material)
   group.updateMatrixWorld(true)
   assert.equal(group.toolMeshes.length, 3)
   const hits = (name, origin, direction) => new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...direction)).intersectObject(group.getObjectByName(`${name}:0`), false).length
@@ -152,7 +152,7 @@ test('all three product schemas round-trip exactly and reject mismatched or unkn
   assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, version: 1 })))
 })
 
-test('corner native DXFs, real batch ZIP and assembly manifest agree and stale/tampered cuts are refused', async () => {
+test('corner native and nested-sheet DXFs agree and stale/tampered cuts are refused', async () => {
   const project = { ...projects.defaultCornerBracketProject, copies: 2, sheet: { length: 600, width: 600, edgeGap: 10, partGap: 5 } }
   const parser = new DxfParser(), key = projects.projectKey(project)
   for (const part of projects.projectModelParts(project)) {
@@ -167,16 +167,10 @@ test('corner native DXFs, real batch ZIP and assembly manifest agree and stale/t
   assert.equal(result.unplaced.length, 0)
   assert.equal(projects.validProjectLayout(project, result, key), true)
   const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key, { thickness: project.size.thickness }).generateAsync({ type: 'nodebuffer' }))
-  for (const name of ['cornerBase', 'cornerHoleWall', 'cornerSlotWall']) assert.ok(archive.file(`детали/${name}_2шт.dxf`))
-  const manifest = JSON.parse(await archive.file('сборка.json').async('string'))
-  assert.deepEqual(manifest.placements, projects.projectAssembly(project))
-  assert.equal(manifest.placements.length, 3)
-  assert.equal(manifest.joinery.clearance, 0.2)
-  assert.match(manifest.axes, /Z вверх/)
-  assert.deepEqual(JSON.parse(await archive.file('project.json').async('string')), project)
+  assert.deepEqual(Object.keys(archive.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   let circles = 0, arcs = 0
   for (const sheet of result.sheets) {
-    const text = await archive.file(`листы/Лист_${sheet.index + 1}.dxf`).async('string')
+    const text = await archive.file(`Лист_${sheet.index + 1}.dxf`).async('string')
     assert.equal(text, dxf.nativeDxfForNestedSheet(sheet.placements))
     const parsed = parser.parseSync(text)
     circles += parsed.entities.filter(e => e.type === 'CIRCLE').length
@@ -191,5 +185,4 @@ test('corner native DXFs, real batch ZIP and assembly manifest agree and stale/t
   changed.part.holes.pop()
   assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: project.size.thickness }), /неполна, устарела/)
   assert.throws(() => toolExport.toolArchive(project, { ...result, placements: result.placements.slice(1) }, key, { thickness: project.size.thickness }), /неполна, устарела/)
-  assert.match(await archive.file('ПРОЧТИ_МЕНЯ.txt').async('string'), /проектные допущения/)
 })

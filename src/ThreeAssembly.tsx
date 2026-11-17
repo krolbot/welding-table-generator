@@ -2,11 +2,12 @@ import { useCallback } from 'react'
 import * as THREE from 'three'
 import { AssemblyViewport, type AssemblyPartInfo, type AssemblyPartMesh, type AssemblyRuntime } from './AssemblyViewport'
 import { addDimensionLine, dimensionLabel, disposeObject3D, extrudedPartMesh } from './assemblyGeometry'
-import { display, readPart, type Config } from './model'
-import { framePositions, legCornerPlateSpec, makeParts, partWeight, skirtAssemblyY, type FabricationPart } from './geometry'
+import { display, type Config } from './model'
+import type { FabricationPart } from './geometry'
 import type { NestingResult } from './nesting'
+import type { TableAssemblyDto, TableAssemblyPlateDto } from './apiContracts'
 
-type Props = { config: Config; resetToken: number; dark: boolean; parts?: FabricationPart[]; nesting?: NestingResult }
+type Props = { config: Config; resetToken: number; dark: boolean; parts: FabricationPart[]; assembly: TableAssemblyDto; nesting?: NestingResult }
 type Part = FabricationPart
 type PartInfo = AssemblyPartInfo
 type PartMesh = AssemblyPartMesh
@@ -23,14 +24,11 @@ const plate = (
   runtime: AssemblyRuntime,
   part: Part,
   config: Config,
-  position: THREE.Vector3,
-  rotation: THREE.Euler,
-  explodeDir: THREE.Vector3,
+  placement: Pick<TableAssemblyPlateDto, 'position' | 'rotation' | 'explode' | 'displayWidth' | 'displayHeight' | 'weightKg'>,
 ) => {
-  const tableName = readPart(part.name)
-  const width = part.width - (tableName === 'shortSkirt' || tableName?.endsWith('Rib') ? 2 * config.thickness : 0)
-  const height = part.height - (!tableName || part.name === 'top' || (part.name.endsWith('Skirt') && config.legMounts && config.legMountStyle === 'cornerPlate') || part.name === 'legCornerPlate' || part.name === 'legJumper' || part.name === 'legMountPlate' ? 0 : config.thickness)
-  const metricWeight = Number(partWeight(part).toFixed(1))
+  const position = new THREE.Vector3(...placement.position)
+  const rotation = new THREE.Euler(...placement.rotation)
+  const explodeDir = new THREE.Vector3(...placement.explode)
   const unit = config.units === 'mm' ? 'мм' : 'дюйм'
   const mesh: PartMesh = Object.assign(
     extrudedPartMesh(part, runtime.metal, { renderHoles: runtime.renderHoles, edgeColor: runtime.colors.edge }),
@@ -41,8 +39,8 @@ const plate = (
       basePos: position,
       explodeDir,
       currentFactor: runtime.factor,
-      dims: `${display(width, config.units, 0)} × ${display(height, config.units, 0)} ${unit}`,
-      weight: config.units === 'mm' ? metricWeight : (metricWeight * 2.20462).toFixed(1),
+      dims: `${display(placement.displayWidth, config.units, 0)} × ${display(placement.displayHeight, config.units, 0)} ${unit}`,
+      weight: config.units === 'mm' ? Number(placement.weightKg.toFixed(1)) : (placement.weightKg * 2.20462).toFixed(1),
       weightUnit: config.units === 'mm' ? 'кг' : 'фунт',
       holesCount: part.holes.length,
     } satisfies PartInfo },
@@ -54,10 +52,10 @@ const plate = (
   return mesh
 }
 
-const squareTubeLeg = (runtime: AssemblyRuntime, config: Config, mountingPlate: PartMesh, length: number) => {
+const squareTubeLeg = (runtime: AssemblyRuntime, size: number, thickness: number, mountingPlate: PartMesh, length: number) => {
   // Plate-local +Z points down. Parenting keeps the welded tube with its plate when exploded.
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(config.legProfileSize, config.legProfileSize, length), runtime.metal)
-  mesh.position.z = (config.thickness + length) / 2
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, length), runtime.metal)
+  mesh.position.z = (thickness + length) / 2
   mesh.name = 'Ножка из квадратной трубы'
   mesh.add(new THREE.LineSegments(
     new THREE.EdgesGeometry(mesh.geometry),
@@ -85,78 +83,22 @@ const rebuildDimensions = (runtime: AssemblyRuntime, config: Config) => {
   ].forEach(sprite => { if (sprite) runtime.dimensions.add(sprite) })
 }
 
-export const rebuildAssembly = (runtime: AssemblyRuntime, config: Config, preparedParts?: FabricationPart[]) => {
+export const rebuildAssembly = (runtime: AssemblyRuntime, config: Config, parts: FabricationPart[], assembly: TableAssemblyDto) => {
   disposeObject3D(runtime.assembly)
   runtime.assembly.clear()
   runtime.meshes = []
-  const parts = preparedParts ?? makeParts(config)
-  const find = (name: Part['name']) => parts.find(part => part.name === name)
+  const byName = new Map(parts.map(part => [part.name, part]))
   runtime.targetFactor = config.exploded / 100
   runtime.assembly.position.y = config.height / 2
-  const top = find('top')
-  if (top) {
-    plate(runtime, top, config, new THREE.Vector3(0, -config.thickness / 2, 0), new THREE.Euler(Math.PI / 2, 0, 0), new THREE.Vector3(0, config.width * 0.4, 0))
-  }
-  const longSkirt = find('longSkirt')
-  const skirtY = skirtAssemblyY(config)
-  if (longSkirt) {
-    for (const side of [1, -1]) {
-      plate(runtime, longSkirt, config, new THREE.Vector3(0, skirtY, side * (config.width / 2 - config.thickness / 2)), new THREE.Euler(), new THREE.Vector3(0, 0, side * config.width * 0.3))
-    }
-  }
-  const shortSkirt = find('shortSkirt')
-  if (shortSkirt) {
-    for (const side of [1, -1]) {
-      plate(runtime, shortSkirt, config, new THREE.Vector3(side * (config.length / 2 - config.thickness / 2), skirtY, 0), new THREE.Euler(0, -Math.PI / 2, 0), new THREE.Vector3(side * config.length * 0.3, 0, 0))
-    }
-  }
-  const cornerPlate = legCornerPlateSpec(config)
-  const cornerPlatePart = find('legCornerPlate')
-  const jumperPart = find('legJumper')
-  const mountPlatePart = find('legMountPlate')
-  if (cornerPlate && cornerPlatePart && jumperPart && mountPlatePart) {
-    const y = -config.height + cornerPlate.thickness / 2
-    for (const xSign of [-1, 1]) {
-      for (const zSign of [-1, 1]) {
-        const x = xSign * cornerPlate.centerX
-        const z = zSign * cornerPlate.centerZ
-        const angle = xSign > 0
-          ? zSign > 0 ? 0 : -Math.PI / 2
-          : zSign > 0 ? Math.PI / 2 : Math.PI
-        plate(runtime, cornerPlatePart, config, new THREE.Vector3(x, y, z), new THREE.Euler(Math.PI / 2, 0, angle), new THREE.Vector3(xSign * config.length * 0.15, 0, zSign * config.width * 0.15))
-        const inward = new THREE.Vector3(-xSign, 0, -zSign).normalize()
-        const jumperOffset = config.legProfileSize / Math.SQRT2 + jumperPart.thickness / 2
-        const jumperPosition = new THREE.Vector3(x, -config.height + jumperPart.height / 2, z)
-          .addScaledVector(inward, jumperOffset)
-        plate(
-          runtime,
-          jumperPart,
-          config,
-          jumperPosition,
-          new THREE.Euler(0, Math.atan2(inward.x, inward.z), 0),
-          new THREE.Vector3(inward.x * config.length * 0.15, -config.height * 2, inward.z * config.width * 0.15),
-        )
-        const mountingPlate = plate(runtime, mountPlatePart, config,
-          new THREE.Vector3(x, -config.height - mountPlatePart.thickness / 2, z),
-          new THREE.Euler(Math.PI / 2, 0, angle),
-          new THREE.Vector3(xSign * config.length * 0.15, -config.height * 3, zSign * config.width * 0.15))
-        squareTubeLeg(runtime, config, mountingPlate, cornerPlate.legTubeLength)
-      }
-    }
-  }
-  const positions = framePositions(config)
-  const longRib = find('longRib')
-  if (longRib) {
-    for (const z of [...positions.long].reverse()) {
-      plate(runtime, longRib, config, new THREE.Vector3(0, -config.height / 2, z), new THREE.Euler(), new THREE.Vector3(0, -config.height * 2, 0))
-    }
-  }
-  const shortRib = find('shortRib')
-  if (shortRib) {
-    for (const x of positions.short) {
-      plate(runtime, shortRib, config, new THREE.Vector3(x, -config.height / 2, 0), new THREE.Euler(0, -Math.PI / 2, 0), new THREE.Vector3(0, -config.height * 4, 0))
-    }
-  }
+  const meshes = assembly.plates.map(placement => {
+    const part = byName.get(placement.part)
+    if (!part) throw new Error(`Сервер вернул неизвестную деталь сборки: ${placement.part}`)
+    return plate(runtime, part, config, placement)
+  })
+  assembly.tubes.forEach(tube => {
+    const parent = meshes[tube.parentIndex]
+    if (parent) squareTubeLeg(runtime, tube.size, parts.find(part => part.name === assembly.plates[tube.parentIndex]?.part)?.thickness ?? config.thickness, parent, tube.length)
+  })
   rebuildDimensions(runtime, config)
 }
 
@@ -179,9 +121,11 @@ export const rebuildSheets = (runtime: AssemblyRuntime, config: Config, nesting:
     const outline = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: runtime.colors.dim }))
     outline.position.x = sheetX
     runtime.assembly.add(outline)
-    sheet.placements.forEach(placement => plate(runtime, placement.part, config,
-      new THREE.Vector3(sheetX + placement.translation.x - halfX, config.thickness / 2, halfY - placement.translation.y),
-      new THREE.Euler(-Math.PI / 2, 0, placement.rotation * Math.PI / 180), new THREE.Vector3()))
+    sheet.placements.forEach(placement => plate(runtime, placement.part, config, {
+      position: [sheetX + placement.translation.x - halfX, config.thickness / 2, halfY - placement.translation.y],
+      rotation: [-Math.PI / 2, 0, placement.rotation * Math.PI / 180], explode: [0, 0, 0],
+      displayWidth: placement.part.width, displayHeight: placement.part.height, weightKg: 0,
+    }))
   })
 }
 
@@ -192,28 +136,20 @@ const resetCamera = (runtime: AssemblyRuntime, config: Config) => {
   runtime.controls.update()
 }
 
-const focusCornerMount = (runtime: AssemblyRuntime, config: Config) => {
-  const spec = legCornerPlateSpec(config)
-  if (!spec) return
-  const inward = new THREE.Vector3(-1, 0, -1).normalize()
-  const target = new THREE.Vector3(
-    spec.centerX,
-    -config.height / 2 + spec.jumperLength / 2,
-    spec.centerZ,
-  ).addScaledVector(inward, config.legProfileSize / Math.SQRT2 + spec.thickness / 2)
-  const distance = Math.max(spec.size * 2.5, config.legProfileSize * 5, 300)
-  runtime.camera.position.copy(target)
-    .addScaledVector(inward, distance)
-    .add(new THREE.Vector3(0, -Math.max(spec.size * 0.7, 90), 0))
+const focusCornerMount = (runtime: AssemblyRuntime, assembly: TableAssemblyDto) => {
+  if (!assembly.focus) return
+  const target = new THREE.Vector3(...assembly.focus.target)
+  const direction = new THREE.Vector3(...assembly.focus.direction).normalize()
+  runtime.camera.position.copy(target).addScaledVector(direction, assembly.focus.distance)
   runtime.controls.target.copy(target)
   runtime.controls.update()
 }
 
-export function ThreeAssembly({ config, resetToken, dark, parts, nesting }: Props) {
+export function ThreeAssembly({ config, resetToken, dark, parts, assembly, nesting }: Props) {
   const build = useCallback((runtime: AssemblyRuntime) => {
     if (nesting) rebuildSheets(runtime, config, nesting)
-    else rebuildAssembly(runtime, config, parts)
-  }, [parts, nesting, config.showDimensions, config.units])
+    else rebuildAssembly(runtime, config, parts, assembly)
+  }, [parts, assembly, nesting, config.showDimensions, config.units])
   const reset = useCallback((runtime: AssemblyRuntime) => {
     if (nesting) {
       const extent = Math.max(config.sheetLength * Math.max(1, nesting.sheets.length) * 1.08, config.sheetWidth)
@@ -225,7 +161,7 @@ export function ThreeAssembly({ config, resetToken, dark, parts, nesting }: Prop
       runtime.controls.update()
     } else resetCamera(runtime, config)
   }, [config, nesting])
-  const focus = useCallback((runtime: AssemblyRuntime) => focusCornerMount(runtime, config), [config])
+  const focus = useCallback((runtime: AssemblyRuntime) => focusCornerMount(runtime, assembly), [assembly])
   const theme = useCallback((runtime: AssemblyRuntime) => {
     if (!nesting) rebuildDimensions(runtime, config)
   }, [config, nesting])
@@ -244,7 +180,7 @@ export function ThreeAssembly({ config, resetToken, dark, parts, nesting }: Prop
     highlighting={config.highlighting}
     exploded={config.exploded}
     cameraKey={nesting ? 'sheet' : 'assembly'}
-    focusCamera={!nesting && legCornerPlateSpec(config) ? focus : undefined}
+    focusCamera={!nesting && assembly.focus ? focus : undefined}
     onThemeChange={theme}
   />
 }

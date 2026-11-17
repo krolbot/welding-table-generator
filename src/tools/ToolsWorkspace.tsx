@@ -1,19 +1,19 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { GeneratorShell, NumberField, ParameterGroup, ProductionEstimate, ProjectActions, VisualizationSettings, type ViewMode, type VisualSettings } from '../GeneratorWorkspace'
 import { PartsLayout } from '../PartsLayout'
-import { arrangeParts, fabricationEstimate } from '../fabricationLayout'
-import { display, mmPerInch, readDisplay, type Config } from '../model'
+import { display, mmPerInch, projectConfig, readDisplay, type Config } from '../model'
 import { copyText, downloadFile } from '../projectIO'
 import { tableProjectQuery } from '../tableProject'
+import { Icon } from '../Icon'
 
 import { extensionLimits, type ExtensionConfig } from './extension'
 import { squareLimits, type SquareConfig } from './square'
 import { compactExtensionLimits, type CompactExtensionConfig } from './compactExtension'
 import { viseModuleLimits, viseSlotSetback, type ViseModuleConfig } from './viseModule'
 import { cornerBracketLimits, type CornerBracketConfig } from './cornerBracket'
-import { defaultToolProject, toolDefaults, toolIds, isToolId, parseToolProject, readToolProjectAtTable, projectJson, projectKey, projectModelParts, projectAtTable, toolLabels, type ToolId, type ToolProject } from './project'
-
-import { downloadToolParts, downloadToolStrip } from './export'
+import { defaultToolProject, toolDefaults, toolIds, isToolId, projectJson, projectKey, projectAtTable, toolLabels, type ToolId, type ToolProject } from './project'
+import { downloadFromApi, previewTool } from '../serverApi'
+import type { ToolPreviewDto } from '../apiContracts'
 
 const ToolAssembly3d = lazy(() => import('./ToolAssembly3d').then(module => ({ default: module.ToolAssembly3d })))
 export type ToolsWorkspaceProps = {
@@ -22,7 +22,7 @@ export type ToolsWorkspaceProps = {
   notice: string; onDismissNotice: () => void
   units: Config['units']; onUnits: (units: Config['units']) => void
   visual: VisualSettings; onVisual: (changes: Partial<VisualSettings>) => void
-  tableConfig: Config; tableAdmissionError: (project: ToolProject) => string | undefined; onAddToTable: (project: ToolProject) => void
+  tableConfig: Config; onAddToTable: (project: ToolProject) => void
 }
 const storageKey = 'weldingToolsProject'
 
@@ -46,12 +46,14 @@ const toolSummaries: Record<ToolId, string> = {
   viseModule: 'Пять пластин · восемь радиальных пазов для тисков · монтажная сетка по столу',
 }
 
-export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, onDismissNotice, units, onUnits, visual, onVisual, tableConfig, tableAdmissionError, onAddToTable }: ToolsWorkspaceProps) {
+export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, onDismissNotice, units, onUnits, visual, onVisual, tableConfig, onAddToTable }: ToolsWorkspaceProps) {
   const [initial] = useState(() => {
     let saved: string | null = null
     try {
       saved = new URLSearchParams(location.search).get('toolProject') ?? localStorage.getItem(storageKey)
-      return { project: saved ? readToolProjectAtTable(saved, tableConfig) : projectAtTable(defaultToolProject, tableConfig), notice: '' }
+      const raw = saved ? JSON.parse(saved) as ToolProject : defaultToolProject
+      if (!isToolId(raw.tool) || !raw.size || !raw.sheet) throw new Error('Некорректный файл проекта инструмента')
+      return { project: projectAtTable(raw, tableConfig), notice: '' }
     } catch (error) {
       return { project: projectAtTable(defaultToolProject, tableConfig), notice: `Проект инструмента не загружен: ${error instanceof Error ? error.message : 'хранилище недоступно'}.` }
     }
@@ -60,39 +62,44 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
   const project = useMemo(() => projectAtTable(storedProject, tableConfig), [storedProject, tableConfig.thickness, tableConfig.holeDiameter, tableConfig.pitch, tableConfig.margin, tableConfig.grid])
   const [message, setMessage] = useState(initial.notice)
   const [reset, setReset] = useState(0)
-  useEffect(() => { try { localStorage.setItem('weldingToolsView', view) } catch { setMessage('Не удалось сохранить выбранный вид.') } }, [view])
   const key = projectKey(project)
-  const fabrication = useMemo(() => {
-    try { return { parts: projectModelParts(project), error: null } }
-    catch (error) { return { parts: null, error: error instanceof Error ? error.message : 'Некорректная геометрия оснастки' } }
-  }, [key])
+  const [previewState, setPreviewState] = useState<{ key: string; value: ToolPreviewDto } | null>(null)
+  const preview = previewState?.key === key ? previewState.value : null
+  const [previewError, setPreviewError] = useState('')
   useEffect(() => {
-    if (fabrication.error) return
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      void previewTool(JSON.parse(projectJson(project)), projectConfig(tableConfig), controller.signal).then(value => {
+        setPreviewState({ key, value }); setPreviewError('')
+        if (projectKey(value.project) !== key) setProject(value.project)
+      }).catch(error => { if (!controller.signal.aborted) setPreviewError(error instanceof Error ? error.message : 'Сервер не рассчитал инструмент') })
+    }, 120)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [key, tableConfig.thickness, tableConfig.holeDiameter, tableConfig.pitch, tableConfig.margin, tableConfig.grid])
+  useEffect(() => {
+    if (previewError) return
     try { localStorage.setItem(storageKey, projectJson(project)); localStorage.setItem(`${storageKey}.${project.tool}`, projectJson(project)) }
     catch { setMessage('Автосохранение в браузере недоступно. Сохраните проект в файл.') }
-  }, [key, fabrication.error])
-  const parts = fabrication.parts
-  const batchParts = useMemo(() => parts?.map(part => ({ ...part, count: part.count * project.copies })), [parts, project.copies])
-  const layout = useMemo(() => batchParts && arrangeParts(batchParts), [batchParts])
-  const summary = useMemo(() => batchParts && fabricationEstimate(batchParts, project.sheet), [batchParts, project.sheet])
-  const admissionError = fabrication.error ?? tableAdmissionError(project)
+  }, [key, previewError])
+  const layout = preview?.layout
+  const summary = preview?.summary
+  const admissionError = previewError || preview?.admissionError?.message
   const factor = units === 'mm' ? 1 : mmPerInch, unitLabel = units === 'mm' ? 'мм' : 'дюйм'
 
   const apply = (candidate: ToolProject) => {
-    try {
-      const next = parseToolProject(projectJson(projectAtTable(candidate, tableConfig)))
-      if (projectKey(next) === key) return true
-      const url = new URL(location.href)
-      if (url.searchParams.has('toolProject')) { url.searchParams.set('toolProject', projectJson(next)); history.replaceState(history.state, '', url) }
-      setProject(next)
-      return true
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Некорректный проект оснастки'); return false }
+    const next = projectAtTable(candidate, tableConfig)
+    if (projectKey(next) === key) return true
+    const url = new URL(location.href)
+    if (url.searchParams.has('toolProject')) { url.searchParams.set('toolProject', projectJson(next)); history.replaceState(history.state, '', url) }
+    setProject(next)
+    return true
   }
   const selectTool = (id: ToolId) => {
     if (id === project.tool) return
     try {
       const saved = localStorage.getItem(`${storageKey}.${id}`)
-      const next = saved ? readToolProjectAtTable(saved, tableConfig) : projectAtTable({ ...toolDefaults[id], sheet: { ...project.sheet } }, tableConfig)
+      const raw = saved ? JSON.parse(saved) as ToolProject : { ...toolDefaults[id], sheet: { ...project.sheet } }
+      const next = projectAtTable(raw, tableConfig)
       if (next.tool !== id) throw new Error('Тип сохранённой оснастки не совпадает с выбранным изделием')
       if (apply(next)) setReset(value => value + 1)
     } catch (error) { setMessage(`Инструмент не загружен: ${error instanceof Error ? error.message : 'хранилище недоступно'}`) }
@@ -127,7 +134,9 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
   }
   const open = async (file: File) => {
     try {
-      if (apply(readToolProjectAtTable(await file.text(), tableConfig))) { setReset(value => value + 1); setMessage('Проект инструмента открыт.') }
+      const raw: unknown = JSON.parse(await file.text())
+      const accepted = await previewTool(raw, projectConfig(tableConfig))
+      if (apply(accepted.project)) { setReset(value => value + 1); setMessage('Проект инструмента открыт.') }
     }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Не удалось открыть проект') }
   }
@@ -141,14 +150,16 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
         {project.tool === 'square' && <ParameterGroup title={<>Монтажные отверстия ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('endOffset')}</div><p>Одно отверстие у внутреннего угла и по одному у каждого свободного конца. Центр углового отверстия отстоит от обеих наружных кромок на половину ширины плеча. Сверьте полученные межцентровые расстояния со своим столом.</p></ParameterGroup>}
         {project.tool === 'compactExtension' && <><ParameterGroup title={<>Сетка оснастки ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Начала сетки на рабочей поверхности и монтажном торце зафиксированы относительно краёв. Первый торцевой ряд отсчитывается вниз от рабочей поверхности в сборе. Конфликтующие отверстия отклоняются, а не смещаются и не удаляются.</p></ParameterGroup><ParameterGroup title={<>Центральное ребро и установочные соединения ({unitLabel})</>}><div className="fields">{sizeField('tipHeight')}{sizeField('taperRun')}{sizeField('windowInset')}{sizeField('windowRadius')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Отступ окон задаёт ширину материала по периметру. Диагональные перемычки между соседними окнами: {display(project.size.windowInset * 2, units, 3)} {unitLabel}. Сохранённые проекты сохраняют выбранный отступ.</p></ParameterGroup></>}
         {project.tool === 'cornerBracket' && <><ParameterGroup title={<>Монтажные отверстия и паз ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('slotLength')}</div><p>Девять отверстий основания образуют треугольную сетку без позиции во внутреннем углу; в одной стенке три отверстия, в другой — один скруглённый паз. Ширина паза равна диаметру отверстия.</p></ParameterGroup><ParameterGroup title={<>Профиль и установочные соединения ({unitLabel})</>}><div className="fields">{sizeField('cornerCut')}{sizeField('tipWidth')}{sizeField('tabWidth')}{sizeField('clearance')}</div></ParameterGroup></>}
-        <ParameterGroup title={<>Добавить в раскрой стола</>}><p>Добавьте этот инструмент к общему раскрою стола. Используется сталь толщиной {display(tableConfig.thickness, units, 3)} {unitLabel}.</p><NumberField label="Количество" value={project.copies} min={1} max={10} step={1} onValue={copies => apply({ ...project, copies })} />{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}<button className="secondary full" disabled={Boolean(admissionError)} onClick={() => onAddToTable(project)}>Добавить в раскрой стола</button></ParameterGroup>
+
       </>
     </>}
     visualization={<VisualizationSettings value={visual} onChange={onVisual} />}
     production={summary && <ProductionEstimate summary={summary} units={units} sheet={project.sheet} onSheetChange={changes => apply({ ...project, sheet: { ...project.sheet, ...changes } })} />}
-    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={() => downloadFile(JSON.stringify(project, null, 2), `проект-инструмента-${project.tool}.json`)} onShare={() => { onClose(); void share() }} disabled={Boolean(fabrication.error)} fabrication={{ kind: 'parts', onZip: () => void downloadToolParts(project, tableConfig).catch(() => setMessage('Не удалось создать ZIP-архив.')), onDxf: () => downloadToolStrip(project, tableConfig) }} />}>
-    {fabrication.error ? <div className="three-loading socket-error" role="alert">{fabrication.error} Перед изготовлением измените толщину стола или размеры инструмента.</div>
-      : view === '2d' ? layout && <PartsLayout layout={layout} units={units} label={`Интерактивная 2D-раскладка деталей: ${toolLabels[project.tool]}`} resetToken={reset} />
-      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ToolAssembly3d project={project} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div></>}
+    actions={onClose => <ProjectActions subject="инструмента" onOpen={file => { onClose(); void open(file) }} onSave={() => downloadFile(JSON.stringify(project, null, 2), `проект-инструмента-${project.tool}.wtool`)} onShare={() => { onClose(); void share() }} disabled={Boolean(previewError)} fabrication={{ kind: 'parts', onZip: () => void downloadFromApi('/api/export/tool-parts.zip', { project, table: projectConfig(tableConfig) }).catch(error => setMessage(error instanceof Error ? error.message : 'Не удалось создать ZIP-архив.')), onDxf: () => void downloadFromApi('/api/export/tool.dxf', { project, table: projectConfig(tableConfig) }).catch(error => setMessage(error instanceof Error ? error.message : 'Не удалось создать DXF.')) }} />}>
+    <div className="tool-cut-bar"><div><strong>Добавить в раскрой</strong><small>{toolLabels[project.tool]} · металл {display(tableConfig.thickness, units, 3)} {unitLabel}</small></div><NumberField label="Количество" value={project.copies} min={1} max={10} step={1} onValue={copies => apply({ ...project, copies })} /><button disabled={Boolean(admissionError) || !preview} onClick={() => preview && onAddToTable(preview.project)}><Icon name="plus" size={14} />Добавить</button>{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}</div>
+    {previewError ? <div className="three-loading socket-error" role="alert">{previewError} Перед изготовлением измените толщину стола или размеры инструмента.</div>
+      : !preview || !layout ? <div className="three-loading" role="status">Расчёт инструмента на сервере…</div>
+      : view === '2d' ? <PartsLayout layout={layout} units={units} label={`Интерактивная 2D-раскладка деталей: ${toolLabels[project.tool]}`} resetToken={reset} />
+      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ToolAssembly3d project={preview.project} parts={preview.parts} placements={preview.assembly} envelope={preview.envelope} weights={preview.weights} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div></>}
   </GeneratorShell>
 }

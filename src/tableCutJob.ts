@@ -7,7 +7,7 @@ import { parseToolSelections, projectModelParts, toolSelectionsAtTable, toolLabe
 
 export class TableCutJobError extends Error {
   readonly name = 'TableCutJobError'
-  constructor(readonly code: 'thickness-mismatch' | 'part-limit' | 'invalid-layout' | 'sheet-export-required', message: string, readonly selectionId?: string) { super(message) }
+  constructor(readonly code: 'thickness-mismatch' | 'part-limit' | 'invalid-layout', message: string, readonly selectionId?: string) { super(message) }
 }
 export type CutPartSource = { kind: 'table'; part: string; perCopy: number }
   | { kind: 'tool'; selectionId: string; tool: ToolId; part: string; perCopy: number }
@@ -58,8 +58,4 @@ export const validateTableCut = (config: Config, result: NestingResult, stock: N
     } else if (stock.kind !== 'new-sheets') return false
     return validNestingInventory(inventory.parts, result, options)
   } catch { return false }
-}
-
-export const assertTablePartsExport = (config: Config) => {
-  if (config.nestingTools.length) throw new TableCutJobError('sheet-export-required', 'В проект добавлена оснастка. Используйте проверенный общий ZIP с листами: экспорт только деталей стола не включит оснастку.')
 }

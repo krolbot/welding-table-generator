@@ -2,15 +2,19 @@ import { useCallback } from 'react'
 import * as THREE from 'three'
 import { AssemblyViewport, type AssemblyPartInfo, type AssemblyPartMesh, type AssemblyRuntime } from '../AssemblyViewport'
 import { addDimensionLine, dimensionLabel, disposeObject3D, extrudedPartMesh } from '../assemblyGeometry'
-import { partWeight, type FabricationPart } from '../geometry'
+import type { FabricationPart } from '../geometry'
 import { display, type Config } from '../model'
-import type { NestingResult } from '../nesting'
-import { projectAssembly, projectEnvelope, projectParts, type ToolProject } from './project'
+import type { ToolPlacement, ToolProject } from './project'
 
 type ToolGroupOptions = { renderHoles?: boolean; edgeColor?: number }
 type ToolGroup<Material extends THREE.Material> = THREE.Group & { toolMeshes: Array<THREE.Mesh<THREE.ExtrudeGeometry, Material>> }
+type Envelope = { length: number; width: number; height: number }
 type Props = {
   project: ToolProject
+  parts: FabricationPart[]
+  placements: ToolPlacement[]
+  envelope: Envelope
+  weights: Record<string, number>
   dark: boolean
   units?: Config['units']
   resetToken?: number
@@ -18,19 +22,19 @@ type Props = {
   showDimensions?: boolean
   renderHoles?: boolean
   highlighting?: boolean
-  nesting?: NestingResult
 }
 
 export const toolGroup = <Material extends THREE.Material>(
-  project: ToolProject,
+  parts: FabricationPart[],
+  placements: ToolPlacement[],
   material: Material,
   { renderHoles = true, edgeColor }: ToolGroupOptions = {},
 ): ToolGroup<Material> => {
   const group = new THREE.Group() as ToolGroup<Material>
   group.toolMeshes = []
-  const parts = new Map(projectParts(project).map(part => [part.name, part]))
-  for (const placement of projectAssembly(project)) {
-    const part = parts.get(placement.part)
+  const byName = new Map(parts.map(part => [part.name, part]))
+  for (const placement of placements) {
+    const part = byName.get(placement.part)
     if (!part) throw new Error(`В сборке указана неизвестная деталь ${placement.part}`)
     const mesh = extrudedPartMesh(part, material, { renderHoles, edgeColor })
     mesh.name = `${part.name}:${placement.instance}`
@@ -45,163 +49,64 @@ export const toolGroup = <Material extends THREE.Material>(
   return group
 }
 
-const partInfo = (part: FabricationPart, basePos: THREE.Vector3, explodeDir: THREE.Vector3, units: Config['units']): AssemblyPartInfo => ({
-  part: part.name,
-  isPart: true,
-  name: part.label,
+const partInfo = (part: FabricationPart, weightKg: number, basePos: THREE.Vector3, explodeDir: THREE.Vector3, units: Config['units']): AssemblyPartInfo => ({
+  part: part.name, isPart: true, name: part.label,
   dims: `${display(part.width, units, 2)} × ${display(part.height, units, 2)} × ${display(part.thickness, units, 2)} ${units === 'mm' ? 'мм' : 'дюйм'}`,
-  weight: (partWeight(part) * (units === 'mm' ? 1 : 2.20462)).toFixed(2),
-  weightUnit: units === 'mm' ? 'кг' : 'фунт',
-  holesCount: part.holes.length,
-  basePos,
-  explodeDir,
-  currentFactor: 0,
+  weight: (weightKg * (units === 'mm' ? 1 : 2.20462)).toFixed(2), weightUnit: units === 'mm' ? 'кг' : 'фунт',
+  holesCount: part.holes.length, basePos, explodeDir, currentFactor: 0,
 })
 
-const rebuildDimensions = (runtime: AssemblyRuntime, project: ToolProject, showDimensions: boolean, units: Config['units']) => {
+const rebuildDimensions = (runtime: AssemblyRuntime, project: ToolProject, envelope: Envelope, showDimensions: boolean, units: Config['units']) => {
   disposeObject3D(runtime.dimensions)
   runtime.dimensions.clear()
   if (!showDimensions) return
-  const { length, width, height } = projectEnvelope(project)
+  const { length, width, height } = envelope
   const label = (value: number) => `${Number(display(value, units, 2))} ${units === 'mm' ? 'мм' : 'дюйм'}`
-
-  const offset = Math.max(length, width, height) * 0.08
-  const x = -offset
-  const y = -offset
-  const z = 0
+  const offset = Math.max(length, width, height) * 0.08, x = -offset, y = -offset, z = 0
   const verticalNormal = new THREE.Vector3(Math.SQRT1_2, -Math.SQRT1_2, 0)
   addDimensionLine(runtime.dimensions, new THREE.Vector3(0, y, z), new THREE.Vector3(length, y, z), new THREE.Vector3(0, 1, 0), runtime.colors.dim)
   addDimensionLine(runtime.dimensions, new THREE.Vector3(x, 0, z), new THREE.Vector3(x, width, z), new THREE.Vector3(1, 0, 0), runtime.colors.dim)
   addDimensionLine(runtime.dimensions, new THREE.Vector3(x, y, 0), new THREE.Vector3(x, y, height), verticalNormal, runtime.colors.dim)
-  // The compact height callout sits below the model, away from its two horizontal callouts on narrow screens.
-  const heightLabelAnchor = project.tool === 'compactExtension'
-    ? new THREE.Vector3(x, y, 0).addScaledVector(verticalNormal, Math.max(width, height) * 0.9)
-    : new THREE.Vector3(x, y, height / 2).addScaledVector(verticalNormal, 40)
+  const heightAnchor = project.tool === 'compactExtension' ? new THREE.Vector3(x, y, 0).addScaledVector(verticalNormal, Math.max(width, height) * 0.9) : new THREE.Vector3(x, y, height / 2).addScaledVector(verticalNormal, 40)
   ;[
     dimensionLabel(label(length), new THREE.Vector3(length / 2, y - 40, z), runtime.colors),
     dimensionLabel(label(width), new THREE.Vector3(x - 40, width / 2, z), runtime.colors),
-    dimensionLabel(label(height), heightLabelAnchor, runtime.colors),
+    dimensionLabel(label(height), heightAnchor, runtime.colors),
   ].forEach(sprite => { if (sprite) runtime.dimensions.add(sprite) })
 }
 
-const rebuildAssembly = (runtime: AssemblyRuntime, project: ToolProject, exploded: number, showDimensions: boolean, units: Config['units']) => {
+const rebuildAssembly = (runtime: AssemblyRuntime, project: ToolProject, parts: FabricationPart[], placements: ToolPlacement[], envelope: Envelope, weights: Record<string, number>, exploded: number, showDimensions: boolean, units: Config['units']) => {
   disposeObject3D(runtime.assembly)
   runtime.assembly.clear()
   runtime.meshes = []
   runtime.assembly.position.set(0, 0, 0)
   runtime.targetFactor = Math.max(0, Math.min(100, exploded)) / 100
-  const group = toolGroup(project, runtime.metal, { renderHoles: runtime.renderHoles, edgeColor: runtime.colors.edge })
-  const parts = new Map(projectParts(project).map(part => [part.name, part]))
-  const placements = projectAssembly(project)
-  const { length, width, height } = projectEnvelope(project)
-  const center = new THREE.Vector3(length / 2, width / 2, height / 2)
+  const group = toolGroup(parts, placements, runtime.metal, { renderHoles: runtime.renderHoles, edgeColor: runtime.colors.edge })
+  const byName = new Map(parts.map(part => [part.name, part]))
+  const center = new THREE.Vector3(envelope.length / 2, envelope.width / 2, envelope.height / 2)
   group.toolMeshes.forEach((mesh, index) => {
-    const placement = placements[index]
-    const part = parts.get(placement.part)
+    const placement = placements[index], part = byName.get(placement.part)
     if (!part) throw new Error(`В сборке указана неизвестная деталь ${placement.part}`)
     const explodeDir = placements.length === 1 ? new THREE.Vector3() : new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3()).sub(center)
-    if (explodeDir.lengthSq()) explodeDir.normalize().multiplyScalar(Math.max(length, width, height) * 0.25)
-    const partMesh: AssemblyPartMesh = Object.assign(mesh, { userData: partInfo(part, mesh.position.clone(), explodeDir, units) })
-    runtime.meshes.push(partMesh)
+    if (explodeDir.lengthSq()) explodeDir.normalize().multiplyScalar(Math.max(envelope.length, envelope.width, envelope.height) * 0.25)
+    runtime.meshes.push(Object.assign(mesh, { userData: partInfo(part, weights[part.name] ?? 0, mesh.position.clone(), explodeDir, units) }) as AssemblyPartMesh)
   })
   runtime.assembly.add(group)
-  rebuildDimensions(runtime, project, showDimensions, units)
+  rebuildDimensions(runtime, project, envelope, showDimensions, units)
 }
 
-const rebuildSheets = (runtime: AssemblyRuntime, project: ToolProject, nesting: NestingResult, units: Config['units']) => {
-  disposeObject3D(runtime.assembly)
-  runtime.assembly.clear()
-  disposeObject3D(runtime.dimensions)
-  runtime.dimensions.clear()
-  runtime.meshes = []
-  runtime.factor = 0
-  runtime.targetFactor = 0
-  runtime.assembly.position.set(0, 0, 0)
-  const spacing = project.sheet.length * 1.08
-  const origin = (nesting.sheets.length - 1) * spacing / 2
-  nesting.sheets.forEach((sheet, index) => {
-    const sheetX = index * spacing - origin
-    const halfX = project.sheet.length / 2
-    const halfY = project.sheet.width / 2
-    const points = [
-      new THREE.Vector3(-halfX, -halfY, 0), new THREE.Vector3(halfX, -halfY, 0),
-      new THREE.Vector3(halfX, halfY, 0), new THREE.Vector3(-halfX, halfY, 0),
-      new THREE.Vector3(-halfX, -halfY, 0),
-    ]
-    const outline = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: runtime.colors.dim }))
-    outline.position.x = sheetX
-    runtime.assembly.add(outline)
-    sheet.placements.forEach(placement => {
-      const mesh = extrudedPartMesh(placement.part, runtime.metal, { renderHoles: true, edgeColor: runtime.colors.edge })
-      mesh.name = `${placement.part.name}:${placement.instance}`
-      mesh.position.set(sheetX + placement.translation.x - halfX, placement.translation.y - halfY, placement.part.thickness / 2)
-      mesh.rotation.z = placement.rotation * Math.PI / 180
-      const partMesh: AssemblyPartMesh = Object.assign(mesh, { userData: partInfo(placement.part, mesh.position.clone(), new THREE.Vector3(), units) })
-      runtime.assembly.add(partMesh)
-      runtime.meshes.push(partMesh)
-    })
-  })
-}
-
-const resetCamera = (runtime: AssemblyRuntime, project: ToolProject) => {
-  const { length, width, height } = projectEnvelope(project)
-  const extent = Math.max(length, width, height)
-  const target = new THREE.Vector3(length / 2, width / 2, height / 2)
+const resetCamera = (runtime: AssemblyRuntime, project: ToolProject, envelope: Envelope) => {
+  const extent = Math.max(envelope.length, envelope.width, envelope.height)
+  const target = new THREE.Vector3(envelope.length / 2, envelope.width / 2, envelope.height / 2)
   const direction = project.tool === 'cornerBracket' ? new THREE.Vector3(0.85, 1.1, 1) : new THREE.Vector3(-0.85, -1.1, 0.8)
   runtime.camera.position.copy(target).addScaledVector(direction, extent)
   runtime.controls.target.copy(target)
   runtime.controls.update()
 }
 
-const resetSheetCamera = (runtime: AssemblyRuntime, project: ToolProject, nesting: NestingResult) => {
-  const extent = Math.max(project.sheet.length * Math.max(1, nesting.sheets.length) * 1.08, project.sheet.width)
-  runtime.camera.far = Math.max(100000, extent * 6)
-  runtime.camera.updateProjectionMatrix()
-  runtime.controls.maxDistance = Math.max(18000, extent * 5)
-  runtime.camera.position.set(extent * 0.6, -extent * 0.7, extent * 1.1)
-  runtime.controls.target.set(0, 0, 0)
-  runtime.controls.update()
-}
-
-export function ToolAssembly3d({
-  project,
-  dark,
-  units = 'mm',
-  resetToken = 0,
-  exploded = 0,
-  showDimensions = true,
-  renderHoles = true,
-  highlighting = true,
-  nesting,
-}: Props) {
-  const build = useCallback((runtime: AssemblyRuntime) => {
-    if (nesting) rebuildSheets(runtime, project, nesting, units)
-    else rebuildAssembly(runtime, project, exploded, showDimensions, units)
-  }, [nesting, project, showDimensions, units])
-  const reset = useCallback((runtime: AssemblyRuntime) => {
-    if (nesting) resetSheetCamera(runtime, project, nesting)
-    else resetCamera(runtime, project)
-  }, [nesting, project])
-  const theme = useCallback((runtime: AssemblyRuntime) => {
-    if (!nesting) rebuildDimensions(runtime, project, showDimensions, units)
-  }, [nesting, project, showDimensions, units])
-  const envelope = projectEnvelope(project)
-
-  return <AssemblyViewport
-    dark={dark}
-    resetToken={resetToken}
-    build={build}
-    resetCamera={reset}
-    initialExtent={Math.max(envelope.length, envelope.width, envelope.height)}
-    ariaLabel={nesting ? 'Интерактивная 3D-раскладка оснастки на листах' : 'Интерактивная 3D-сборка оснастки'}
-    errorMessage="В этом браузере недоступно отображение 3D. Профили 2D и DXF остаются доступны."
-    hostClassName="three-canvas"
-    errorClassName="three-loading"
-    renderHoles={nesting ? true : renderHoles}
-    highlighting={highlighting}
-    exploded={exploded}
-    cameraKey={nesting ? 'sheet' : project.tool}
-    onThemeChange={theme}
-    up={[0, 0, 1]}
-  />
+export function ToolAssembly3d({ project, parts, placements, envelope, weights, dark, units = 'mm', resetToken = 0, exploded = 0, showDimensions = true, renderHoles = true, highlighting = true }: Props) {
+  const build = useCallback((runtime: AssemblyRuntime) => rebuildAssembly(runtime, project, parts, placements, envelope, weights, exploded, showDimensions, units), [project, parts, placements, envelope, weights, exploded, showDimensions, units])
+  const reset = useCallback((runtime: AssemblyRuntime) => resetCamera(runtime, project, envelope), [project, envelope])
+  const theme = useCallback((runtime: AssemblyRuntime) => rebuildDimensions(runtime, project, envelope, showDimensions, units), [project, envelope, showDimensions, units])
+  return <AssemblyViewport dark={dark} resetToken={resetToken} build={build} resetCamera={reset} initialExtent={Math.max(envelope.length, envelope.width, envelope.height)} ariaLabel="Интерактивная 3D-сборка оснастки" errorMessage="В этом браузере недоступно отображение 3D. Профили 2D и DXF остаются доступны." hostClassName="three-canvas" errorClassName="three-loading" renderHoles={renderHoles} highlighting={highlighting} exploded={exploded} cameraKey={project.tool} onThemeChange={theme} up={[0, 0, 1]} />
 }

@@ -4,11 +4,11 @@ import { createServer } from 'vite'
 import * as THREE from 'three'
 import DxfParser from 'dxf-parser'
 
-let server, geometry, model, assembly, mesh, dxf, nesting, extension
+let server, geometry, model, assembly, tableAssembly, mesh, dxf, nesting, extension
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
-  ;[geometry, model, assembly, mesh, dxf, nesting, extension] = await Promise.all([
-    '/src/geometry.ts', '/src/model.ts', '/src/ThreeAssembly.tsx', '/src/assemblyGeometry.ts',
+  ;[geometry, model, assembly, tableAssembly, mesh, dxf, nesting, extension] = await Promise.all([
+    '/src/geometry.ts', '/src/model.ts', '/src/ThreeAssembly.tsx', '/src/tableAssembly.ts', '/src/assemblyGeometry.ts',
     '/src/dxf.ts', '/src/nestingSettings.ts', '/src/tools/extension.ts',
   ].map(path => server.ssrLoadModule(path)))
 })
@@ -50,14 +50,15 @@ test('actual Three assembly transforms keep opposite faces and top on the same g
   for (const profile of ['D16', 'D28']) for (const grid of ['square', 'staggered']) for (const mounting of ['none', 'cornerPlate']) {
     const config = table({ ...model.presetValues[profile], grid, height: 150, liftingHoles: true, showDimensions: false, legMounts: mounting === 'cornerPlate', legMountStyle: 'cornerPlate' })
     const runtime = { assembly: new THREE.Group(), dimensions: new THREE.Group(), meshes: [], metal: new THREE.MeshStandardMaterial(), colors: mesh.assemblyColors(false), factor: 0, targetFactor: 0, renderHoles: true }
-    assembly.rebuildAssembly(runtime, config)
+    const parts = geometry.makeParts(config)
+    assembly.rebuildAssembly(runtime, config, parts, tableAssembly.tableAssembly(config, parts))
     runtime.assembly.updateMatrixWorld(true)
-    const parts = new Map(geometry.makeParts(config).map(part => [part.name, part]))
+    const partByName = new Map(parts.map(part => [part.name, part]))
     const top = runtime.meshes.find(item => item.userData.part === 'top')
     const surface = new THREE.Box3().setFromObject(top).max.y
     const skirtSets = new Map()
     for (const item of runtime.meshes.filter(item => ['longSkirt', 'shortSkirt'].includes(item.userData.part))) {
-      const part = parts.get(item.userData.part)
+      const part = partByName.get(item.userData.part)
       const points = part.holes.filter(hole => hole.kind === 'grid').map(hole => item.localToWorld(new THREE.Vector3(hole.x, hole.y, 0)))
       near(Math.min(...points.map(p => surface - p.y)), config.margin, 'assembled first row')
       const normalized = points.map(p => {
@@ -68,7 +69,7 @@ test('actual Three assembly transforms keep opposite faces and top on the same g
       if (skirtSets.has(part.name)) assert.deepEqual(normalized, skirtSets.get(part.name), 'opposite-face phase')
       else skirtSets.set(part.name, normalized)
     }
-    for (const hole of parts.get('top').holes.filter(hole => hole.kind === 'grid')) {
+    for (const hole of partByName.get('top').holes.filter(hole => hole.kind === 'grid')) {
       const p = top.localToWorld(new THREE.Vector3(hole.x, hole.y, 0))
       onLattice(p.x + config.length / 2, p.z + config.width / 2, config)
     }

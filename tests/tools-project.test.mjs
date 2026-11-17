@@ -28,22 +28,14 @@ test('project codec rejects malformed, unknown, versioned and out-of-range data'
   assert.throws(() => project.parseToolProject(JSON.stringify({ ...project.defaultToolProject, version: 1 })), error => error.code === 'unsupported-version')
 })
 
-test('ZIP contains canonical parts, sheets and manifests, and rejects a tampered layout', async () => {
+test('nested ZIP contains only sheet DXFs and rejects a tampered layout', async () => {
   const input = { ...project.defaultToolProject, sheet: { length: 3000, width: 1500, edgeGap: 10, partGap: 5 } }
   const key = project.projectKey(input)
   const result = nesting.nestParts(project.projectParts(input), { ...project.projectNestingOptions(input), attempts: 12 })
   assert.equal(project.validProjectLayout(input, result, key), true)
   const archive = toolExport.toolArchive(input, result, key, { thickness: input.size.thickness })
   const readback = await JSZip.loadAsync(await archive.generateAsync({ type: 'nodebuffer' }))
-  for (const name of ['project.json', 'layout.json', 'сборка.json', 'ПРОЧТИ_МЕНЯ.txt', 'детали/top_1шт.dxf', 'листы/Лист_1.dxf']) assert.ok(readback.file(name), name)
-  assert.equal(Object.keys(readback.files).filter(name => /^детали\/.*\.dxf$/.test(name)).length, 5)
-  const assembly = JSON.parse(await readback.file('сборка.json').async('string'))
-  assert.equal(assembly.version, 2)
-  assert.equal(assembly.placements.length, 7)
-  assert.equal(assembly.joinery.tipHeight, 50)
-  assert.equal(assembly.joinery.clearance, .2)
-  assert.match(assembly.axes, /Z вверх/)
-  assert.deepEqual(JSON.parse(await readback.file('project.json').async('string')), input)
+  assert.deepEqual(Object.keys(readback.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   assert.equal(project.validProjectLayout(input, result, 'old-project-key'), false)
   assert.equal(project.validProjectLayout(input, { ...result, placements: result.placements.slice(1) }, key), false)
   assert.equal(project.validProjectLayout(input, { ...result, unplaced: [{ part: project.projectParts(input)[0], instance: 0 }] }, key), false)

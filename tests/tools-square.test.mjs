@@ -54,7 +54,7 @@ test('square rejects nonfinite, out-of-range and colliding mounting holes rather
 
 test('actual shared Three extrusion keeps all three square holes and the open inside corner empty', () => {
   const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-  const group = viewer.toolGroup(projects.defaultSquareProject, material)
+  const group = viewer.toolGroup(projects.projectParts(projects.defaultSquareProject), projects.projectAssembly(projects.defaultSquareProject), material)
   group.updateMatrixWorld(true)
   const box = new THREE.Box3().setFromObject(group)
   assert.deepEqual(box.min.toArray(), [0, 0, 0])
@@ -88,17 +88,10 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   assert.equal(result.unplaced.length, 0)
   assert.equal(projects.validProjectLayout(project, result, key), true)
   const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key, { thickness: project.size.thickness }).generateAsync({ type: 'nodebuffer' }))
-  assert.ok(archive.file('детали/square_3шт.dxf'))
-  assert.deepEqual(JSON.parse(await archive.file('project.json').async('string')), project)
-  const assembly = JSON.parse(await archive.file('сборка.json').async('string'))
-  assert.equal(assembly.tool, 'square')
-  assert.equal(assembly.placements.length, 1)
-  assert.equal(assembly.joinery, undefined)
-  const layout = JSON.parse(await archive.file('layout.json').async('string'))
-  assert.equal(layout.placements.length, 3)
+  assert.deepEqual(Object.keys(archive.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   let circleCount = 0, lineCount = 0
   for (const sheet of result.sheets) {
-    const text = await archive.file(`листы/Лист_${sheet.index + 1}.dxf`).async('string')
+    const text = await archive.file(`Лист_${sheet.index + 1}.dxf`).async('string')
     assert.equal(text, dxf.nativeDxfForNestedSheet(sheet.placements))
     const parsed = new DxfParser().parseSync(text)
     circleCount += parsed.entities.filter(entity => entity.type === 'CIRCLE').length

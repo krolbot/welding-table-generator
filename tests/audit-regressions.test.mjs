@@ -4,13 +4,13 @@ import { createServer } from 'vite'
 import DxfParser from 'dxf-parser'
 import * as THREE from 'three'
 
-let server, geometry, model, dxf, nesting, layout, settings, projects, toolExport, assembly, assemblyGeometry
+let server, geometry, model, dxf, nesting, layout, settings, projects, toolExport, assembly, tableAssembly, assemblyGeometry
 before(async () => {
   server = await createServer({ appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
-  ;[geometry, model, dxf, nesting, layout, settings, projects, toolExport, assembly, assemblyGeometry] = await Promise.all([
+  ;[geometry, model, dxf, nesting, layout, settings, projects, toolExport, assembly, tableAssembly, assemblyGeometry] = await Promise.all([
     '/src/geometry.ts', '/src/model.ts', '/src/dxf.ts', '/src/nesting.ts',
     '/src/fabricationLayout.ts', '/src/nestingSettings.ts', '/src/tools/project.ts', '/src/tools/export.ts',
-    '/src/ThreeAssembly.tsx', '/src/assemblyGeometry.ts',
+    '/src/ThreeAssembly.tsx', '/src/tableAssembly.ts', '/src/assemblyGeometry.ts',
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
@@ -48,7 +48,8 @@ test('rib tabs fit the actual top outline and never make crossing DXF cuts', () 
   const runtime = { assembly: new THREE.Group(), dimensions: new THREE.Group(), meshes: [],
     metal: new THREE.MeshStandardMaterial({ side: THREE.DoubleSide }), colors: assemblyGeometry.assemblyColors(false),
     factor: 0, targetFactor: 0, renderHoles: true }
-  assembly.rebuildAssembly(runtime, { ...config, showDimensions: false })
+  const parts = geometry.makeParts(config)
+  assembly.rebuildAssembly(runtime, { ...config, showDimensions: false }, parts, tableAssembly.tableAssembly(config, parts))
   runtime.assembly.updateMatrixWorld(true)
   const topMesh = runtime.meshes.find(item => item.userData.part === 'top')
   const surface = new THREE.Box3().setFromObject(topMesh).max.y

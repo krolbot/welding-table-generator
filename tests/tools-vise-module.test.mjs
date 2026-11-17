@@ -145,7 +145,7 @@ test('vise world joints are flush, centred and clear without intersections at ev
 
 test('vise shared Three meshes contain actual through slots, round holes and the open underside', () => {
   const p = tools.defaultViseModuleProject, material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-  const group = viewer.toolGroup(p, material); group.updateMatrixWorld(true)
+  const group = viewer.toolGroup(tools.projectParts(p), tools.projectAssembly(p), material); group.updateMatrixWorld(true)
   assert.equal(group.toolMeshes.length, 5)
   const hit = (name, origin, direction) => new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...direction)).intersectObject(group.getObjectByName(`${name}:0`), false).length
   const [top, mount, front, side] = tools.projectModelParts(p)
@@ -173,23 +173,9 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
   assert.equal(result.placements.length, 10); assert.equal(result.unplaced.length, 0)
   assert.equal(tools.validProjectLayout(p, result, tools.projectKey(p)), true)
   const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, tools.projectKey(p), { thickness: p.size.thickness }).generateAsync({ type: 'nodebuffer' }))
-  assert.deepEqual(JSON.parse(await zip.file('project.json').async('string')), p)
-  const assembly = JSON.parse(await zip.file('сборка.json').async('string'))
-  assert.equal(assembly.placements.length, 5)
-  assert.deepEqual(assembly.joinery, vise.viseModuleDimensions(p.size))
-  assert.match(await zip.file('ПРОЧТИ_МЕНЯ.txt').async('string'), /Восемь отдельных радиальных пазов/)
-  for (const part of tools.projectParts(p)) {
-    const parsed = new DxfParser().parseSync(await zip.file(`детали/${part.name}_${part.count}шт.dxf`).async('string'))
-    assert.equal(parsed.header.$INSUNITS, 4)
-    assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, part.contours.flat().filter(s => s.type === 'arc').length)
-    if (part.name === 'viseTop') {
-      const arcs = parsed.entities.filter(e => e.type === 'ARC')
-      checkSlotSetbacks(p.size, Array.from({ length: 8 }, (_, i) => arcs.slice(i * 2, i * 2 + 2)), .002)
-    }
-    for (const h of part.holes) assert.ok(parsed.entities.some(e => e.type === 'CIRCLE' && Math.hypot(e.center.x - h.x, e.center.y - h.y) < .001 && e.radius === h.d / 2))
-  }
+  assert.deepEqual(Object.keys(zip.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   for (const sheet of result.sheets) {
-    const parsed = new DxfParser().parseSync(await zip.file(`листы/Лист_${sheet.index + 1}.dxf`).async('string'))
+    const parsed = new DxfParser().parseSync(await zip.file(`Лист_${sheet.index + 1}.dxf`).async('string'))
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, sheet.placements.reduce((n, p) => n + p.part.contours.flat().filter(s => s.type === 'arc').length, 0))
   }
   assert.equal(tools.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, tools.projectKey(p)), false)

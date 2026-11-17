@@ -2,7 +2,6 @@ import {
   lazy,
   Suspense,
   useEffect,
-  useMemo,
   useState,
 } from 'react'
 import {
@@ -18,8 +17,7 @@ import {
   type CustomHole,
   type PartName,
 } from './model'
-import { engravingLines, fabricationError, FabricationError, layoutParts, legCornerPlateSpec, makeParts, ribAccessHoleSpec, type Hole } from './geometry'
-import { downloadFull, downloadZip } from './dxf'
+import type { Hole } from './geometry'
 import { TableSheetNesting } from './SheetNesting'
 import { Icon } from './Icon'
 import { NumberInput } from './NumberInput'
@@ -27,12 +25,11 @@ import { Checkbox, GeneratorShell, NumberField, ParameterGroup, ProductionEstima
 import { PartsLayout } from './PartsLayout'
 import { copyText, downloadFile } from './projectIO'
 import { useWorkspaceNavigation } from './viewNavigation'
-import { tableCutInventory, type TableLayoutSnapshot } from './tableCutJob'
-import { compareNesting } from './nesting'
-import { fabricationEstimate } from './fabricationLayout'
 import { TableTools } from './tools/TableTools'
-import { toolSelectionsAtTable, type ToolProject } from './tools/project'
+import type { ToolProject } from './tools/project'
 import { clampNumeric, numericBounds, parseTableProject, tableProjectFromQuery, tableProjectQuery, type BooleanKey, type NumericKey } from './tableProject'
+import { downloadFromApi, previewTable } from './serverApi'
+import type { TablePreviewDto } from './apiContracts'
 
 const ThreeAssembly = lazy(() => import('./ThreeAssembly').then(module => ({ default: module.ThreeAssembly })))
 const ToolsWorkspace = lazy(() => import('./tools/ToolsWorkspace').then(module => ({ default: module.ToolsWorkspace })))
@@ -43,10 +40,7 @@ const inchRanges: Partial<Record<NumericKey, { min: number; max: number; step: n
 }
 const partNames = Object.keys(partLabels) as PartName[]
 const isPart = (value: unknown): value is PartName => typeof value === 'string' && Object.hasOwn(partLabels, value)
-const tableGeometryKey = (config: Config) => {
-  const { units, exploded, showDimensions, renderHoles, highlighting, engraving, engravingMode, nameMarking, sheetLength, sheetWidth, sheetEdgeGap, sheetPartGap, nestingCopies, nestingTools, ...geometry } = config
-  return JSON.stringify(geometry)
-}
+
 const readStorage = (key: string): Record<string, unknown> => {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
@@ -83,31 +77,29 @@ export default function App() {
   const navigation = useWorkspaceNavigation()
   const { workspace, view, selectWorkspace, selectView: setView } = navigation
   const [dark, setDark] = useState(() => readStorage('tableGenUI').theme === 'dark')
-  const [tableLayout, setTableLayout] = useState<TableLayoutSnapshot>()
   const [reset2dToken, setReset2dToken] = useState(0)
-
-  const geometryKey = tableGeometryKey(config)
-  const geometry = useMemo(() => {
-    try {
-      const parts = makeParts(config)
-      return { parts, error: fabricationError(config, parts) }
-    } catch (error) {
-      return { parts: [], error: error instanceof FabricationError ? error : new FabricationError('invalid-dimensions', error instanceof Error ? error.message : 'Некорректная геометрия стола') }
-    }
-  }, [geometryKey])
-  const cutJob = useMemo(() => {
-    if (geometry.error) return { error: geometry.error.message }
-    try { return { inventory: tableCutInventory(config, geometry.parts) } }
-    catch (error) { return { error: error instanceof Error ? error.message : 'Некорректное задание на резку' } }
-  }, [geometry, config.nestingCopies, config.nestingTools])
-  const summary = useMemo(() => ({
-    ...fabricationEstimate(cutJob.inventory?.parts ?? [], { length: config.sheetLength, width: config.sheetWidth }),
-    engraving: cutJob.inventory ? geometry.parts.reduce((total, part) => total + engravingLines(part, config).reduce((sum, mark) => sum + Math.hypot(mark.to.x - mark.from.x, mark.to.y - mark.from.y), 0) * part.count, 0) / 1000 * config.nestingCopies : 0,
-  }), [cutJob, geometry.parts, config.sheetLength, config.sheetWidth, config.nestingCopies, config.engraving, config.engravingMode, config.nameMarking])
-  const layout = useMemo(() => layoutParts(config, geometry.parts), [geometry.parts])
-  const cornerPlate = useMemo(() => legCornerPlateSpec(config), [geometryKey])
-  const ribAccess = useMemo(() => ribAccessHoleSpec(config), [geometryKey])
-  const geometryError = geometry.error
+  const [previewState, setPreviewState] = useState<{ key: string; value: TablePreviewDto } | null>(null)
+  const [previewError, setPreviewError] = useState<{ code: string; message: string } | null>(null)
+  const previewKey = JSON.stringify(projectConfig(config))
+  const preview = previewState?.key === previewKey ? previewState.value : null
+  useEffect(() => {
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      void previewTable(projectConfig(config), controller.signal).then(value => {
+        setPreviewState({ key: previewKey, value }); setPreviewError(null)
+        if (JSON.stringify(projectConfig(value.config)) !== previewKey) setConfig(current => preserveView(value.config, current))
+      }).catch(error => {
+        if (controller.signal.aborted) return
+        setPreviewError({ code: error && typeof error === 'object' && 'code' in error ? String(error.code) : 'server-preview', message: error instanceof Error ? error.message : 'Сервер не рассчитал проект' })
+      })
+    }, 120)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [previewKey])
+  const summary = preview?.summary ?? { kg: 0, cut: 0, holes: 0, fit: false, engraving: 0 }
+  const layout = preview?.layout
+  const cornerPlate = preview?.cornerPlate
+  const ribAccess = preview?.ribAccess
+  const geometryError = previewError ?? preview?.error
   const unitLabel = config.units === 'mm' ? 'мм' : 'дюйм'
 
   useEffect(() => {
@@ -135,14 +127,8 @@ export default function App() {
   }, [config])
 
   const applyTableConfig = (next: Config) => {
-    try {
-      next.nestingTools = toolSelectionsAtTable(next.nestingTools, next)
-      setConfig(next)
-      return true
-    } catch (error) {
-      setNotice(`Параметры стола не изменены: ${error instanceof Error ? error.message : 'Некорректная геометрия выбранной оснастки'}`)
-      return false
-    }
+    setConfig(next)
+    return true
   }
   const patch = <K extends keyof Config>(key: K, value: Config[K]) => applyTableConfig({ ...config, [key]: value })
   const setPreset = (preset: Config['preset']) => {
@@ -194,7 +180,7 @@ export default function App() {
       return Number.isFinite(number) && (key !== 'd' || number > 0) ? { ...hole, [key]: readDisplay(number, config.units) } : hole
     }))
   }
-  const save = () => downloadFile(JSON.stringify(projectConfig(config), null, 2), `Проект_сварочного_стола_${config.length}x${config.width}.json`)
+  const save = () => downloadFile(JSON.stringify(projectConfig(config), null, 2), `Проект_сварочного_стола_${config.length}x${config.width}.wtable`)
   const replaceProject = (candidate: Config) => {
     const next = preserveView(candidate, config)
     const url = new URL(location.href)
@@ -209,7 +195,8 @@ export default function App() {
   const reportError = (error: unknown) => setNotice(error instanceof Error ? error.message : 'Операция завершилась с ошибкой. Файл экспорта не создан.')
   const open = async (file: File) => {
     try {
-      replaceProject(parseTableProject(await file.text()).config)
+      const raw: unknown = JSON.parse(await file.text())
+      replaceProject((await previewTable(raw)).config)
       setNotice('Проект загружен.')
     } catch (error) { reportError(error) }
   }
@@ -225,24 +212,17 @@ export default function App() {
     }
   }
 
-  const withSelectedTool = (project: ToolProject) => {
-    const next = { ...config, nestingTools: toolSelectionsAtTable([...config.nestingTools, { id: crypto.randomUUID(), project }], config) }
-    tableCutInventory(next)
-    return next
-  }
-  const toolAdmissionError = (project: ToolProject) => {
-    try { withSelectedTool(project); return undefined }
-    catch (error) { return error instanceof Error ? error.message : 'Оснастку нельзя добавить в это задание на резку стола' }
-  }
-  const addToTable = (project: ToolProject) => {
+  const addToTable = async (project: ToolProject) => {
     try {
-      setConfig(withSelectedTool(project)); navigation.navigate({ workspace: 'table', view: 'sheet' })
+      const candidate = { ...config, nestingTools: [...config.nestingTools, { id: crypto.randomUUID(), project }] }
+      const accepted = await previewTable(projectConfig(candidate))
+      if (accepted.error) throw Object.assign(new Error(accepted.error.message), { code: accepted.error.code })
+      setConfig(preserveView(accepted.config, config)); navigation.navigate({ workspace: 'table', view: 'sheet' })
       setNotice('Оснастка выбрана. Экспорт останется недоступным, пока полная общая раскладка не поместится на листы.')
     } catch (error) { reportError(error) }
   }
-  const rememberTableLayout = (snapshot: TableLayoutSnapshot) => setTableLayout(current => current?.key === snapshot.key && compareNesting(current.result, snapshot.result) <= 0 ? current : snapshot)
 
-  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Загрузка инструментов…</div>}><ToolsWorkspace view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')} tableConfig={config} tableAdmissionError={toolAdmissionError} onAddToTable={addToTable} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
+  if (workspace === 'tools') return <Suspense fallback={<div className="three-loading">Загрузка инструментов…</div>}><ToolsWorkspace view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')} tableConfig={config} onAddToTable={project => void addToTable(project)} dark={dark} onTheme={() => setDark(value => !value)} onBack={() => selectWorkspace('table')} units={config.units} onUnits={units => patch('units', units)} visual={config} onVisual={changes => setConfig(current => ({ ...current, ...changes }))} /></Suspense>
   return <GeneratorShell workspace="table" onWorkspace={selectWorkspace} dark={dark} onTheme={() => setDark(value => !value)} units={config.units} onUnits={units => patch('units', units)} view={view} onView={setView} notice={notice} onDismissNotice={() => setNotice('')}
     settings={<>
           <fieldset className="table-settings">
@@ -322,15 +302,15 @@ export default function App() {
               <button title="Восстановить это отверстие" aria-label="Восстановить отверстие" onClick={() => patch('removedHoles', config.removedHoles.filter((_, item) => item !== index))}><Icon name="plus" size={12} /></button>
             </li>)}</ul><button className="secondary full" onClick={() => patch('removedHoles', [])}>Восстановить все</button><p>Удалённое отверстие исчезает из каждой копии этой детали. Координаты отсчитываются от центра детали.</p></> : <p>В разделе «Детали» выберите «Удалить отверстия» и нажмите на отверстие. Удалённые отверстия появятся здесь, откуда их можно восстановить.</p>}
           </ParameterGroup>
-          <TableTools config={config} onChange={nestingTools => patch('nestingTools', nestingTools)} onChoose={() => selectWorkspace('tools')} onNotice={setNotice} />
+          <TableTools config={config} onChange={nestingTools => patch('nestingTools', nestingTools)} onChoose={() => selectWorkspace('tools')} />
           </fieldset>
     </>}
     visualization={<VisualizationSettings value={config} onChange={changes => setConfig(current => ({ ...current, ...changes }))} />}
-    production={<fieldset className="table-settings"><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={geometryError?.message ?? cutJob?.error} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
-    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={save} onShare={() => { onClose(); void share() }} disabled={Boolean(geometryError)} fabrication={config.nestingTools.length ? { kind: 'shared-sheets', onOpenSheets: () => { onClose(); setView('sheet') } } : { kind: 'parts', onZip: () => void downloadZip(config).catch(reportError), onDxf: () => { try { downloadFull(config) } catch (error) { reportError(error) } } }} />}
-    seo={<article className="seo"><div><h1>Бесплатный генератор сварочных столов — DXF-чертежи и 3D CAD</h1><p>Создайте параметрический сварочный стол в браузере. Изучите 3D-сборку, настройте размеры и соединения, затем экспортируйте отдельные детали или полную раскладку в DXF.</p><h3>Системы оснастки D16 и D28</h3><p>Выберите D16/50, D28/100 либо задайте диаметр отверстий, шаг и начало сетки вручную. У квадратной и диагональной сеток фиксированные начала координат от краёв и рабочей поверхности столешницы и юбок. Одна только геометрия сетки не подтверждает совместимость оснастки.</p><h3>Конструкция на шипах и пазах</h3><p>Задайте толщину листа, ширину шипов и зазор в соединениях, чтобы построить взаимно фиксирующиеся детали периметра и опорной рамы. Перед резкой проверьте построенные контуры и посадку соединений.</p><h3>Угловые разгрузки</h3><p>Дополнительные угловые разгрузки обеспечивают место для шипов. В DXF круглые отверстия и дуги разгрузок остаются исходными сущностями на отдельных слоях резки и гравировки.</p><h3>Внутренняя опорная рама и рёбра</h3><p>Настройте шаг опорных рёбер и изучите собранный либо разнесённый стол. Можно использовать исходную схему болтов на юбках или создать четыре горизонтальные угловые пластины, которые соединяются с обеими соседними юбками и крепятся болтами к отдельным простым пластинам на съёмных ножках из квадратной трубы. В нужные детали также можно добавить отверстия для подъёма и пользовательские отверстия по координатам.</p><h3>Скачать DXF-файлы сварочного стола</h3><p>Скачайте DXF отдельных деталей в ZIP-архиве, экспортируйте полную раскладку, сохраните проект как JSON или поделитесь ссылкой с его параметрами. Перед изготовлением обязательно проверьте размеры, допуски и пригодность конструкции.</p></div></article>}>
-    {geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Интерактивный 2D-чертёж сварочного стола" resetToken={reset2dToken} getEngravings={part => { const name = readPart(part.name); return name ? engravingLines({ ...part, name }, config) : [] }} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
-      : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} baseline={tableLayout} onBaseline={rememberTableLayout} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
-      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ThreeAssembly config={config} parts={geometry.parts} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}
+    production={<fieldset className="table-settings"><ProductionEstimate summary={summary} units={config.units} sheet={{ length: config.sheetLength, width: config.sheetWidth }} error={geometryError?.message} onSheetChange={changes => { if (changes.length !== undefined) setNumeric('sheetLength', changes.length); if (changes.width !== undefined) setNumeric('sheetWidth', changes.width) }} /></fieldset>}
+    actions={onClose => <ProjectActions onOpen={file => { onClose(); void open(file) }} onSave={save} onShare={() => { onClose(); void share() }} disabled={Boolean(geometryError)} fabrication={{ kind: 'parts', onZip: () => void downloadFromApi('/api/export/table-parts.zip', { project: projectConfig(config) }).catch(reportError), onDxf: () => void downloadFromApi('/api/export/table.dxf', { project: projectConfig(config) }).catch(reportError), onOpenSheets: () => { onClose(); setView('sheet') } }} />}
+    seo={<article className="seo"><div><h1>Бесплатный генератор сварочных столов — DXF-чертежи и 3D CAD</h1><p>Создайте параметрический сварочный стол. Расчёты выполняются на сервере; браузер показывает готовые 2D/3D-данные и производственные файлы.</p><h3>Системы оснастки D16 и D28</h3><p>Выберите D16/50, D28/100 либо задайте диаметр отверстий, шаг и начало сетки вручную. У квадратной и диагональной сеток фиксированные начала координат от краёв и рабочей поверхности столешницы и юбок.</p><h3>Скачать DXF-файлы сварочного стола</h3><p>DXF стола, отдельные DXF деталей и проверенные DXF листов раскроя скачиваются независимо от редактируемого файла проекта. Архивы для оператора содержат только DXF.</p></div></article>}>
+    {geometryError ? <div className="three-loading socket-error" role="alert" data-error-code={geometryError.code}>{geometryError.message}</div> : !preview || !layout ? <div className="three-loading" role="status">Расчёт проекта на сервере…</div> : view === '2d' ? <PartsLayout layout={layout} units={config.units} label="Интерактивный 2D-чертёж сварочного стола" resetToken={reset2dToken} getEngravings={part => preview.engravings[part.name] ?? []} onRemoveHole={(hole, part) => removeHole(hole, readPart(part.name))} />
+      : view === 'sheet' ? <TableSheetNesting config={config} dark={dark} onChange={changes => setConfig(current => ({ ...current, ...changes }))} onNotice={setNotice} />
+      : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ThreeAssembly config={config} parts={preview.parts} assembly={preview.assembly} resetToken={reset2dToken} dark={dark} /></Suspense></div></>}
   </GeneratorShell>
 }

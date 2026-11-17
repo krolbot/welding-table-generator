@@ -121,12 +121,8 @@ test('vise inherits the entire mounting interface across saved tools, table JSON
   const host = table({ grid: 'staggered' })
   const c = { ...host, nestingTools: tools.toolSelectionsAtTable([source], host) }, run = finish(c)
   const zip = await JSZip.loadAsync(await dxf.nestedArchive(c, run.result, run.stock).generateAsync({ type: 'nodebuffer' }))
-  const saved = JSON.parse(await zip.file('project.json').async('string'))
-  const manifest = JSON.parse(await zip.file('layout.json').async('string'))
-  assert.deepEqual(saved.nestingTools, manifest.selectedTools)
-  assert.equal(saved.nestingTools[0].project.size.grid, 'staggered')
-  assert.equal(saved.nestingTools[0].project.size.thickness, c.thickness)
-  assert.equal(manifest.placements.filter(p => p.part.startsWith('tool:')).length, 10)
+  assert.deepEqual(Object.keys(zip.files).filter(name => !name.endsWith('/')), run.result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
+  for (const sheet of run.result.sheets) assert.equal(await zip.file(`Лист_${sheet.index + 1}.dxf`).async('string'), dxf.dxfForNestedSheet(c, sheet.placements))
   const changed = { ...c, grid: 'square' }
   assert.equal(cut.validateTableCut(changed, run.result, run.stock), false)
   assert.throws(() => dxf.nestedArchive(changed, run.result, run.stock), error => error.code === 'invalid-layout')
@@ -162,30 +158,21 @@ test('compact shared export records inherited stock and refuses the previous lay
   const run = finish(c)
   assert.equal(cut.validateTableCut(c, run.result, run.stock), true)
   const zip = await JSZip.loadAsync(await dxf.nestedArchive(c, run.result, run.stock).generateAsync({ type: 'nodebuffer' }))
-  const manifest = JSON.parse(await zip.file('layout.json').async('string'))
-  const project = JSON.parse(await zip.file('project.json').async('string'))
-  assert.equal(manifest.selectedTools[0].project.size.thickness, c.thickness)
-  assert.equal(project.nestingTools[0].project.size.thickness, c.thickness)
-  assert.deepEqual(manifest.selectedTools, project.nestingTools)
-  assert.ok(manifest.parts.every(part => part.thickness === c.thickness))
+  assert.deepEqual(Object.keys(zip.files).filter(name => !name.endsWith('/')), run.result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
+  for (const sheet of run.result.sheets) assert.equal(await zip.file(`Лист_${sheet.index + 1}.dxf`).async('string'), dxf.dxfForNestedSheet(c, sheet.placements))
   const changed = { ...c, thickness: 6, nestingTools: tools.toolSelectionsAtTable(c.nestingTools, table({ thickness: 6 })) }
   assert.notEqual(settings.nestingKey(changed), settings.nestingKey(c))
   assert.equal(cut.validateTableCut(changed, run.result, run.stock), false)
   assert.throws(() => dxf.nestedArchive(changed, run.result, run.stock), error => error.code === 'invalid-layout')
 })
 
-test('complete mixed job fits existing stock and real ZIP preserves all circles, arcs, engraving and provenance', async () => {
+test('complete mixed job fits existing stock and real ZIP preserves all circles, arcs and engraving', async () => {
   const c = table({ nestingTools: [selection('ext', 'extension'), selection('square', 'square', { copies: 2 }), selection('bracket', 'cornerBracket'), selection('compact', 'compactExtension', { copies: 2 }), selection('vise', 'viseModule')] })
   const base = baseline(c), run = finish(c, base)
   assert.equal(cut.validateTableCut(c, run.result, run.stock), true)
   assert.ok(run.result.sheets.length <= base.sheets.length)
   const zip = await JSZip.loadAsync(await dxf.nestedArchive(c, run.result, run.stock).generateAsync({ type: 'nodebuffer' }))
-  const manifest = JSON.parse(await zip.file('layout.json').async('string'))
-  assert.deepEqual(manifest.selectedTools, c.nestingTools)
-  assert.deepEqual(manifest.parts, cut.tableCutInventory(c).parts)
-  assert.deepEqual(manifest.capacity.tableLayout, base)
-  assert.equal(manifest.capacity.sheetLimit, base.sheets.length)
-  assert.deepEqual(JSON.parse(await zip.file('project.json').async('string')), model.projectConfig(c))
+  assert.deepEqual(Object.keys(zip.files).filter(name => !name.endsWith('/')), run.result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   for (const sheet of run.result.sheets) {
     const parsed = new DxfParser().parseSync(await zip.file(`Лист_${sheet.index + 1}.dxf`).async('string'))
     assert.equal(parsed.header.$INSUNITS, 4)
@@ -193,9 +180,8 @@ test('complete mixed job fits existing stock and real ZIP preserves all circles,
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, sheet.placements.reduce((n, p) => n + p.part.contours.flat().filter(s => s.type === 'arc').length, 0))
     assert.equal(parsed.entities.filter(e => e.layer === 'ENGRAVE').length, sheet.placements.reduce((n, p) => n + cut.tableCutEngravings(p.part, c).length, 0))
   }
-  for (const p of manifest.placements) assert.equal(p.copy, Math.floor(p.instance / p.source.perCopy))
-  assert.throws(() => dxf.fullDxf(c), error => error.code === 'sheet-export-required')
-  await assert.rejects(dxf.downloadZip(c), error => error.code === 'sheet-export-required')
+
+  assert.equal(new DxfParser().parseSync(dxf.fullDxf(c)).header.$INSUNITS, 4)
 })
 
 test('insufficient existing capacity blocks the whole job, including partially placed tools and an extra-sheet result', () => {

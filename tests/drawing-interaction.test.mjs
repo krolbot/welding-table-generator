@@ -25,7 +25,7 @@ test('workspace URLs preserve shared data and expose view destinations', () => {
   assert.equal(tableUrl.searchParams.get('toolProject'), 'original')
   assert.equal(tableUrl.searchParams.get('state'), 'table')
   assert.deepEqual(navigation.readWorkspaceRoute(tableUrl), { workspace: 'table', view: 'sheet' })
-  assert.deepEqual(navigation.readWorkspaceRoute(new URL('https://example.test/?view=wrong'), { table: '3d' }), { workspace: 'table', view: '3d' })
+  assert.deepEqual(navigation.readWorkspaceRoute(new URL('https://example.test/?view=wrong'), { table: '3d' }), { workspace: 'table', view: '2d' })
 })
 
 test('zoom and clamps retain the world point under the pointer', () => {
