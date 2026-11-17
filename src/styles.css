@@ -349,6 +349,10 @@ dialog[open] { display: flex; flex-direction: column; }
   .camera-presets button { padding-inline: 8px; }
   .viewport-status > span { display: none; }
 }
+@media (min-width: 1024px) {
+  .drawing-viewport { grid-template-columns: 80px minmax(0, 1fr); }
+  .drawing-viewport .viewport-toolbar button { width: 68px; }
+}
 @media (max-width: 1199px) and (min-width: 1024px) {
   .app-header { gap: 12px; }
   .workspace-navigation { padding-left: 12px; }
