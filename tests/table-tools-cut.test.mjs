@@ -259,6 +259,18 @@ test('first-time mixed job exposes a non-exportable table-capacity phase before 
   assert.ok(last.result.sheets.length <= last.stock.baseline.sheets.length)
 })
 
+test('automatic nesting completion requires a stable complete lower-bound result and retains a hard time limit', () => {
+  const result = {
+    validation: { valid: true, violations: [] }, placements: [{}], unplaced: [], sheets: [{}],
+    metrics: { sheetLowerBound: 1 }, stats: { attempts: 12, improvements: 2 },
+  }
+  const run = { phase: 'nesting', result, stock: { kind: 'new-sheets' } }
+  assert.equal(jobs.automaticNestingFinish(run, 7, 59_999), undefined)
+  assert.equal(jobs.automaticNestingFinish(run, 8, 59_999), 'converged')
+  assert.equal(jobs.automaticNestingFinish({ ...run, result: { ...result, unplaced: [{}] } }, 8, 60_000), 'time-limit')
+  assert.equal(jobs.automaticNestingFinish({ phase: 'capacity', result }, 8, 60_000), undefined)
+})
+
 test('actual shared Three sheet renderer keeps every mixed part and the same rigid placements as DXF', () => {
   const c = table({ nestingTools: [selection('ext', 'extension'), selection('square', 'square'), selection('bracket', 'cornerBracket'), selection('compact', 'compactExtension'), selection('vise', 'viseModule')] })
   const run = finish(c)

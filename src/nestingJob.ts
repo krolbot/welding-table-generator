@@ -8,11 +8,23 @@ export type NestingJob = {
 }
 export type NestingStock = { kind: 'new-sheets' } | { kind: 'table-offcuts'; baseline: NestingResult }
 export type NestingRun = { phase: 'capacity'; result: NestingResult } | { phase: 'nesting'; result: NestingResult; stock: NestingStock }
+export type NestingFinishReason = 'converged' | 'time-limit' | 'exhausted'
 export class NestingJobError extends Error {
   readonly name = 'NestingJobError'
   constructor(readonly code: 'stale-baseline' | 'capacity-unavailable', message: string) { super(message) }
 }
 const tableCapacityPasses = 48
+const stablePasses = 8
+const minimumPasses = 12
+const maximumComputeMs = 60_000
+
+export const automaticNestingFinish = (run: NestingRun, unchangedPasses: number, phaseElapsedMs: number): NestingFinishReason | undefined => {
+  if (run.phase !== 'nesting') return undefined
+  const { result } = run
+  if (result.validation.valid && result.placements.length > 0 && result.unplaced.length === 0
+    && result.sheets.length === result.metrics.sheetLowerBound && result.stats.attempts >= minimumPasses && unchangedPasses >= stablePasses) return 'converged'
+  if (phaseElapsedMs >= maximumComputeMs) return 'time-limit'
+}
 
 /** Inventory, native geometry, instance identity and both representations of the sheet plan must agree. */
 export const validNestingInventory = (parts: readonly FabricationPart[], result: NestingResult, options: NestingOptions): boolean => {

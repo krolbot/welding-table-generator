@@ -4,7 +4,7 @@ import { display, readDisplay, type Config } from './model'
 import { downloadNestedZip } from './dxf'
 import { nestingKey, type NestingRequest, type NestingResponse } from './nestingSettings'
 import type { NestingResult } from './nesting'
-import type { NestingJob, NestingRun } from './nestingJob'
+import type { NestingFinishReason, NestingJob, NestingRun } from './nestingJob'
 import { tableNestingJob, tableLayoutKey, tableCutEngravings, validateTableCut, type TableLayoutSnapshot } from './tableCutJob'
 import { NumberField, useWideWorkspace, WorkspaceDialog } from './GeneratorWorkspace'
 import { Icon } from './Icon'
@@ -28,6 +28,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
   const [snapshot, setSnapshot] = useState<{ key: string; run: NestingRun } | null>(null)
   const [stats, setStats] = useState<{ attempts: number; elapsedMs: number; search: NestingResult['stats'] | null }>({ attempts: 0, elapsedMs: 0, search: null })
   const [status, setStatus] = useState<'running' | 'pausing' | 'paused' | 'done' | 'error'>('running')
+  const [finishReason, setFinishReason] = useState<NestingFinishReason | null>(null)
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [sheetIndex, setSheetIndex] = useState(0)
   const [mode, setMode] = useState<'3d' | '2d'>('3d')
@@ -43,7 +44,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
 
   useEffect(() => {
     let active = true
-    setSnapshot(null); setStats({ attempts: 0, elapsedMs: 0, search: null }); setStatus('running'); setError(null)
+    setSnapshot(null); setStats({ attempts: 0, elapsedMs: 0, search: null }); setStatus('running'); setError(null); setFinishReason(null)
     // Debounce edits; cleanup cancels old geometry work, including an in-flight pass.
     const timer = window.setTimeout(() => {
       let worker: Worker
@@ -61,7 +62,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
         setSnapshot(previous => previous?.key === key && previous.run.phase === message.run.phase && previous.run.result.stats.improvements === message.run.result.stats.improvements ? previous : { key, run: message.run })
         onRunRef.current?.(message.run)
         if (!message.run.result.validation.valid) { state.running = false; setStatus('error'); return }
-        if (message.done) { state.running = false; setStatus('done'); return }
+        if (message.done) { state.running = false; setFinishReason(message.finishReason ?? 'exhausted'); setStatus('done'); return }
         if (state.running) {
           state.busy = true
           worker.postMessage({ type: 'continue', key } satisfies NestingRequest)
@@ -100,14 +101,14 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
     aria-label={label} value={display(settings[field], unitSystem, 2)} min={0} max={Number(display(maxGap, unitSystem, 2))} step={unitSystem === 'mm' ? 0.5 : 0.01}
     onValue={value => { if (value !== Number(display(settings[field], unitSystem, 2))) return onChange({ [field]: Math.max(0, Math.min(maxGap, readDisplay(value, unitSystem))) }) }} />
 
-  const statusLabel = status === 'running' ? 'Оптимизация' : status === 'pausing' ? 'Завершение прохода' : status === 'paused' ? 'Пауза' : error?.code === 'capacity-unavailable' ? 'Нет полной раскладки стола' : status === 'error' ? 'Остановлено' : complete ? 'Готово' : 'Варианты исчерпаны'
+  const statusLabel = status === 'running' ? 'Оптимизация' : status === 'pausing' ? 'Завершение прохода' : status === 'paused' ? 'Пауза' : error?.code === 'capacity-unavailable' ? 'Нет полной раскладки стола' : status === 'error' ? 'Остановлено' : complete ? 'Готово' : finishReason === 'time-limit' ? 'Лимит расчёта' : 'Варианты исчерпаны'
   const inspector = <>
       <header>{wide && <h3 id="nesting-title">Раскладка на листах</h3>}<span className="nesting-status">{statusLabel}</span></header>
       <p className="nesting-summary" role="status">{error ? error.code === 'capacity-unavailable' ? 'Полная раскладка стола не найдена. Оснастка не размещена; экспорт недоступен.' : 'Расчёт завершился с ошибкой. Экспорт недоступен.' : run?.phase === 'capacity' ? 'Проверяется вместимость только для стола. Выбранная оснастка ещё не размещена; экспорт недоступен.' : result ? !result.validation.valid ? 'Раскладка не прошла проверку. Экспорт недоступен.' : result.unplaced.length ? `Не размещено деталей: ${result.unplaced.length}. Экспорт недоступен.` : !complete ? 'Эту раскладку нельзя экспортировать. Перезапустите расчёт с текущими параметрами проекта.' : `Деталей: ${result.placements.length} · листов: ${result.sheets.length}` : 'Рассчитывается первая проверенная раскладка…'}</p>
       {error && <p role="alert" className="nesting-error" data-error-code={error.code}>{error.message}</p>}
       {result && !result.validation.valid && <p className="nesting-error">{result.validation.violations[0]?.message}</p>}
       {run?.phase === 'nesting' && run.stock.kind === 'table-offcuts' && <p className="nesting-hint">Вместимость только для стола: {run.stock.baseline.sheets.length} лист. Дополнительные листы для оснастки не добавляются. Детали стола могут быть переставлены. Для экспорта нужно полностью разместить всю выбранную оснастку.</p>}
-      {run?.phase === 'nesting' && result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>Не хватает деталей: {result.unplaced.length}. {status === 'done' ? 'Варианты исчерпаны.' : status === 'paused' ? 'Поиск приостановлен.' : status === 'error' ? 'Расчёт остановлен.' : 'Поиск продолжается.'} При добавлении оснастки лимит листов для стола не увеличивается. Частичное задание нельзя экспортировать.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
+      {run?.phase === 'nesting' && result && result.unplaced.length > 0 && <div className="nesting-error" role="alert" data-error-code="incomplete-cut-job"><p>Не хватает деталей: {result.unplaced.length}. {status === 'done' ? finishReason === 'time-limit' ? 'Достигнут лимит времени расчёта.' : 'Варианты исчерпаны.' : status === 'paused' ? 'Поиск приостановлен.' : status === 'error' ? 'Расчёт остановлен.' : 'Поиск продолжается.'} При добавлении оснастки лимит листов для стола не увеличивается. Частичное задание нельзя экспортировать.</p><ul>{[...new Set(result.unplaced.map(item => item.part.label))].map(label => <li key={label}>{label}</li>)}</ul></div>}
       <button className="nesting-export" disabled={!complete} onClick={() => { if (run?.phase === 'nesting') void onExport({ ...run, result: { ...run.result, stats: stats.search ?? run.result.stats } }).catch(error => onNotice(error instanceof Error ? error.message : 'Не удалось экспортировать раскладку. Пересчитайте её и повторите попытку.')) }}><Icon name="download" size={16} />Скачать ZIP с листами</button>
       {result && result.sheets.length > 0 && <>
         <label className="field"><span>Предпросмотр листа</span><select value={selected} onChange={event => setSheetIndex(Number(event.target.value))}>{result.sheets.map((s, i) => <option key={s.index} value={i}>Лист {i + 1} · деталей: {s.placements.length}</option>)}</select></label>
@@ -118,8 +119,8 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
         </dl>
       </>}
       <div className="nesting-search">
-        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Приостановить</button> : <button disabled={status !== 'paused'} onClick={resume}>Продолжить улучшение</button>}<button onClick={() => setRetry(value => value + 1)}>Перезапустить</button></div>
-        <p>Проверено порядков: {stats.attempts} · время расчёта: {(stats.elapsedMs / 1000).toFixed(1)} с.</p>
+        <div className="nesting-actions">{running ? <button disabled={status === 'pausing'} onClick={pause}>Приостановить</button> : status === 'paused' ? <button onClick={resume}>Продолжить улучшение</button> : null}<button onClick={() => setRetry(value => value + 1)}>Перезапустить</button></div>
+        <p>Проверено вариантов: {stats.attempts} · время расчёта: {(stats.elapsedMs / 1000).toFixed(1)} с.</p>
       </div>
       <details><summary>Зазоры и партия</summary>
         <div className="fields">{spacingField('edgeGap', 'Зазор от края листа')}{spacingField('partGap', 'Зазор между деталями')}</div>
@@ -129,7 +130,7 @@ export function SheetNesting({ jobKey: key, job, sheetSettings: settings, units:
       <details><summary>Раскладка и резка</summary>
         {result && <p className="nesting-hint">Площадь покрытия включает отверстия. Зелёным в 2D показана свободная краевая полоса, а не все пригодные остатки. {complete && result.sheets.length === result.metrics.sheetLowerBound ? 'Число листов достигло нижней границы по площади, но форму остатков ещё можно улучшить.' : 'Нижняя граница не гарантирует, что такого числа листов достаточно.'}</p>}
       <p className="nesting-hint">Экспорт содержит исходные сущности LINE / ARC / CIRCLE, перечень размещений и параметры проекта. Контурный поиск эвристический и не доказывает глобальную оптимальность. Проверьте ширину реза, врезания, зажимы и порядок резки в CAM.</p>
-        <p>Досрочно остановить активный поиск можно только кнопкой «Приостановить». Поиск завершится после исчерпания лимита порядков; для экспорта должны быть размещены все детали.</p>
+        <p>Поиск автоматически завершается, когда число листов достигло нижней границы и восемь следующих вариантов не улучшили проверенную раскладку, либо после 60 секунд расчёта. Это лучший найденный вариант, а не доказанный глобальный оптимум. Активный поиск можно остановить кнопкой «Приостановить».</p>
       </details>
   </>
 

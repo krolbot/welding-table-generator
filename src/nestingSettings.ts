@@ -1,7 +1,7 @@
 import { assertFabricationReady, makeParts, type Part } from './geometry'
 import { projectConfig, type Config } from './model'
 import type { NestingOptions } from './nesting'
-import type { NestingJob, NestingRun } from './nestingJob'
+import type { NestingFinishReason, NestingJob, NestingRun } from './nestingJob'
 
 export const nestingKey = (config: Config) => JSON.stringify(projectConfig(config))
 export const nestingParts = (config: Config, preparedParts?: Part[]) => {
@@ -19,4 +19,4 @@ export const automaticNestingOptions = (sheet: { length: number; width: number; 
 })
 export const nestingOptions = (config: Config) => automaticNestingOptions({ length: config.sheetLength, width: config.sheetWidth, edgeGap: config.sheetEdgeGap, partGap: config.sheetPartGap })
 export type NestingRequest = { type: 'start'; key: string; job: NestingJob } | { type: 'continue'; key: string }
-export type NestingResponse = { key: string; run: NestingRun; elapsedMs: number; done: boolean } | { key: string; error: { code: string; message: string } }
+export type NestingResponse = { key: string; run: NestingRun; elapsedMs: number; done: boolean; finishReason?: NestingFinishReason } | { key: string; error: { code: string; message: string } }
