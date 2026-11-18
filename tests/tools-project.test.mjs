@@ -28,6 +28,23 @@ test('project codec rejects malformed, unknown, versioned and out-of-range data'
   assert.throws(() => project.parseToolProject(JSON.stringify({ ...project.defaultToolProject, version: 1 })), error => error.code === 'unsupported-version')
 })
 
+test('explicit Tool reset replaces obsolete geometry but preserves sheet and table-owned settings', () => {
+  const table = { length: 1450, width: 1150, height: 150, thickness: 6, holeDiameter: 16, pitch: 50, margin: 25, grid: 'square' }
+  const sheet = { length: 2875, width: 1444, edgeGap: 11, partGap: 6 }
+  const obsoleteExtension = { ...project.defaultToolProject, version: 3, size: { ...project.defaultToolProject.size, length: 537, thickness: 12 }, sheet, copies: 4 }
+  const resetExtension = project.resetToolProject(obsoleteExtension, table)
+  assert.deepEqual(resetExtension, project.projectAtTable({ ...project.defaultToolProject, sheet }, table))
+  assert.equal(resetExtension.size.thickness, 6)
+  assert.equal(resetExtension.copies, 1)
+
+  const obsoleteBracket = { ...project.defaultCornerBracketProject, version: 3, size: { ...project.defaultCornerBracketProject.size, cornerCut: 45, slotLength: 150 }, sheet, copies: 3 }
+  const resetBracket = project.resetToolProject(obsoleteBracket, table)
+  assert.equal(resetBracket.version, 4)
+  assert.equal(resetBracket.size.cornerCut, 60)
+  assert.equal(resetBracket.size.slotLength, 140)
+  assert.deepEqual(resetBracket.sheet, sheet)
+})
+
 test('nested ZIP contains only sheet DXFs and rejects a tampered layout', async () => {
   const input = { ...project.defaultToolProject, sheet: { length: 3000, width: 1500, edgeGap: 10, partGap: 5 } }
   const key = project.projectKey(input)

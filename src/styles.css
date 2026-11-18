@@ -231,6 +231,9 @@ input[type='range'] { width: 100%; height: 20px; margin: 0; padding: 0; accent-c
 .visualization .checkbox { min-height: 36px; }
 .three-loading { position: absolute; inset: 0; display: grid; place-items: center; padding: 32px; text-align: center; color: var(--muted); }
 .three-loading[role='alert'], .three-loading.socket-error { color: var(--error); }
+.tool-recovery { display: grid; justify-items: center; gap: 16px; width: min(100%, 440px); }
+.tool-recovery p { margin: 0; overflow-wrap: anywhere; }
+.tool-recovery .secondary { min-height: 44px; color: var(--text); }
 .part-tooltip { position: absolute; z-index: 3; pointer-events: none; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); max-width: calc(100% - 16px); }
 .part-tooltip strong { display: block; font-size: 13px; margin-bottom: 8px; }
 .part-tooltip dl { display: grid; grid-template-columns: auto auto; gap: 4px 16px; margin: 0; font-size: 12px; }

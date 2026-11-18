@@ -11,7 +11,7 @@ import { squareLimits, type SquareConfig } from './square'
 import { compactExtensionLimits, type CompactExtensionConfig } from './compactExtension'
 import { viseModuleLimits, viseSlotSetback, type ViseModuleConfig } from './viseModule'
 import { cornerBracketLimits, type CornerBracketConfig } from './cornerBracket'
-import { defaultToolProject, toolDefaults, toolIds, isToolId, projectJson, projectKey, projectAtTable, toolLabels, type ToolId, type ToolProject } from './project'
+import { defaultToolProject, toolDefaults, toolIds, isToolId, projectJson, projectKey, projectAtTable, resetToolProject, toolLabels, type ToolId, type ToolProject } from './project'
 import { downloadFromApi, previewTool } from '../serverApi'
 import type { ToolPreviewDto } from '../apiContracts'
 
@@ -114,6 +114,15 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
       case 'cornerBracket': return apply({ ...project, size: { ...project.size, [name]: next } })
     }
   }
+  const resetCurrentTool = () => {
+    const next = resetToolProject(project, tableConfig)
+    setPreviewState(null)
+    setPreviewError('')
+    if (apply(next)) {
+      setReset(value => value + 1)
+      setMessage(`Параметры «${toolLabels[next.tool]}» сброшены. Настройки листа сохранены.`)
+    }
+  }
   const sizeField = (name: ToolDimension) => {
     const limits = sizeLimits[project.tool]
     if (!(name in project.size) || !(name in limits)) return null
@@ -157,7 +166,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
     production={summary && <ProductionEstimate summary={summary} units={units} sheet={project.sheet} onSheetChange={changes => apply({ ...project, sheet: { ...project.sheet, ...changes } })} />}
     actions={onClose => <ProjectActions subject="инструмента" onOpen={file => { onClose(); void open(file) }} onSave={() => downloadFile(JSON.stringify(project, null, 2), `проект-инструмента-${project.tool}.wtool`)} onShare={() => { onClose(); void share() }} disabled={Boolean(previewError)} fabrication={{ kind: 'parts', onZip: () => void downloadFromApi('/api/export/tool-parts.zip', { project, table: projectConfig(tableConfig) }).catch(error => setMessage(error instanceof Error ? error.message : 'Не удалось создать ZIP-архив.')), onDxf: () => void downloadFromApi('/api/export/tool.dxf', { project, table: projectConfig(tableConfig) }).catch(error => setMessage(error instanceof Error ? error.message : 'Не удалось создать DXF.')) }} />}>
     <div className="tool-cut-bar"><div><strong>Добавить в раскрой</strong><small>{toolLabels[project.tool]} · металл {display(tableConfig.thickness, units, 3)} {unitLabel}</small></div><NumberField label="Количество" value={project.copies} min={1} max={10} step={1} onValue={copies => apply({ ...project, copies })} /><button disabled={Boolean(admissionError) || !preview} onClick={() => preview && onAddToTable(preview.project)}><Icon name="plus" size={14} />Добавить</button>{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}</div>
-    {previewError ? <div className="three-loading socket-error" role="alert">{previewError} Перед изготовлением измените толщину стола или размеры инструмента.</div>
+    {previewError ? <div className="three-loading socket-error" role="alert"><div className="tool-recovery"><p>{previewError} Перед изготовлением измените толщину стола или размеры инструмента либо сбросьте этот инструмент.</p><button className="secondary" onClick={resetCurrentTool}>Сбросить параметры инструмента</button></div></div>
       : !preview || !layout ? <div className="three-loading" role="status">Расчёт инструмента на сервере…</div>
       : view === '2d' ? <PartsLayout layout={layout} units={units} label={`Интерактивная 2D-раскладка деталей: ${toolLabels[project.tool]}`} resetToken={reset} />
       : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ToolAssembly3d project={preview.project} parts={preview.parts} placements={preview.assembly} envelope={preview.envelope} weights={preview.weights} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div></>}

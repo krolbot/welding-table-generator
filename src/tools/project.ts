@@ -93,6 +93,12 @@ export const projectAtTable = (project: ToolProject, table: ToolTableSettings): 
   }
 }
 
+/** Explicitly discards one Tool's saved geometry while retaining its sheet settings. */
+export const resetToolProject = (project: ToolProject, table: ToolTableSettings): ToolProject => {
+  const defaults = toolDefaults[project.tool]
+  return projectAtTable({ ...defaults, size: { ...defaults.size }, sheet: { ...project.sheet } } as ToolProject, table)
+}
+
 export const toolSelectionsAtTable = (selections: ToolSelection[], table: ToolTableSettings): ToolSelection[] => selections.map(row => {
   const project = projectAtTable(row.project, table)
   projectModelParts(project)
