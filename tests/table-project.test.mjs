@@ -61,7 +61,7 @@ test('retired tool revisions are rejected and current revisions preserve exact d
   assert.throws(() => tools.parseToolProject(text), error => error.code === 'unsupported-version')
   assert.throws(() => toolExport.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
   assert.throws(() => toolExport.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
-  for (const [project, version] of [[tools.defaultSquareProject, 3], [tools.defaultCornerBracketProject, 4]]) {
+  for (const [project, version] of [[tools.defaultSquareProject, 3], [tools.defaultCornerBracketProject, 5]]) {
     assert.deepEqual(tools.parseToolProject(tools.projectJson(project)), project)
     assert.equal(project.version, version)
   }

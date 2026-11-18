@@ -8,7 +8,7 @@ export type CornerBracketConfig = {
   cornerCut: number; tipWidth: number; tabWidth: number; clearance: number
 }
 export const cornerBracketDefaults: CornerBracketConfig = {
-  length: 210, width: 210, height: 60, thickness: 8,
+  length: 210, width: 210, height: 60, thickness: 6,
   holeDiameter: 16, holePitch: 50, slotLength: 140,
   cornerCut: 60, tipWidth: 50, tabWidth: 20, clearance: 0.2,
 }
@@ -87,10 +87,10 @@ export const cornerBracketParts = (config: CornerBracketConfig = cornerBracketDe
   const joints = (centres: number[], width: number, depth: number): EdgeJoint[] => centres.map(centre => ({ centre, width, depth }))
   const base = jointOutline([
     point(cornerCut, 0), point(length, 0), point(length, tipWidth),
-    point(tipWidth, width), point(0, width), point(0, cornerCut),
+    point(tipWidth, width), point(0, width), point(0, cornerCut), point(cornerCut, cornerCut),
   ], [
     joints(xJoints.map(x => x - cornerCut), tabWidth + clearance, -wallBottom), [], [], [],
-    joints(yJoints.map(y => width - y), tabWidth + clearance, -wallBottom), [],
+    joints(yJoints.map(y => width - y), tabWidth + clearance, -wallBottom), [], [],
   ])
   const wall = (span: number, start: number, stations: number[]) => jointOutline([
     point(start, wallBottom), point(span, wallBottom), point(span, height), point(start, height),

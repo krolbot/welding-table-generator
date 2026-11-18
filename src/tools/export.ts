@@ -7,7 +7,7 @@ import { downloadFile } from '../projectIO'
 import { parseToolProject, projectJson, projectParts, validProjectLayout, ToolProjectError, type ToolProject } from './project'
 
 const assertTableStock = (project: ToolProject, table: Pick<Config, 'thickness'>) => {
-  if (!table || project.size.thickness !== table.thickness) throw new ToolProjectError('stock-mismatch', 'Оснастка не соответствует толщине металла стола. Перед экспортом проверьте унаследованную толщину.')
+  if (!table || project.tool !== 'cornerBracket' && project.size.thickness !== table.thickness) throw new ToolProjectError('stock-mismatch', 'Оснастка не соответствует толщине металла стола. Перед экспортом проверьте унаследованную толщину.')
 }
 
 export const toolPartsArchive = (project: ToolProject, table: Pick<Config, 'thickness'>) => {

@@ -38,9 +38,9 @@ const sampledVolume = part => (sampledArea(part.contours[0])
   - part.contours.slice(1).reduce((sum, contour) => sum + sampledArea(contour), 0)
   - part.holes.reduce((sum, hole) => sum + Math.PI * (hole.d / 2) ** 2, 0)) * part.thickness
 
-test('all five tool projects use the host stock in parts, mass, assembly, native DXF, ZIP and JSON', async () => {
+test('host-owned tools use table stock while the reference bracket exports its independent stock', async () => {
   assert.equal(tools.toolIds.length, 5)
-  for (const thickness of [4, 6, 8]) for (const id of tools.toolIds) {
+  for (const thickness of [4, 6, 8]) for (const id of tools.toolIds.filter(id => id !== 'cornerBracket')) {
     const host = table(thickness), project = tools.projectAtTable(tools.toolDefaults[id], host)
     assert.equal(project.size.thickness, thickness, id)
     assert.deepEqual(tools.parseToolProject(tools.projectJson(project)), project)
@@ -57,6 +57,13 @@ test('all five tool projects use the host stock in parts, mass, assembly, native
     }
     assert.throws(() => exporter.toolPartsArchive(project, table(thickness + 1)), error => error.code === 'stock-mismatch')
     assert.throws(() => exporter.toolStripDxf(project, table(thickness + 1)), error => error.code === 'stock-mismatch')
+  }
+  for (const hostThickness of [4, 6, 8]) {
+    const host = table(hostThickness), project = tools.projectAtTable(tools.defaultCornerBracketProject, host)
+    assert.equal(project.size.thickness, 6)
+    assert.ok(tools.projectModelParts(project).every(part => part.thickness === 6))
+    assert.doesNotThrow(() => exporter.toolPartsArchive(project, host))
+    assert.doesNotThrow(() => exporter.toolStripDxf(project, host))
   }
 })
 
@@ -77,8 +84,8 @@ test('independent sampled native contours confirm material volume and steel-mass
   }
 })
 
-test('retired stock schemas are rejected while current tools inherit active table stock', () => {
-  for (const id of ['extension', 'square', 'cornerBracket']) {
+test('retired stock schemas are rejected while current tools retain their declared stock owner', () => {
+  for (const id of ['extension', 'square']) {
     const current = tools.projectAtTable(tools.toolDefaults[id], table(6))
     const original = JSON.stringify({ ...current, version: current.version - 1 })
     assert.throws(() => tools.parseToolProject(original), error => error.code === 'unsupported-version')
@@ -91,6 +98,18 @@ test('retired stock schemas are rejected while current tools inherit active tabl
     assert.throws(() => exporter.toolStripDxf(current, table(8)), error => error.code === 'stock-mismatch')
     assert.ok(cut.tableCutInventory(loaded).parts.every(part => part.thickness === 8))
   }
+  const bracket = tools.defaultCornerBracketProject
+  const retiredBracket = JSON.stringify({ ...bracket, version: 4 })
+  assert.throws(() => tools.parseToolProject(retiredBracket), error => error.code === 'unsupported-version')
+  assert.throws(() => tools.readToolProjectAtTable(retiredBracket, table(8)), error => error.code === 'unsupported-version')
+  const currentBracket = tools.readToolProjectAtTable(tools.projectJson(bracket), table(8))
+  assert.equal(currentBracket.size.thickness, 6)
+  const loadedBracket = codec.parseTableProject(JSON.stringify(model.projectConfig({ ...table(8), nestingTools: [{ id: 'cornerBracket', project: bracket }] }))).config
+  assert.equal(loadedBracket.nestingTools[0].project.size.thickness, 6)
+  assert.throws(() => cut.tableCutInventory(loadedBracket), error => error.code === 'thickness-mismatch')
+  assert.doesNotThrow(() => exporter.toolPartsArchive(bracket, table(8)))
+  assert.doesNotThrow(() => exporter.toolStripDxf(bracket, table(8)))
+  assert.ok(cut.tableCutInventory({ ...table(6), nestingTools: [{ id: 'cornerBracket', project: bracket }] }).parts.every(part => part.thickness === 6))
   for (const id of ['compactExtension', 'viseModule']) {
     const project = tools.projectAtTable(tools.toolDefaults[id], table(6))
     const loaded = tools.readToolProjectAtTable(tools.projectJson(project), table(8))

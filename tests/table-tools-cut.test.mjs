@@ -62,7 +62,7 @@ test('schema 3 round-trips selected tools exactly and retired schemas are reject
   assert.throws(() => codec.parseTableProject(JSON.stringify(oldExtension)), error => error.code === 'unsupported-version')
 })
 
-test('all five tools inherit table stock while raw mismatches cannot reach fabrication', () => {
+test('host-owned tools inherit table stock while the reference bracket keeps independent stock', () => {
   const source = selection('compact', 'compactExtension', { copies: 2, size: { thickness: 6 } })
   const original = structuredClone(source)
   for (const thickness of [4, 6, 8]) {
@@ -92,13 +92,18 @@ test('all five tools inherit table stock while raw mismatches cannot reach fabri
     assert.equal(codec.tableProjectFromQuery(new URLSearchParams({ toolProject: tools.projectJson(source.project) })), undefined)
   }
   assert.deepEqual(source, original, 'inherited stock never mutates an input snapshot')
-  for (const id of tools.toolIds) {
+  for (const id of tools.toolIds.filter(id => id !== 'cornerBracket')) {
     const project = tools.toolDefaults[id]
     const resolved = tools.projectAtTable(project, table({ thickness: 4 }))
     assert.equal(resolved.size.thickness, 4)
     assert.equal(resolved.tool, id)
     assert.ok(tools.projectModelParts(resolved).every(part => part.thickness === 4))
   }
+  const bracket = tools.projectAtTable(tools.defaultCornerBracketProject, table({ thickness: 4 }))
+  assert.equal(bracket.size.thickness, 6)
+  assert.ok(tools.projectModelParts(bracket).every(part => part.thickness === 6))
+  assert.throws(() => cut.tableCutInventory(table({ thickness: 8, nestingTools: [{ id: 'bracket', project: bracket }] })), error => error.code === 'thickness-mismatch')
+  assert.doesNotThrow(() => cut.tableCutInventory(table({ thickness: 6, nestingTools: [{ id: 'bracket', project: bracket }] })))
   for (const thickness of [3, 9, 10]) {
     assert.throws(() => tools.toolSelectionsAtTable([source], table({ thickness })))
     assert.deepEqual(source, original, 'failed stock changes preserve dimensions, quantity and original stock')

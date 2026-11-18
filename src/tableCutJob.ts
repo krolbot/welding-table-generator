@@ -21,7 +21,12 @@ export const tableCutInventory = (config: Config, preparedParts?: Part[]) => {
   const parts: FabricationPart[] = [...tableParts]
   const savedSelections = parseToolSelections(config.nestingTools)
   const mismatched = savedSelections.find(row => row.project.size.thickness !== config.thickness)
-  if (mismatched) throw new TableCutJobError('thickness-mismatch', `У выбранной оснастки ${mismatched.id} другая толщина металла. Перед экспортом заново откройте и проверьте проект.`, mismatched.id)
+  if (mismatched) {
+    const message = mismatched.project.tool === 'cornerBracket'
+      ? `${toolLabels[mismatched.project.tool]}: металл ${mismatched.project.size.thickness} мм, у стола — ${config.thickness} мм. Для общего раскроя задайте одинаковую толщину.`
+      : `У выбранной оснастки ${mismatched.id} другая толщина металла. Перед экспортом заново откройте и проверьте проект.`
+    throw new TableCutJobError('thickness-mismatch', message, mismatched.id)
+  }
   const selections = toolSelectionsAtTable(savedSelections, config)
   selections.forEach(({ id, project }, index) => {
     for (const source of projectModelParts(project)) {
