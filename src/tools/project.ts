@@ -14,7 +14,7 @@ export type ToolId = typeof toolIds[number]
 export const isToolId = (value: unknown): value is ToolId => toolIds.some(id => id === value)
 export type ToolSheet = { length: number; width: number; edgeGap: number; partGap: number }
 type ProjectBase = { sheet: ToolSheet; copies: number }
-export type ToolProject = ProjectBase & ({ version: 4; tool: 'extension'; size: ExtensionConfig } | { version: 1; tool: 'compactExtension'; size: CompactExtensionConfig } | { version: 3; tool: 'square'; size: SquareConfig } | { version: 3; tool: 'cornerBracket'; size: CornerBracketConfig } | { version: 2; tool: 'viseModule'; size: ViseModuleConfig })
+export type ToolProject = ProjectBase & ({ version: 4; tool: 'extension'; size: ExtensionConfig } | { version: 1; tool: 'compactExtension'; size: CompactExtensionConfig } | { version: 3; tool: 'square'; size: SquareConfig } | { version: 4; tool: 'cornerBracket'; size: CornerBracketConfig } | { version: 2; tool: 'viseModule'; size: ViseModuleConfig })
 type Vector3 = [number, number, number]
 export type ToolSelection = { id: string; project: ToolProject }
 export type ToolPlacement = { part: string; instance: number; origin: Vector3; axes: [Vector3, Vector3, Vector3] }
@@ -30,7 +30,7 @@ export const defaultSquareProject: ToolProject & { tool: 'square' } = {
 }
 
 export const defaultCornerBracketProject: ToolProject & { tool: 'cornerBracket' } = {
-  version: 3, tool: 'cornerBracket', size: { ...cornerBracketDefaults },
+  version: 4, tool: 'cornerBracket', size: { ...cornerBracketDefaults },
   sheet: { ...defaultToolProject.sheet }, copies: 1,
 }
 export const defaultCompactExtensionProject: ToolProject & { tool: 'compactExtension' } = {
@@ -74,7 +74,7 @@ export const parseToolProject = (text: string): ToolProject => {
     case 'compactExtension': project = { ...base, version: 1, tool: 'compactExtension', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), holeInset: number(size.holeInset), tipHeight: number(size.tipHeight), taperRun: number(size.taperRun), windowInset: number(size.windowInset), windowRadius: number(size.windowRadius), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
     case 'viseModule': project = { ...base, version: 2, tool: 'viseModule', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), holeInset: number(size.holeInset), grid: grid(size.grid), slotWidth: number(size.slotWidth), slotInnerRadius: number(size.slotInnerRadius), tipHeight: number(size.tipHeight), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
     case 'square': project = { ...base, version: 3, tool: 'square', size: { ...common, armWidth: number(size.armWidth), holeDiameter: number(size.holeDiameter), endOffset: number(size.endOffset) } }; break
-    case 'cornerBracket': project = { ...base, version: 3, tool: 'cornerBracket', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), slotLength: number(size.slotLength), cornerCut: number(size.cornerCut), tipWidth: number(size.tipWidth), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
+    case 'cornerBracket': project = { ...base, version: 4, tool: 'cornerBracket', size: { ...common, height: number(size.height), holeDiameter: number(size.holeDiameter), holePitch: number(size.holePitch), slotLength: number(size.slotLength), cornerCut: number(size.cornerCut), tipWidth: number(size.tipWidth), tabWidth: number(size.tabWidth), clearance: number(size.clearance) } }; break
   }
   projectModelParts(project)
   return project

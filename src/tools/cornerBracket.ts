@@ -9,8 +9,8 @@ export type CornerBracketConfig = {
 }
 export const cornerBracketDefaults: CornerBracketConfig = {
   length: 210, width: 210, height: 60, thickness: 8,
-  holeDiameter: 16, holePitch: 50, slotLength: 150,
-  cornerCut: 45, tipWidth: 50, tabWidth: 20, clearance: 0.2,
+  holeDiameter: 16, holePitch: 50, slotLength: 140,
+  cornerCut: 60, tipWidth: 50, tabWidth: 20, clearance: 0.2,
 }
 export const cornerBracketLimits: Record<keyof CornerBracketConfig, { min: number; max: number; step: number }> = {
   length: { min: 160, max: 600, step: 10 }, width: { min: 160, max: 600, step: 10 },
@@ -33,11 +33,13 @@ export const cornerBracketDimensions = (config: CornerBracketConfig) => {
   const { length, width, height, thickness, cornerCut, holePitch, clearance } = config
   const stations = (span: number) => [1, 2].map(index => cornerCut + (span - cornerCut) * index / 3)
   const wallBottom = thickness + clearance / 2
+  const wallCentre = (span: number) => cornerCut + (span - cornerCut) / 2
   return {
     xJoints: stations(length), yJoints: stations(width), wallBottom,
-    wallStart: thickness + clearance / 2,
+    wallStart: cornerCut,
     holeOrigin: point((length - 3 * holePitch) / 2, (width - 3 * holePitch) / 2),
     wallHoleHeight: (wallBottom + height) / 2,
+    wallHoleX: wallCentre(length), wallSlotX: wallCentre(width),
     tabWidth: config.tabWidth, clearance,
   }
 }
@@ -81,7 +83,7 @@ export const cornerBracketParts = (config: CornerBracketConfig = cornerBracketDe
   const { length, width, height, thickness, holeDiameter, holePitch, slotLength, cornerCut, tipWidth, tabWidth, clearance } = config
   if (cornerCut >= Math.min(length, width) / 2 || tipWidth >= Math.min(length, width) / 2) throw new Error('Срезы углов должны оставлять две длинные опорные кромки и открытую диагональную сторону')
   if (slotLength <= holeDiameter) throw new Error('Длина паза для струбцины должна быть больше его ширины')
-  const { xJoints, yJoints, wallBottom, wallStart, wallHoleHeight, holeOrigin } = cornerBracketDimensions(config)
+  const { xJoints, yJoints, wallBottom, wallStart, wallHoleHeight, wallHoleX, wallSlotX, holeOrigin } = cornerBracketDimensions(config)
   const joints = (centres: number[], width: number, depth: number): EdgeJoint[] => centres.map(centre => ({ centre, width, depth }))
   const base = jointOutline([
     point(cornerCut, 0), point(length, 0), point(length, tipWidth),
@@ -103,8 +105,8 @@ export const cornerBracketParts = (config: CornerBracketConfig = cornerBracketDe
   const part = (name: CornerBracketPartName, label: string, width: number, height: number, contours: Contour[], holes: Hole[]): BracketPart => ({ name, label, width, height, thickness, count: 1, contours, holes, slots: [] })
   const parts = [
     part('cornerBase', 'Основание углового кронштейна', length, width, [base], baseHoles),
-    part('cornerHoleWall', 'Перфорированная стенка', length, height, [wall(length, wallStart, xJoints)], [-1, 0, 1].map((index, i) => hole(`wall:${i}`, length / 2 + index * holePitch, wallHoleHeight))),
-    part('cornerSlotWall', 'Стенка с пазом', width, height, [wall(width, 0, yJoints), capsuleContour(point(width / 2, wallHoleHeight), slotLength, holeDiameter)], []),
+    part('cornerHoleWall', 'Перфорированная стенка', length, height, [wall(length, wallStart, xJoints)], [-1, 0, 1].map((index, i) => hole(`wall:${i}`, wallHoleX + index * holePitch, wallHoleHeight))),
+    part('cornerSlotWall', 'Стенка с пазом', width, height, [wall(width, wallStart, yJoints), capsuleContour(point(wallSlotX, wallHoleHeight), slotLength, holeDiameter)], []),
   ]
   parts.forEach(validatePart)
   return parts

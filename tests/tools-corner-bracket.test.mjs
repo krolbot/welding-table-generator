@@ -30,7 +30,7 @@ const material = (part, p) => inside(p, geometry.contourPoints(part.contours[0],
 const sizes = [[210, 210], [260, 260], [310, 310], [210, 260], [260, 210]]
 const cases = () => sizes.flatMap(([length, width]) => [50, 60, 100].flatMap(height => [4, 8, 12].map(thickness => ({ ...bracket.cornerBracketDefaults, length, width, height, thickness }))))
 
-test('corner reference has one relieved triangular base, two perpendicular walls, twelve holes and one capsule slot', () => {
+test('corner reference has a through 60 mm inner cutout, two perpendicular walls, twelve holes and one capsule slot', () => {
   const parts = bracket.cornerBracketParts(), [base, holes, slot] = parts
   assert.deepEqual(parts.map(p => [p.name, p.count, p.holes.length, p.contours.length]), [
     ['cornerBase', 1, 9, 1], ['cornerHoleWall', 1, 3, 1], ['cornerSlotWall', 1, 0, 2],
@@ -38,12 +38,19 @@ test('corner reference has one relieved triangular base, two perpendicular walls
   assert.deepEqual(native.nativeContourBounds(base.contours[0]), { minX: 0, minY: 0, maxX: 210, maxY: 210 })
   assert.deepEqual(base.holes.map(hole => [hole.x, hole.y]), [[80, 30], [130, 30], [180, 30], [30, 80], [80, 80], [130, 80], [30, 130], [80, 130], [30, 180]])
   assert.equal(material(base, { x: 5, y: 5 }), false, 'relieved elbow')
+  assert.equal(material(base, { x: 20, y: 20 }), false, '60 mm through-cut in base')
   assert.equal(material(base, { x: 180, y: 180 }), false, 'open diagonal side')
   assert.equal(material(base, { x: 200, y: 20 }), true, 'short free end retained, not an ideal triangle')
   assert.equal(material(base, { x: 105, y: 105 }), true)
   assert.equal(holes.holes.length, 3)
+  assert.equal(bracket.cornerBracketDefaults.cornerCut, 60)
+  assert.deepEqual(native.nativeContourBounds(holes.contours[0]), { minX: 60, minY: 0, maxX: 210, maxY: 60 })
+  assert.deepEqual(native.nativeContourBounds(slot.contours[0]), { minX: 60, minY: 0, maxX: 210, maxY: 60 })
+  assert.deepEqual(holes.holes.map(hole => hole.x), [85, 135, 185])
   const bounds = native.nativeContourBounds(slot.contours[1])
-  near(bounds.maxX - bounds.minX, 150)
+  near(bounds.minX, 65)
+  near(bounds.maxX, 205)
+  near(bounds.maxX - bounds.minX, 140)
   near(bounds.maxY - bounds.minY, 16)
   assert.equal(slot.contours[1].filter(segment => segment.type === 'arc').length, 2)
   assert.equal(parts.reduce((count, part) => count + part.count, 0), 3)
@@ -104,7 +111,10 @@ test('corner world interfaces seat four flush tabs with the declared clearances 
         }
       }
     }
-    near(boxes[1].min.x - boxes[2].max.x, config.clearance / 2)
+    near(boxes[1].min.x, config.cornerCut)
+    near(boxes[2].min.y, config.cornerCut)
+    const openCorner = new THREE.Vector3(config.cornerCut / 3, config.cornerCut / 3, config.height / 2)
+    assert.ok(placements.every(placement => !occupies(placement, openCorner)), '60×60 inner corner remains open through base and both walls')
     for (let i = 0; i < placements.length; i++) for (let j = i + 1; j < placements.length; j++) {
       const intersection = boxes[i].clone().intersect(boxes[j]), span = intersection.getSize(new THREE.Vector3())
       if (intersection.isEmpty() || Math.min(span.x, span.y, span.z) < 1e-6) continue
@@ -129,6 +139,11 @@ test('shared Three extrusion has actual through holes, open capsule and open top
   for (const h of parts[1].holes) assert.equal(hits('cornerHoleWall', [h.x, -10, h.y], [0, 1, 0]), 0)
   const { wallHoleHeight } = bracket.cornerBracketDimensions(config)
   for (const y of [32, 105, 178]) assert.equal(hits('cornerSlotWall', [-10, y, wallHoleHeight], [1, 0, 0]), 0)
+  assert.equal(hits('cornerBase', [20, 20, 80], [0, 0, -1]), 0)
+  assert.equal(hits('cornerHoleWall', [30, -10, 50], [0, 1, 0]), 0)
+  assert.equal(hits('cornerSlotWall', [-10, 30, 50], [1, 0, 0]), 0)
+  assert.ok(hits('cornerHoleWall', [70, -10, 50], [0, 1, 0]) > 0)
+  assert.ok(hits('cornerSlotWall', [-10, 70, 50], [1, 0, 0]) > 0)
   assert.ok(hits('cornerBase', [105, 105, 80], [0, 0, -1]) > 0)
   assert.equal(hits('cornerBase', [180, 180, 80], [0, 0, -1]), 0)
   assert.ok(hits('cornerSlotWall', [-10, 105, 57], [1, 0, 0]) > 0)
@@ -147,6 +162,8 @@ test('all three product schemas round-trip exactly and reject mismatched or unkn
     for (const tool of projects.toolIds.filter(tool => tool !== input.tool)) assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, tool })))
   }
   const input = projects.defaultCornerBracketProject
+  assert.equal(input.version, 4)
+  assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, version: 3 })), /Версия проекта/)
   assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, size: { ...input.size, surprise: 1 } })))
   assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, size: { ...input.size, holePitch: '50' } })))
   assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, version: 1 })))
@@ -178,7 +195,7 @@ test('corner native and nested-sheet DXFs agree and stale/tampered cuts are refu
   }
   assert.equal(circles, 24)
   assert.equal(arcs, 4)
-  assert.equal(projects.validProjectLayout({ ...project, size: { ...project.size, slotLength: 140 } }, result, key), false)
+  assert.equal(projects.validProjectLayout({ ...project, size: { ...project.size, slotLength: 130 } }, result, key), false)
   const tampered = structuredClone(result)
   const changed = tampered.placements.find(placement => placement.part.holes.length > 0)
   assert.ok(changed)
