@@ -6,7 +6,7 @@ The five supplied views show one perforated working top, a central longitudinal 
 
 ## Editable model
 
-The defaults reproduce the labelled envelope, twenty holes in the working top and four in the mounting end. In the application, thickness is inherited from **Table generator → Metal Thickness**, not from the photo's 6 mm label. The Tools thickness field is read-only for this product; importing a tool uses the current table stock, while shared links preserve the host table configuration too. One copy is one extension; use two copies for the advertised pair.
+The defaults reproduce the labelled envelope, twenty holes in the working top and four in the mounting end. In the application, thickness exists only in **Table generator → Metal Thickness**, not in the Tool project and not from the photo's 6 mm label. Importing a tool uses the current table stock, while shared links preserve the host table configuration too. One copy is one extension; use two copies for the advertised pair.
 
 - Hole diameter: 16 mm. Proposed pitch and edge origin: 50 and 25 mm.
 - Free-end depth defaults to 50 mm; taper length remains 120 mm. The deeper end accommodates the wider window borders and 3 mm radii at 4–8 mm stock, while retaining the 500 × 100 × 100 mm bounding envelope and locating joints.
@@ -25,8 +25,8 @@ The end's first hole row is always `holeInset` down from the assembled working f
 
 ## Shared fabrication and persistence
 
-The three canonical `FabricationPart` contours drive the ordinary 2D view, assembled/exploded Three view, weight and cut estimates, shared nesting worker, native DXF and ZIP. Window fillets remain true DXF arcs; grid holes remain circles. `compactExtension` version 1 preserves its settings in JSON, links and browser storage, without reinterpreting existing `extension` version 3 projects.
+The three canonical `FabricationPart` contours drive the ordinary 2D view, assembled/exploded Three view, weight and cut estimates, shared nesting worker, native DXF and ZIP. Window fillets remain true DXF arcs; grid holes remain circles. `compactExtension` version 2 preserves its stock-free settings in JSON, links and browser storage; retired revisions that stored thickness are rejected.
 
-The configured extension can be added to the table cut job. Its dimensions and quantity are snapshots, but changing table thickness also regenerates all selected compact extensions, their joints and cut geometry. An unsafe stock/joint combination rejects the thickness change without altering the saved configuration. The vise module also inherits table stock; the wedge extension, square and corner bracket retain independent thickness and mismatch guards. Export manifests contain the actual resolved stock. All copies must use the table's stock thickness and fit within its verified table-only sheet-count limit. The shared exporter rejects stale, partial or invalid layouts; no tool-only sheet is added as an escape hatch.
+The configured extension can be added to the table cut job. Its dimensions and quantity are snapshots, but changing table thickness regenerates all selected Tools, their joints and cut geometry. An unsafe stock/joint combination rejects fabrication without adding a second stock setting to the Tool. Every Tool uses the table stock; independent Tool thickness and mismatch guards do not exist. All copies must fit within the verified table-only sheet-count limit. The shared exporter rejects stale, partial or invalid layouts; no tool-only sheet is added as an escape hatch.
 
 This is a reference-based design, not a manufacturer's dimensioned drawing or a load rating. Confirm steel grade, hardware clearance, sample joint fit, actual angles/flatness, weld sequence/distortion and CAM kerf, lead-ins and cutting order before fabrication.

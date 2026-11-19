@@ -13,6 +13,13 @@ const { nativeContourBounds, nativeContourDistance, nativePointContourDistance }
 const { nativeDxfForPart } = await server.ssrLoadModule('/src/dxf.ts')
 await server.close()
 
+const stockOf = c => c?.thickness ?? 6
+const extensionPartsWithStock = c => extensionParts(c ?? extensionDefaults, stockOf(c))
+const extensionDimensionsWithStock = c => extensionDimensions(c ?? extensionDefaults, stockOf(c))
+const extensionAssemblyWithStock = c => extensionAssembly(c ?? extensionDefaults, stockOf(c))
+const projectPartsWithStock = p => projectParts(p, { thickness: stockOf(p.size) })
+const projectAssemblyWithStock = p => projectAssembly(p, { thickness: stockOf(p.size) })
+
 const close = (a, b, message) => assert.ok(Math.abs(a - b) < 1e-4, `${message}: ${a} != ${b}`)
 const inside = (p, vertices) => {
   let result = false
@@ -28,7 +35,7 @@ const cases = []
 for (const length of [400, 450, 500, 800]) for (const width of [200, 400]) for (const height of [150, 200, 250, 300]) for (const thickness of [4, 6, 9]) cases.push({ length, width, height, thickness })
 
 test('reference topology: horizontal perforated top, taper, large windows, open underside and narrow ties', () => {
-  const parts = extensionParts(), byName = Object.fromEntries(parts.map(part => [part.name, part]))
+  const parts = extensionPartsWithStock(), byName = Object.fromEntries(parts.map(part => [part.name, part]))
   assert.deepEqual(parts.map(part => [part.name, part.count]), [['top', 1], ['longSide', 2], ['nearEnd', 1], ['farEnd', 1], ['crossRib', 2]])
   assert.equal(byName.top.holes.length, 40)
   const side = byName.longSide, first = side.contours[0][0]
@@ -42,14 +49,14 @@ test('reference topology: horizontal perforated top, taper, large windows, open 
   assert.equal(byName.crossRib.height, 36, '30 mm tie plus a 6 mm locating tab, not a full diaphragm')
   assert.equal(byName.crossRib.holes.length, 0)
   for (const part of parts) assert.ok(part.contours[0].length > 4, `${part.name} must include actual locating geometry`)
-  assert.throws(() => extensionParts({ ...extensionDefaults, thickness: NaN }))
-  assert.throws(() => extensionParts({ ...extensionDefaults, width: 199 }))
-  assert.throws(() => extensionParts({ ...extensionDefaults, height: 301 }))
+  assert.throws(() => extensionPartsWithStock({ ...extensionDefaults, thickness: NaN }))
+  assert.throws(() => extensionPartsWithStock({ ...extensionDefaults, width: 199 }))
+  assert.throws(() => extensionPartsWithStock({ ...extensionDefaults, height: 301 }))
 })
 
 test('96 supported size combinations keep closed noncrossing contours and holes in real material', () => {
   assert.equal(cases.length, 96)
-  for (const config of cases) for (const part of extensionParts(config)) {
+  for (const config of cases) for (const part of extensionPartsWithStock(config)) {
     if (part.name !== 'crossRib') assert.ok(part.holes.length > 0, `${part.name} retains usable clamp holes at all supported sizes`)
     const paths = loops(part), [outer, ...cuts] = part.contours
     for (const [i, contour] of part.contours.entries()) {
@@ -70,8 +77,8 @@ test('96 supported size combinations keep closed noncrossing contours and holes 
 
 test('tab and mortise centres mate in world space without positive-volume plate clashes', () => {
   for (const config of [extensionDefaults, cases[2], cases.at(-1), { length: 450, width: 200, height: 250, thickness: 6 }]) {
-    const parts = new Map(extensionParts(config).map(part => [part.name, part]))
-    const placements = extensionAssembly(config).map(placement => {
+    const parts = new Map(extensionPartsWithStock(config).map(part => [part.name, part]))
+    const placements = extensionAssemblyWithStock(config).map(placement => {
       const part = parts.get(placement.part), paths = loops(part)
       const localPoints = paths[0].flatMap(point => [-part.thickness / 2, part.thickness / 2].map(z => new THREE.Vector3(...placement.origin).addScaledVector(new THREE.Vector3(...placement.axes[0]), point.x).addScaledVector(new THREE.Vector3(...placement.axes[1]), point.y).addScaledVector(new THREE.Vector3(...placement.axes[2]), z)))
       const box = new THREE.Box3().setFromPoints(localPoints)
@@ -94,7 +101,7 @@ test('tab and mortise centres mate in world space without positive-volume plate 
       if (Math.min(span.x, span.y, span.z) < .01) continue
       const values = axis => {
         const min = overlap.min[axis], max = overlap.max[axis]
-        const count = max - min <= config.thickness + .01 ? 2 : Math.ceil((max - min) / 2)
+        const count = max - min <= stockOf(config) + .01 ? 2 : Math.ceil((max - min) / 2)
         return Array.from({ length: count + 1 }, (_, index) => min + .01 + (max - min - .02) * index / count)
       }
       for (const x of values('x')) for (const y of values('y')) for (const z of values('z')) {
@@ -102,34 +109,34 @@ test('tab and mortise centres mate in world space without positive-volume plate 
         assert.ok(!(solidAt(left, world) && solidAt(right, world)), `clash ${left.part.name}/${right.part.name} at ${x},${y},${z}; ${JSON.stringify(config)}`)
       }
     }
-    const dims = extensionDimensions(config), top = placements.find(p => p.part.name === 'top')
+    const dims = extensionDimensionsWithStock(config), top = placements.find(p => p.part.name === 'top')
     const side = placements.find(p => p.part.name === 'longSide')
     const near = placements.find(p => p.part.name === 'nearEnd')
     for (const x of dims.sideTabs) {
-      const world = new THREE.Vector3(x, config.thickness / 2, config.height - config.thickness / 2)
+      const world = new THREE.Vector3(x, stockOf(config) / 2, config.height - stockOf(config) / 2)
       assert.ok(solidAt(side, world) && !solidAt(top, world), 'side tab seats in the top edge notch')
     }
     for (const z of dims.rootJoints) {
-      const world = new THREE.Vector3(config.thickness / 2, config.thickness / 2, z)
+      const world = new THREE.Vector3(stockOf(config) / 2, stockOf(config) / 2, z)
       assert.ok(solidAt(near, world) && !solidAt(side, world), 'mounting-end tab seats in side notch')
     }
     for (const x of dims.ribStations) {
       const tie = placements.find(p => p.part.name === 'crossRib' && p.origin[0] === x)
-      const topJoint = new THREE.Vector3(x, config.width / 2, config.height - config.thickness / 2)
-      const sideJoint = new THREE.Vector3(x, config.thickness / 2, config.height - config.thickness - dims.ribDepth / 2)
+      const topJoint = new THREE.Vector3(x, config.width / 2, config.height - stockOf(config) / 2)
+      const sideJoint = new THREE.Vector3(x, stockOf(config) / 2, config.height - stockOf(config) - dims.ribDepth / 2)
       assert.ok(solidAt(tie, topJoint) && !solidAt(top, topJoint))
       assert.ok(solidAt(tie, sideJoint) && !solidAt(side, sideJoint))
       const cut = parts.get('longSide').contours[dims.ribStations.indexOf(x) + 2], bounds = nativeContourBounds(cut)
-      close(bounds.maxX - bounds.minX, config.thickness + dims.clearance, 'tie slot thickness clearance')
+      close(bounds.maxX - bounds.minX, stockOf(config) + dims.clearance, 'tie slot thickness clearance')
       close(bounds.maxY - bounds.minY, dims.ribEndTab + dims.clearance, 'tie slot height clearance')
     }
   }
 })
 
 test('actual extruded 3D meshes leave mounting slots, holes, access windows and mortises open', () => {
-  const config = extensionDefaults, parts = new Map(extensionParts(config).map(part => [part.name, part]))
+  const config = extensionDefaults, parts = new Map(extensionPartsWithStock(config).map(part => [part.name, part]))
   const project = { ...defaultToolProject, size: config }
-  const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), group = toolGroup(projectParts(project), projectAssembly(project), material)
+  const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), group = toolGroup(projectPartsWithStock(project), projectAssemblyWithStock(project), material)
   group.updateMatrixWorld(true)
   const mesh = name => group.getObjectByName(`${name}:0`)
   const hits = (name, origin, direction, far = 1000) => new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...direction), 0, far).intersectObject(mesh(name), false).length
@@ -150,7 +157,7 @@ test('actual extruded 3D meshes leave mounting slots, holes, access windows and 
 
 test('native DXF retains every exact line, arc and D16 hole, not a rectangular stand-in', () => {
   const parser = new DxfParser()
-  for (const config of [extensionDefaults, cases[2], cases.at(-1)]) for (const part of extensionParts(config)) {
+  for (const config of [extensionDefaults, cases[2], cases.at(-1)]) for (const part of extensionPartsWithStock(config)) {
     const dxf = parser.parseSync(nativeDxfForPart(part)), entities = dxf.entities
     assert.equal(dxf.header.$INSUNITS, 4)
     assert.equal(entities.filter(entity => entity.type === 'LINE').length, part.contours.flat().filter(segment => segment.type === 'line').length)

@@ -5,20 +5,20 @@ import { capsuleContour, jointOutline, type EdgeJoint } from '../fabricationProf
 import { validateToolPart } from './fabrication'
 
 export type ViseModuleConfig = {
-  length: number; width: number; height: number; thickness: number
+  length: number; width: number; height: number
   holeDiameter: number; holePitch: number; holeInset: number; grid: Grid
   slotWidth: number; slotInnerRadius: number
   tipHeight: number; tabWidth: number; clearance: number
 }
 export const viseModuleDefaults: ViseModuleConfig = {
-  length: 250, width: 250, height: 100, thickness: 8,
+  length: 250, width: 250, height: 100,
   holeDiameter: 16, holePitch: 50, holeInset: 25, grid: 'square',
   slotWidth: 16, slotInnerRadius: 30,
   tipHeight: 50, tabWidth: 20, clearance: 0.2,
 }
 export const viseModuleLimits: Record<Exclude<keyof ViseModuleConfig, 'grid'>, { min: number; max: number; step: number }> = {
   length: { min: 200, max: 600, step: 50 }, width: { min: 200, max: 600, step: 50 },
-  height: { min: 100, max: 200, step: 10 }, thickness: { min: 4, max: 8, step: 1 },
+  height: { min: 100, max: 200, step: 10 },
   holeDiameter: { min: 10, max: 28, step: 1 }, holePitch: { min: 40, max: 100, step: 5 }, holeInset: { min: 20, max: 50, step: 1 },
   slotWidth: { min: 10, max: 28, step: 1 }, slotInnerRadius: { min: 20, max: 80, step: 1 },
   tipHeight: { min: 40, max: 120, step: 5 }, tabWidth: { min: 12, max: 30, step: 1 }, clearance: { min: 0, max: 1, step: 0.1 },
@@ -32,8 +32,8 @@ const joints = (centres: number[], width: number, depth: number): EdgeJoint[] =>
 const holeWeb = 8
 export const viseSlotSetback = 15
 
-export const viseModuleDimensions = (config: ViseModuleConfig) => {
-  const { length, width, height, thickness, clearance, tipHeight } = config
+export const viseModuleDimensions = (config: ViseModuleConfig, thickness: number) => {
+  const { length, width, height, clearance, tipHeight } = config
   const wallInset = thickness + clearance / 2, bodyTop = height - wallInset
   const sideStart = wallInset, sideEnd = length - wallInset, tipBottom = height - tipHeight
   return {
@@ -45,7 +45,7 @@ export const viseModuleDimensions = (config: ViseModuleConfig) => {
   }
 }
 
-const assertConfig = (config: ViseModuleConfig) => {
+const assertConfig = (config: ViseModuleConfig, thickness: number) => {
   for (const key of Object.keys(viseModuleLimits) as Array<keyof typeof viseModuleLimits>) {
     const value = config[key], { min, max } = viseModuleLimits[key]
     if (!Number.isFinite(value) || value < min || value > max)
@@ -53,16 +53,17 @@ const assertConfig = (config: ViseModuleConfig) => {
   }
   if (config.grid !== 'square' && config.grid !== 'staggered')
     throw new FabricationError('invalid-grid', 'Сетка модуля тисков должна соответствовать поддерживаемой схеме стола')
+  if (!Number.isFinite(thickness) || thickness < 4 || thickness > 8) throw new FabricationError('invalid-dimensions', 'Толщина стола для модуля тисков должна быть от 4 до 8 мм', { field: 'thickness' })
   if (config.tipHeight >= config.height
-    || config.tabWidth + config.clearance >= config.tipHeight - config.thickness - config.clearance / 2)
+    || config.tabWidth + config.clearance >= config.tipHeight - thickness - config.clearance / 2)
     throw new FabricationError('invalid-dimensions', 'Криволинейные боковины, радиальные пазы и установочные соединения должны помещаться в габарит модуля тисков')
 }
 
 /** Five flat plates from the reference; exact grids, curves, slots and joints are proposed. */
-export const viseModuleParts = (config: ViseModuleConfig = viseModuleDefaults): Part[] => {
-  assertConfig(config)
-  const { length, width, height, thickness, holeDiameter, holePitch, holeInset, tabWidth, clearance } = config
-  const { wallInset, bodyTop, sideStart, sideEnd, tipBottom, sideRadius, xJoints, yJoints, mountJoint, frontJoint } = viseModuleDimensions(config)
+export const viseModuleParts = (config: ViseModuleConfig, thickness: number): Part[] => {
+  assertConfig(config, thickness)
+  const { length, width, height, holeDiameter, holePitch, holeInset, tabWidth, clearance } = config
+  const { wallInset, bodyTop, sideStart, sideEnd, tipBottom, sideRadius, xJoints, yJoints, mountJoint, frontJoint } = viseModuleDimensions(config, thickness)
   const top = jointOutline([point(0, 0), point(length, 0), point(length, width), point(0, width)], [
     joints(xJoints, tabWidth + clearance, -wallInset), joints(yJoints, tabWidth + clearance, -wallInset),
     joints(xJoints.map(x => length - x), tabWidth + clearance, -wallInset), joints(yJoints.map(y => width - y), tabWidth + clearance, -wallInset),
@@ -119,9 +120,9 @@ export const viseModuleParts = (config: ViseModuleConfig = viseModuleDefaults): 
 }
 
 /** X away from the mounting wall; working face Z=height. Underside remains open. */
-export const viseModuleAssembly = (config: ViseModuleConfig = viseModuleDefaults): Placement[] => {
-  assertConfig(config)
-  const { length, width, height, thickness } = config
+export const viseModuleAssembly = (config: ViseModuleConfig, thickness: number): Placement[] => {
+  assertConfig(config, thickness)
+  const { length, width, height } = config
   return [
     { part: 'viseTop', instance: 0, origin: [0, 0, height - thickness / 2], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] },
     { part: 'viseMount', instance: 0, origin: [thickness / 2, 0, 0], axes: [[0, 1, 0], [0, 0, 1], [1, 0, 0]] },

@@ -15,7 +15,7 @@ before(async () => {
 })
 after(async () => { await server?.close() })
 const table = (changes = {}) => ({ ...model.defaults, length: 800, width: 500, height: 100, tabWidth: 25, ribs: false, dogBones: false, showDimensions: false, ...changes })
-const selection = (id, tool, changes = {}) => ({ id, project: { ...tools.toolDefaults[tool], ...changes, size: { ...tools.toolDefaults[tool].size, thickness: 8, ...changes.size } } })
+const selection = (id, tool, changes = {}) => ({ id, project: { ...tools.toolDefaults[tool], ...changes, size: { ...tools.toolDefaults[tool].size, ...changes.size } } })
 const baseline = c => nesting.nestParts(settings.nestingParts(c), { ...settings.nestingOptions(c), attempts: 12 })
 const finish = (c, base = baseline(c), attempts = 12) => {
   const job = cut.tableNestingJob(c, { key: cut.tableLayoutKey(c), result: base })
@@ -31,7 +31,7 @@ test('selected tools preserve exact native geometry and independent quantities w
   assert.equal(new Set(inventory.parts.map(p => p.name)).size, inventory.parts.length)
   assert.ok(inventory.parts.find(p => p.name === 'top'))
   assert.ok(inventory.parts.find(p => p.name === 'tool:one:top'))
-  for (const row of c.nestingTools) for (const original of tools.projectModelParts(row.project)) {
+  for (const row of c.nestingTools) for (const original of tools.projectModelParts(row.project, c)) {
     const actual = inventory.parts.find(p => p.name === `tool:${row.id}:${original.name}`)
     assert.deepEqual({ ...actual, name: original.name, label: original.label, count: original.count }, original)
     assert.equal(actual.count, original.count * row.project.copies, 'tool quantities are not multiplied by table count')
@@ -39,12 +39,12 @@ test('selected tools preserve exact native geometry and independent quantities w
     assert.deepEqual(cut.tableCutEngravings(actual, c), [], 'tool top never inherits table engraving')
   }
   assert.deepEqual(geometry.makeParts(c), geometry.makeParts({ ...c, nestingTools: [] }), 'accepted table geometry is unchanged')
-  assert.throws(() => cut.tableCutInventory(table({ nestingTools: [selection('bad', 'square', { size: { thickness: 6 } })] })), error => error.code === 'thickness-mismatch' && error.selectionId === 'bad')
+
   const many = Array.from({ length: 4 }, (_, i) => selection(`extension-${i}`, 'extension', { copies: 10 }))
   assert.throws(() => cut.tableCutInventory(table({ nestingTools: many })), error => error.code === 'part-limit')
 })
 
-test('schema 3 round-trips selected tools exactly and retired schemas are rejected', () => {
+test('current table schema round-trips stock-free selected tools and rejects retired Tool schemas', () => {
   const c = table({ nestingTools: [selection('ext', 'extension'), selection('bracket', 'cornerBracket', { copies: 3 }), selection('compact', 'compactExtension', { copies: 2 }), selection('vise', 'viseModule')] })
   const saved = model.projectConfig(c)
   assert.equal(saved.schemaVersion, 3)
@@ -62,23 +62,22 @@ test('schema 3 round-trips selected tools exactly and retired schemas are reject
   assert.throws(() => codec.parseTableProject(JSON.stringify(oldExtension)), error => error.code === 'unsupported-version')
 })
 
-test('host-owned tools inherit table stock while the reference bracket keeps independent stock', () => {
-  const source = selection('compact', 'compactExtension', { copies: 2, size: { thickness: 6 } })
+test('every Tool, including the reference bracket, uses the current table stock', () => {
+  const source = selection('compact', 'compactExtension', { copies: 2 })
   const original = structuredClone(source)
   for (const thickness of [4, 6, 8]) {
     const unresolved = table({ thickness, nestingTools: [source] })
     const imported = codec.parseTableProject(JSON.stringify(model.projectConfig(unresolved)))
     assert.equal(imported.kind, 'current')
-    assert.equal(imported.config.nestingTools[0].project.size.thickness, thickness)
-    if (thickness === source.project.size.thickness) assert.doesNotThrow(() => cut.tableCutInventory(unresolved))
-    else assert.throws(() => cut.tableCutInventory(unresolved), error => error.code === 'thickness-mismatch')
+    assert.equal('thickness' in imported.config.nestingTools[0].project.size, false)
+    assert.doesNotThrow(() => cut.tableCutInventory(unresolved))
     const c = table({ thickness, nestingTools: tools.toolSelectionsAtTable([source], unresolved) })
     const inventory = cut.tableCutInventory(c), resolved = inventory.selections[0]
     assert.equal(resolved.id, source.id)
     assert.equal(resolved.project.copies, 2)
-    assert.deepEqual(resolved.project.size, { ...source.project.size, thickness })
+    assert.deepEqual(resolved.project.size, source.project.size)
     assert.ok(inventory.parts.every(part => part.thickness === thickness))
-    for (const expected of tools.projectModelParts(resolved.project)) {
+    for (const expected of tools.projectModelParts(resolved.project, c)) {
       const actual = inventory.parts.find(part => part.name === `tool:compact:${expected.name}`)
       assert.deepEqual(actual.contours, expected.contours)
       assert.deepEqual(actual.holes, expected.holes)
@@ -92,18 +91,13 @@ test('host-owned tools inherit table stock while the reference bracket keeps ind
     assert.equal(codec.tableProjectFromQuery(new URLSearchParams({ toolProject: tools.projectJson(source.project) })), undefined)
   }
   assert.deepEqual(source, original, 'inherited stock never mutates an input snapshot')
-  for (const id of tools.toolIds.filter(id => id !== 'cornerBracket')) {
+  for (const id of tools.toolIds) {
     const project = tools.toolDefaults[id]
     const resolved = tools.projectAtTable(project, table({ thickness: 4 }))
-    assert.equal(resolved.size.thickness, 4)
+    assert.equal('thickness' in resolved.size, false)
     assert.equal(resolved.tool, id)
-    assert.ok(tools.projectModelParts(resolved).every(part => part.thickness === 4))
+    assert.ok(tools.projectModelParts(resolved, table({ thickness: 4 })).every(part => part.thickness === 4))
   }
-  const bracket = tools.projectAtTable(tools.defaultCornerBracketProject, table({ thickness: 4 }))
-  assert.equal(bracket.size.thickness, 6)
-  assert.ok(tools.projectModelParts(bracket).every(part => part.thickness === 6))
-  assert.throws(() => cut.tableCutInventory(table({ thickness: 8, nestingTools: [{ id: 'bracket', project: bracket }] })), error => error.code === 'thickness-mismatch')
-  assert.doesNotThrow(() => cut.tableCutInventory(table({ thickness: 6, nestingTools: [{ id: 'bracket', project: bracket }] })))
   for (const thickness of [3, 9, 10]) {
     assert.throws(() => tools.toolSelectionsAtTable([source], table({ thickness })))
     assert.deepEqual(source, original, 'failed stock changes preserve dimensions, quantity and original stock')
@@ -111,12 +105,12 @@ test('host-owned tools inherit table stock while the reference bracket keeps ind
 })
 
 test('vise inherits the entire mounting interface across saved tools, table JSON and mixed archives', async () => {
-  const source = selection('vise', 'viseModule', { copies: 2, size: { thickness: 6 } }), original = structuredClone(source)
+  const source = selection('vise', 'viseModule', { copies: 2 }), original = structuredClone(source)
   for (const thickness of [4, 6, 8]) for (const grid of ['square', 'staggered']) {
     const c = table({ thickness, grid }), selected = tools.toolSelectionsAtTable([source], c)
     const inventory = cut.tableCutInventory({ ...c, nestingTools: selected })
     const resolved = inventory.selections[0].project
-    assert.deepEqual(resolved.size, { ...source.project.size, thickness, holeDiameter: c.holeDiameter, holePitch: c.pitch, holeInset: c.margin, grid })
+    assert.deepEqual(resolved.size, { ...source.project.size, holeDiameter: c.holeDiameter, holePitch: c.pitch, holeInset: c.margin, grid })
     assert.equal(resolved.copies, 2)
     const loaded = codec.parseTableProject(JSON.stringify(model.projectConfig({ ...c, nestingTools: selected }))).config
     assert.deepEqual(loaded.nestingTools, inventory.selections)
@@ -159,7 +153,7 @@ test('saved table vise selections with retired geometry are rejected without mut
 
 test('compact shared export records inherited stock and refuses the previous layout after a thickness change', async () => {
   const host = table()
-  const c = { ...host, nestingTools: tools.toolSelectionsAtTable([selection('compact', 'compactExtension', { copies: 2, size: { thickness: 6 } })], host) }
+  const c = { ...host, nestingTools: tools.toolSelectionsAtTable([selection('compact', 'compactExtension', { copies: 2 })], host) }
   const run = finish(c)
   assert.equal(cut.validateTableCut(c, run.result, run.stock), true)
   const zip = await JSZip.loadAsync(await dxf.nestedArchive(c, run.result, run.stock).generateAsync({ type: 'nodebuffer' }))

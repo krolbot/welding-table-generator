@@ -3,8 +3,8 @@ import { jointOutline, polygonContour as polygon, roundedConvexPolygon, type Edg
 import { nativePointContourDistance } from '../contourGeometry'
 import { validateToolPart } from './fabrication'
 
-export type ExtensionConfig = { length: number; width: number; height: number; thickness: number }
-export const extensionDefaults: ExtensionConfig = { length: 500, width: 200, height: 200, thickness: 6 }
+export type ExtensionConfig = { length: number; width: number; height: number }
+export const extensionDefaults: ExtensionConfig = { length: 500, width: 200, height: 200 }
 export type ExtensionPartName = 'top' | 'longSide' | 'nearEnd' | 'farEnd' | 'crossRib'
 type ExtensionPart = FabricationPart<ExtensionPartName>
 type Vector3 = [number, number, number]
@@ -15,7 +15,7 @@ const pitch = 50
 const holeWeb = 8
 export const extensionLimits: Record<keyof ExtensionConfig, { min: number; max: number; step: number }> = {
   length: { min: 400, max: 800, step: 50 }, width: { min: 200, max: 400, step: 50 },
-  height: { min: 150, max: 300, step: 50 }, thickness: { min: 4, max: pitch / 2 - diameter / 2 - holeWeb, step: 1 },
+  height: { min: 150, max: 300, step: 50 },
 }
 const jointClearance = 0.2
 const tabWidth = 20
@@ -67,7 +67,7 @@ const grid = (part: ExtensionPart, initial: Hole[] = []): Hole[] => {
   return holes
 }
 
-export const extensionDimensions = ({ length, width, height, thickness }: ExtensionConfig) => ({
+export const extensionDimensions = ({ length, width, height }: ExtensionConfig, thickness: number) => ({
   tipHeight: Math.max(50, height / 4),
   sideTop: height - thickness,
   sideTabs: stations(length),
@@ -77,18 +77,19 @@ export const extensionDimensions = ({ length, width, height, thickness }: Extens
   ribStations: [Math.round(length / (3 * pitch)) * pitch, length - Math.round(length / (3 * pitch)) * pitch],
   ribDepth, ribEndTab, tabWidth, clearance: jointClearance,
 })
-const assertConfig = (config: ExtensionConfig) => {
+const assertConfig = (config: ExtensionConfig, thickness: number) => {
   for (const name of Object.keys(extensionLimits) as (keyof ExtensionConfig)[]) {
     const value = config[name], { min, max } = extensionLimits[name]
     if (!Number.isFinite(value) || value < min || value > max) throw new FabricationError('invalid-dimensions', `Параметр расширения ${name} должен быть конечным числом от ${min} до ${max} мм. Металл должен оставлять фиксированный ряд 25 мм и краевую перемычку 8 мм.`, { field: name, min, max })
   }
+  if (!Number.isFinite(thickness) || thickness < 4 || thickness > pitch / 2 - diameter / 2 - holeWeb) throw new FabricationError('invalid-dimensions', 'Толщина стола несовместима с фиксированным рядом отверстий расширения.', { field: 'thickness' })
 }
 
 /** Reference topology; unmeasured joint, window and mounting dimensions are proposed, not vendor drawings. */
-export const extensionParts = (config: ExtensionConfig = extensionDefaults): ExtensionPart[] => {
-  assertConfig(config)
-  const { length, width, height, thickness } = config
-  const { tipHeight, sideTop, sideTabs, endTabs, rootJoints, ribStations } = extensionDimensions(config)
+export const extensionParts = (config: ExtensionConfig, thickness: number): ExtensionPart[] => {
+  assertConfig(config, thickness)
+  const { length, width, height } = config
+  const { tipHeight, sideTop, sideTabs, endTabs, rootJoints, ribStations } = extensionDimensions(config, thickness)
   const clearance = jointClearance, notchDepth = thickness + clearance / 2
   const slope = (height - tipHeight) / length
   const windowTop = sideTop - 45, rootRail = 55, lowerRail = 30 * Math.hypot(1, slope)
@@ -138,10 +139,10 @@ export const extensionParts = (config: ExtensionConfig = extensionDefaults): Ext
 }
 
 /** X points away from the host table; the working top is horizontal and Z is up. */
-export const extensionAssembly = (config: ExtensionConfig = extensionDefaults): ExtensionPlacement[] => {
-  assertConfig(config)
-  const { length, width, height, thickness } = config
-  const { tipHeight, ribStations } = extensionDimensions(config)
+export const extensionAssembly = (config: ExtensionConfig, thickness: number): ExtensionPlacement[] => {
+  assertConfig(config, thickness)
+  const { length, width, height } = config
+  const { tipHeight, ribStations } = extensionDimensions(config, thickness)
   const top: ExtensionPlacement['axes'] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
   const side: ExtensionPlacement['axes'] = [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
   const end: ExtensionPlacement['axes'] = [[0, 1, 0], [0, 0, 1], [1, 0, 0]]

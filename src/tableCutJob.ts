@@ -7,7 +7,7 @@ import { parseToolSelections, projectModelParts, toolSelectionsAtTable, toolLabe
 
 export class TableCutJobError extends Error {
   readonly name = 'TableCutJobError'
-  constructor(readonly code: 'thickness-mismatch' | 'part-limit' | 'invalid-layout', message: string, readonly selectionId?: string) { super(message) }
+  constructor(readonly code: 'part-limit' | 'invalid-layout', message: string, readonly selectionId?: string) { super(message) }
 }
 export type CutPartSource = { kind: 'table'; part: string; perCopy: number }
   | { kind: 'tool'; selectionId: string; tool: ToolId; part: string; perCopy: number }
@@ -19,18 +19,9 @@ export const tableCutInventory = (config: Config, preparedParts?: Part[]) => {
   const tableParts = nestingParts(config, preparedParts)
   const sources: Record<string, CutPartSource> = Object.fromEntries(tableParts.map(part => [part.name, { kind: 'table', part: part.name, perCopy: part.count / config.nestingCopies }]))
   const parts: FabricationPart[] = [...tableParts]
-  const savedSelections = parseToolSelections(config.nestingTools)
-  const mismatched = savedSelections.find(row => row.project.size.thickness !== config.thickness)
-  if (mismatched) {
-    const message = mismatched.project.tool === 'cornerBracket'
-      ? `${toolLabels[mismatched.project.tool]}: металл ${mismatched.project.size.thickness} мм, у стола — ${config.thickness} мм. Для общего раскроя задайте одинаковую толщину.`
-      : `У выбранной оснастки ${mismatched.id} другая толщина металла. Перед экспортом заново откройте и проверьте проект.`
-    throw new TableCutJobError('thickness-mismatch', message, mismatched.id)
-  }
-  const selections = toolSelectionsAtTable(savedSelections, config)
+  const selections = toolSelectionsAtTable(parseToolSelections(config.nestingTools), config)
   selections.forEach(({ id, project }, index) => {
-    for (const source of projectModelParts(project)) {
-      if (source.thickness !== config.thickness) throw new TableCutJobError('thickness-mismatch', `${toolLabels[project.tool]} № ${index + 1}: металл ${source.thickness} мм, у стола — ${config.thickness} мм. Явно измените оснастку или удалите её из задания на резку.`, id)
+    for (const source of projectModelParts(project, config)) {
       const name = `tool:${id}:${source.name}`
       parts.push({ ...source, name, label: `${toolLabels[project.tool]} № ${index + 1} — ${source.label}`, count: source.count * project.copies })
       sources[name] = { kind: 'tool', selectionId: id, tool: project.tool, part: source.name, perCopy: source.count }

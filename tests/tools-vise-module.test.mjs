@@ -14,6 +14,17 @@ before(async () => {
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
+const stockOf = c => c?.thickness ?? 6
+const viseParts = c => vise.viseModuleParts(c, stockOf(c))
+const viseDimensions = c => vise.viseModuleDimensions(c, stockOf(c))
+const viseAssembly = c => vise.viseModuleAssembly(c, stockOf(c))
+const projectParts = p => tools.projectParts(p, { thickness: stockOf(p.size) })
+const projectAssembly = p => tools.projectAssembly(p, { thickness: stockOf(p.size) })
+const projectModelParts = p => tools.projectModelParts(p, { thickness: stockOf(p.size) })
+
+const projectKey = p => tools.projectKey(p, { thickness: stockOf(p.size) })
+const validProjectLayout = (p, result, key) => tools.validProjectLayout(p, { thickness: stockOf(p.size) }, result, key)
+
 const near = (a, b, tolerance = 1e-4) => assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`)
 const checkSlotSetbacks = (c, slots, tolerance = 1e-4) => {
   assert.equal(slots.length, 8)
@@ -39,8 +50,8 @@ const materialAt = (part, point) => geometry.pointInContour(point, part.contours
   && !part.contours.slice(1).some(cut => geometry.pointInContour(point, cut))
   && !part.holes.some(h => Math.hypot(point.x - h.x, point.y - h.y) < h.d / 2)
 const worldParts = config => {
-  const parts = new Map(vise.viseModuleParts(config).map(part => [part.name, part]))
-  return vise.viseModuleAssembly(config).map(placement => {
+  const parts = new Map(viseParts(config).map(part => [part.name, part]))
+  return viseAssembly(config).map(placement => {
     const part = parts.get(placement.part)
     const world = (point, z) => new THREE.Vector3(...placement.origin)
       .addScaledVector(new THREE.Vector3(...placement.axes[0]), point.x)
@@ -57,7 +68,7 @@ const worldParts = config => {
 }
 
 test('vise has five cut plates, eight independent native radial slots and an open underside', () => {
-  const c = vise.viseModuleDefaults, parts = vise.viseModuleParts(c), [top, mount, front, side] = parts
+  const c = vise.viseModuleDefaults, parts = viseParts(c), [top, mount, front, side] = parts
   assert.deepEqual([c.length, c.width, c.height], [250, 250, 100])
   assert.deepEqual(parts.map(p => [p.name, p.count]), [['viseTop', 1], ['viseMount', 1], ['viseFront', 1], ['viseSide', 2]])
   assert.equal(top.contours.length, 9)
@@ -76,7 +87,7 @@ test('vise size/stock/grid matrix preserves native contours and complete fixed-d
   for (const [length, width] of [[250, 250], [350, 350], [450, 250], [250, 450]]) for (const height of [100, 150])
     for (const thickness of [4, 6, 8]) for (const grid of ['square', 'staggered']) for (const clearance of [0, .2, 1]) {
       const c = { ...vise.viseModuleDefaults, length, width, height, thickness, grid, clearance }
-      const parts = vise.viseModuleParts(c), mount = parts.find(p => p.name === 'viseMount')
+      const parts = viseParts(c), mount = parts.find(p => p.name === 'viseMount')
       checkSlotSetbacks(c, parts[0].contours.slice(1).map(slot => slot.filter(s => s.type === 'arc')))
       const expected = geometry.fixtureGridPoints(width, height, { pitch: c.holePitch, margin: c.holeInset, grid })
       assert.deepEqual(mount.holes.map(h => [h.x, height - h.y, h.d]), expected.map(p => [p.x, p.y, c.holeDiameter]))
@@ -99,7 +110,7 @@ test('vise mounting coordinates match actual table skirt holes, including square
   for (const thickness of [4, 6, 8]) for (const grid of ['square', 'staggered']) {
     const table = { ...model.defaults, length: 800, width: 500, height: 100, thickness, grid, ribs: false, dogBones: false, tabWidth: 25 }
     const p = tools.projectAtTable(tools.defaultViseModuleProject, table)
-    const mount = tools.projectModelParts(p).find(part => part.name === 'viseMount')
+    const mount = projectModelParts(p).find(part => part.name === 'viseMount')
     const skirt = geometry.makeParts(table).find(part => part.name === 'longSkirt')
     for (const h of mount.holes) {
       const depth = p.size.height - h.y
@@ -112,19 +123,19 @@ test('vise mounting coordinates match actual table skirt holes, including square
 
 test('vise world joints are flush, centred and clear without intersections at every mating plane', () => {
   for (const changes of [{}, { thickness: 4, clearance: 0 }, { thickness: 6, clearance: 1 }, { length: 350, width: 350, height: 150 }]) {
-    const c = { ...vise.viseModuleDefaults, ...changes }, dims = vise.viseModuleDimensions(c)
+    const c = { ...vise.viseModuleDefaults, ...changes }, dims = viseDimensions(c)
     const placements = worldParts(c), [top, mount, front, left, right] = placements
     const box = new THREE.Box3(); placements.forEach(p => box.union(p.box))
     for (const axis of ['x', 'y', 'z']) near(box.min[axis], 0)
     near(box.max.x, c.length); near(box.max.y, c.width); near(box.max.z, c.height)
     near(front.box.min.z, c.height - c.tipHeight)
     for (const wall of [mount, front]) for (const y of dims.yJoints) {
-      const point = [wall.origin[0], y, c.height - c.thickness / 2]
+      const point = [wall.origin[0], y, c.height - stockOf(c) / 2]
       assert.ok(wall.solidAt(point) && !top.solidAt(point))
     }
     for (const side of [left, right]) {
       for (const x of dims.xJoints) {
-        const point = [x, side.origin[1], c.height - c.thickness / 2]
+        const point = [x, side.origin[1], c.height - stockOf(c) / 2]
         assert.ok(side.solidAt(point) && !top.solidAt(point))
       }
       for (const [end, z] of [[mount, dims.mountJoint], [front, dims.frontJoint]]) {
@@ -132,12 +143,12 @@ test('vise world joints are flush, centred and clear without intersections at ev
         assert.ok(side.solidAt(point) && !end.solidAt(point))
       }
     }
-    for (const y of [c.thickness / 2, c.width - c.thickness / 2]) for (let x = .31; x < c.length; x += 1.3)
-      assert.ok(placements.filter(p => p.solidAt([x, y, c.height - c.thickness / 2])).length <= 1)
-    for (const x of [c.thickness / 2, c.length - c.thickness / 2]) {
+    for (const y of [stockOf(c) / 2, c.width - stockOf(c) / 2]) for (let x = .31; x < c.length; x += 1.3)
+      assert.ok(placements.filter(p => p.solidAt([x, y, c.height - stockOf(c) / 2])).length <= 1)
+    for (const x of [stockOf(c) / 2, c.length - stockOf(c) / 2]) {
       for (let y = .31; y < c.width; y += 1.3)
-        assert.ok(placements.filter(p => p.solidAt([x, y, c.height - c.thickness / 2])).length <= 1)
-      for (const y of [c.thickness / 2, c.width - c.thickness / 2]) for (let z = .31; z < c.height; z += 1.3)
+        assert.ok(placements.filter(p => p.solidAt([x, y, c.height - stockOf(c) / 2])).length <= 1)
+      for (const y of [stockOf(c) / 2, c.width - stockOf(c) / 2]) for (let z = .31; z < c.height; z += 1.3)
         assert.ok(placements.filter(p => p.solidAt([x, y, z])).length <= 1)
     }
   }
@@ -145,10 +156,10 @@ test('vise world joints are flush, centred and clear without intersections at ev
 
 test('vise shared Three meshes contain actual through slots, round holes and the open underside', () => {
   const p = tools.defaultViseModuleProject, material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-  const group = viewer.toolGroup(tools.projectParts(p), tools.projectAssembly(p), material); group.updateMatrixWorld(true)
+  const group = viewer.toolGroup(projectParts(p), projectAssembly(p), material); group.updateMatrixWorld(true)
   assert.equal(group.toolMeshes.length, 5)
   const hit = (name, origin, direction) => new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...direction)).intersectObject(group.getObjectByName(`${name}:0`), false).length
-  const [top, mount, front, side] = tools.projectModelParts(p)
+  const [top, mount, front, side] = projectModelParts(p)
   for (const h of top.holes) assert.equal(hit(top.name, [h.x, h.y, 200], [0, 0, -1]), 0)
   for (const cut of top.contours.slice(1)) {
     const arcs = cut.filter(s => s.type === 'arc')
@@ -169,23 +180,23 @@ test('vise JSON, links, real ZIP and native DXF preserve every instance and arc;
   const p = { ...tools.defaultViseModuleProject, copies: 2, sheet: { length: 1200, width: 600, edgeGap: 10, partGap: 5 } }
   assert.deepEqual(tools.parseToolProject(tools.projectJson(p)), p)
   assert.deepEqual(tools.parseToolProject(new URLSearchParams({ toolProject: tools.projectJson(p) }).get('toolProject')), p)
-  const result = nesting.nestParts(tools.projectParts(p), { ...tools.projectNestingOptions(p), attempts: 12 })
+  const result = nesting.nestParts(projectParts(p), { ...tools.projectNestingOptions(p), attempts: 12 })
   assert.equal(result.placements.length, 10); assert.equal(result.unplaced.length, 0)
-  assert.equal(tools.validProjectLayout(p, result, tools.projectKey(p)), true)
-  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, tools.projectKey(p), { thickness: p.size.thickness }).generateAsync({ type: 'nodebuffer' }))
+  assert.equal(validProjectLayout(p, result, projectKey(p)), true)
+  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, projectKey(p), { thickness: stockOf(p.size) }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(Object.keys(zip.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   for (const sheet of result.sheets) {
     const parsed = new DxfParser().parseSync(await zip.file(`Лист_${sheet.index + 1}.dxf`).async('string'))
     assert.equal(parsed.entities.filter(e => e.type === 'ARC').length, sheet.placements.reduce((n, p) => n + p.part.contours.flat().filter(s => s.type === 'arc').length, 0))
   }
-  assert.equal(tools.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, tools.projectKey(p)), false)
-  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, slotInnerRadius: 31 } }, result, tools.projectKey(p), { thickness: p.size.thickness }), error => error.code === 'invalid-layout')
+  assert.equal(validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, projectKey(p)), false)
+  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, slotInnerRadius: 31 } }, result, projectKey(p), { thickness: stockOf(p.size) }), error => error.code === 'invalid-layout')
 })
 
 test('vise rejects unsafe grid, slots, stock and overlapping cuts instead of losing mandatory holes', () => {
   for (const changes of [{ thickness: 20 }, { height: NaN }, { tipHeight: 100 }, { length: 200, slotInnerRadius: 80 }, { slotInnerRadius: 5 }, { slotWidth: 60 }, { slotWidth: 28 }, { grid: 'bad' }, { holeInset: 20, thickness: 8 }, { holeDiameter: 28 }, { width: 350 }, { length: 350 }])
-    assert.throws(() => vise.viseModuleParts({ ...vise.viseModuleDefaults, ...changes }), error => error instanceof geometry.FabricationError)
-  for (const changes of [{ version: 3 }, { size: { ...vise.viseModuleDefaults, slotLength: 80 } }, { size: { ...vise.viseModuleDefaults, unknown: 1 } }, { size: { ...vise.viseModuleDefaults, grid: undefined } }])
+    assert.throws(() => viseParts({ ...vise.viseModuleDefaults, ...changes }), error => error instanceof geometry.FabricationError)
+  for (const changes of [{ version: 2 }, { size: { ...vise.viseModuleDefaults, slotLength: 80 } }, { size: { ...vise.viseModuleDefaults, unknown: 1 } }, { size: { ...vise.viseModuleDefaults, grid: undefined } }])
     assert.throws(() => tools.parseToolProject(tools.projectJson({ ...tools.defaultViseModuleProject, ...changes })))
 })
 
@@ -193,8 +204,8 @@ test('retired equal-length vise projects are rejected without a migration path',
   const old = { ...tools.defaultViseModuleProject, version: 1, copies: 2, size: { ...vise.viseModuleDefaults, slotLength: 75 } }
   const original = tools.projectJson(old)
   assert.throws(() => tools.parseToolProject(original), error => error.code === 'unsupported-version')
-  assert.throws(() => exporter.toolPartsArchive(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
-  assert.throws(() => exporter.toolStripDxf(old, { thickness: old.size.thickness }), error => error.code === 'unsupported-version')
+  assert.throws(() => exporter.toolPartsArchive(old, { thickness: stockOf(old.size) }), error => error.code === 'unsupported-version')
+  assert.throws(() => exporter.toolStripDxf(old, { thickness: stockOf(old.size) }), error => error.code === 'unsupported-version')
   assert.equal(tools.projectJson(old), original)
   for (const changes of [{ slotLength: '80' }, { slotLength: 201 }, { slotLength: undefined }, { unexpected: 1 }, { grid: 'bad' }, { slotWidth: 28 }, { width: 350 }])
     assert.throws(() => tools.parseToolProject(tools.projectJson({ ...old, size: { ...old.size, ...changes } })))

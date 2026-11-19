@@ -50,14 +50,14 @@ export const tablePreview = (input: unknown): TablePreviewDto => {
 export const toolPreview = (toolInput: unknown, tableInput: unknown): ToolPreviewDto => {
   const table = parseTableInput(tableInput)
   const project = parseToolInput(toolInput, table)
-  const parts = projectParts(project)
+  const parts = projectParts(project, table)
   let admissionError: ApiError | null = null
   try { tableCutInventory({ ...table, nestingTools: [{ id: 'preview', project }] }) }
   catch (error) { admissionError = errorDto(error) }
   return {
     revision: revisionFor({ project: JSON.parse(projectJson(project)), table: projectConfig(table) }),
     project, parts, weights: Object.fromEntries(parts.map(part => [part.name, partWeight(part)])), layout: arrangeParts(parts), summary: fabricationEstimate(parts, project.sheet),
-    assembly: projectAssembly(project), envelope: projectEnvelope(project), admissionError,
+    assembly: projectAssembly(project, table), envelope: projectEnvelope(project, table), admissionError,
   }
 }
 

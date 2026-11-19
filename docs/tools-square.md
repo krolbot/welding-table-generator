@@ -8,13 +8,13 @@ Default dimensions, in millimetres:
 
 - Outside X/Y envelope: **250 × 250** (shown in the reference).
 - Arm width: **50** (proposed).
-- Stock thickness: **6** (proposed).
+- Stock thickness: always the active table thickness.
 - Three holes: **Ø16** (proposed).
 - Free-end hole inset: **25** (proposed).
 
 The corner-hole centre is half the arm width from each outside edge. The two remaining centres are at `(length − endOffset, armWidth / 2)` and `(armWidth / 2, width − endOffset)`. Defaults produce 200 mm centre spacing along each arm; custom sizes do not automatically align with the host table grid. Measure that interface before cutting.
 
-Length and width support 150–600 mm, arm width 30–100 mm, thickness 4–12 mm, holes 6–28 mm and free-end inset 15–80 mm. Not every combination is valid: every hole must remain inside material, at least 5 mm from a cut edge, and separated from the other holes. Invalid edits are rejected instead of silently dropping a hole.
+Length and width support 150–600 mm, arm width 30–100 mm, holes 6–28 mm and free-end inset 15–80 mm. The active table thickness must be 4–12 mm for this geometry. Not every combination is valid: every hole must remain inside material, at least 5 mm from a cut edge, and separated from the other holes. Invalid edits are rejected instead of silently dropping a hole.
 
 ## Canonical geometry and shared interface
 

@@ -14,14 +14,24 @@ before(async () => {
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
+const stockOf = c => c?.thickness ?? 6
+const compactParts = c => compact.compactExtensionParts(c, stockOf(c))
+const compactDimensions = c => compact.compactExtensionDimensions(c, stockOf(c))
+const compactAssembly = c => compact.compactExtensionAssembly(c, stockOf(c))
+const projectParts = p => project.projectParts(p, { thickness: stockOf(p.size) })
+const projectAssembly = p => project.projectAssembly(p, { thickness: stockOf(p.size) })
+
+const projectKey = p => project.projectKey(p, { thickness: stockOf(p.size) })
+const validProjectLayout = (p, result, key) => project.validProjectLayout(p, { thickness: stockOf(p.size) }, result, key)
+
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-4, `${a} != ${b}`)
 const materialAt = (part, point) => geometry.pointInContour(point, part.contours[0])
   && !part.contours.slice(1).some(cut => geometry.pointInContour(point, cut))
   && !part.holes.some(hole => Math.hypot(point.x - hole.x, point.y - hole.y) < hole.d / 2)
 
 const worldParts = config => {
-  const parts = new Map(compact.compactExtensionParts(config).map(part => [part.name, part]))
-  return compact.compactExtensionAssembly(config).map(placement => {
+  const parts = new Map(compactParts(config).map(part => [part.name, part]))
+  return compactAssembly(config).map(placement => {
     const part = parts.get(placement.part)
     const world = (point, z) => new THREE.Vector3(...placement.origin)
       .addScaledVector(new THREE.Vector3(...placement.axes[0]), point.x)
@@ -38,8 +48,8 @@ const worldParts = config => {
 }
 
 test('compact reference has exactly three plates, one central spine, five windows, twenty top and four end holes', () => {
-  const c = compact.compactExtensionDefaults, parts = compact.compactExtensionParts(c)
-  assert.deepEqual([c.length, c.width, c.height, c.thickness], [500, 100, 100, 6])
+  const c = compact.compactExtensionDefaults, parts = compactParts(c)
+  assert.deepEqual([c.length, c.width, c.height, stockOf(c)], [500, 100, 100, 6])
   assert.deepEqual(parts.map(p => [p.name, p.count, p.holes.length]), [['compactTop', 1, 20], ['compactSpine', 1, 0], ['compactMount', 1, 4]])
   assert.equal(parts[1].contours.length, 6)
   assert.ok(parts[1].contours.slice(1).every(c => c.some(s => s.type === 'arc')))
@@ -48,8 +58,8 @@ test('compact reference has exactly three plates, one central spine, five window
   assert.deepEqual(parts[1].contours[0][1].to, { x: 500, y: 50 }, 'deeper free end retains room for the wider webs')
   assert.deepEqual([...new Set(parts[0].holes.map(h => h.y))], [25, 75])
   assert.deepEqual(parts[2].holes.map(h => [h.x, h.y]), [[25, 75], [75, 75], [25, 25], [75, 25]])
-  assert.equal(compact.compactExtensionAssembly(c)[1].origin[1], 50)
-  assert.equal(project.projectAssembly(project.defaultToolProject).length, 7, 'existing wedge is a separate retained product')
+  assert.equal(compactAssembly(c)[1].origin[1], 50)
+  assert.equal(projectAssembly(project.defaultToolProject).length, 7, 'existing wedge is a separate retained product')
 })
 
 test('16/32 mm compact webs fit the deeper end without changing assembly joints or saved dimensions', () => {
@@ -58,19 +68,20 @@ test('16/32 mm compact webs fit the deeper end without changing assembly joints 
   for (const thickness of [4, 6, 8]) {
     const size = { ...compact.compactExtensionDefaults, thickness }
     const previousSize = { ...size, windowInset: 8, tipHeight: 40 }
-    const parts = compact.compactExtensionParts(size), previous = compact.compactExtensionParts(previousSize)
+    const parts = compactParts(size), previous = compactParts(previousSize)
     assert.deepEqual([parts[0], parts[2]], [previous[0], previous[2]])
     assert.deepEqual(parts[1].contours[0][0], previous[1].contours[0][0])
     assert.deepEqual(parts[1].contours[0].slice(3), previous[1].contours[0].slice(3), 'top and mounting joints unchanged')
     assert.deepEqual(parts[1].contours[0][1].to, { x: 500, y: 50 })
     assert.deepEqual(parts[1].contours[0][2].from, { x: 500, y: 50 })
-    assert.deepEqual(compact.compactExtensionAssembly(size), compact.compactExtensionAssembly(previousSize))
+    assert.deepEqual(compactAssembly(size), compactAssembly(previousSize))
     const windows = parts[1].contours.slice(1)
     assert.equal(windows.length, 5)
     near(Math.min(...windows.map(cut => contours.nativeContourDistance(cut, parts[1].contours[0]))), 16)
     near(Math.min(...windows.flatMap((cut, i) => windows.slice(i + 1).map(other => contours.nativeContourDistance(cut, other)))), 32)
     windows.forEach((cut, i) => assert.ok(Math.abs(geometry.signedContourArea(cut)) < Math.abs(geometry.signedContourArea(previous[1].contours[i + 1]))))
-    for (const savedSize of [size, previousSize, { ...previousSize, windowInset: 12 }]) {
+    for (const rawSize of [size, previousSize, { ...previousSize, windowInset: 12 }]) {
+      const { thickness: _stock, ...savedSize } = rawSize
       const saved = { ...project.defaultCompactExtensionProject, size: savedSize }
       assert.deepEqual(project.parseToolProject(project.projectJson(saved)), saved)
     }
@@ -82,11 +93,11 @@ test('compact size matrix preserves saved profiles and rejects combinations wher
   for (const profile of [{ windowInset: 8, tipHeight: 40 }, { windowInset: 12, tipHeight: 40 }, { windowInset: 16, tipHeight: 50 }]) for (const length of [350, 500, 800]) for (const width of [100, 200]) for (const height of [100, 150, 200]) for (const thickness of [4, 6, 8]) {
     const c = { ...compact.compactExtensionDefaults, ...profile, length, width, height, thickness }
     if (length === 350 && (profile.windowInset === 12 || profile.windowInset === 16 && height === 200)) {
-      assert.throws(() => compact.compactExtensionParts(c), error => error?.code === 'cut-clearance')
+      assert.throws(() => compactParts(c), error => error?.code === 'cut-clearance')
       rejected++
       continue
     }
-    const parts = compact.compactExtensionParts(c)
+    const parts = compactParts(c)
     for (const part of parts) {
       for (const contour of part.contours) {
         const b = contours.nativeContourBounds(contour)
@@ -117,37 +128,37 @@ test('compact size matrix preserves saved profiles and rejects combinations wher
 
 test('compact joints share world-space centres, flush faces and actual clearance without plate clashes', () => {
   for (const changes of [{}, { thickness: 9, clearance: 0 }, { thickness: 4, clearance: 1 }, { length: 800, width: 200, height: 150, thickness: 8 }]) {
-    const c = { ...compact.compactExtensionDefaults, ...changes }, dims = compact.compactExtensionDimensions(c)
+    const c = { ...compact.compactExtensionDefaults, ...changes }, dims = compactDimensions(c)
     const placements = worldParts(c), [top, spine, mount] = placements
     const assembly = new THREE.Box3()
     placements.forEach(p => assembly.union(p.box))
     for (const axis of ['x', 'y', 'z']) near(assembly.min[axis], 0)
     near(assembly.max.x, c.length); near(assembly.max.y, c.width); near(assembly.max.z, c.height)
     for (const x of dims.topJoints) {
-      const point = [x, c.width / 2, c.height - c.thickness / 2]
+      const point = [x, c.width / 2, c.height - stockOf(c) / 2]
       assert.ok(spine.solidAt(point) && !top.solidAt(point))
     }
     for (const z of dims.endJoints) {
-      const point = [c.thickness / 2, c.width / 2, z]
+      const point = [stockOf(c) / 2, c.width / 2, z]
       assert.ok(spine.solidAt(point) && !mount.solidAt(point))
     }
     for (const y of dims.mountTopJoints) {
-      const point = [c.thickness / 2, y, c.height - c.thickness / 2]
+      const point = [stockOf(c) / 2, y, c.height - stockOf(c) / 2]
       assert.ok(mount.solidAt(point) && !top.solidAt(point))
     }
     const slot = contours.nativeContourBounds(top.part.contours[1])
     near(slot.maxX - slot.minX, c.tabWidth + c.clearance)
-    near(slot.maxY - slot.minY, c.thickness + c.clearance)
+    near(slot.maxY - slot.minY, stockOf(c) + c.clearance)
     for (let x = .37; x < c.length; x += 1.7) {
-      const point = [x, c.width / 2, c.height - c.thickness / 2]
+      const point = [x, c.width / 2, c.height - stockOf(c) / 2]
       assert.equal(top.solidAt(point) && spine.solidAt(point), false, 'top/spine collision')
     }
     for (let z = .37; z < c.height; z += 1.7) {
-      const point = [c.thickness / 2, c.width / 2, z]
+      const point = [stockOf(c) / 2, c.width / 2, z]
       assert.equal(mount.solidAt(point) && spine.solidAt(point), false, 'mount/spine collision')
     }
     for (let y = .37; y < c.width; y += 1.7) {
-      const point = [c.thickness / 2, y, c.height - c.thickness / 2]
+      const point = [stockOf(c) / 2, y, c.height - stockOf(c) / 2]
       assert.equal(top.solidAt(point) && mount.solidAt(point), false, 'top/mount collision')
     }
   }
@@ -155,12 +166,12 @@ test('compact joints share world-space centres, flush faces and actual clearance
 
 test('real compact 3D meshes cut every hole and window and occupy the canonical envelope', () => {
   const p = project.defaultCompactExtensionProject, material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-  const group = viewer.toolGroup(project.projectParts(p), project.projectAssembly(p), material); group.updateMatrixWorld(true)
+  const group = viewer.toolGroup(projectParts(p), projectAssembly(p), material); group.updateMatrixWorld(true)
   assert.equal(group.toolMeshes.length, 3)
   const box = new THREE.Box3().setFromObject(group)
   near(box.max.x, 500); near(box.max.y, 100); near(box.max.z, 100)
   const hit = (name, origin, direction) => new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...direction)).intersectObject(group.getObjectByName(`${name}:0`), false).length
-  const [top, spine, mount] = project.projectModelParts(p)
+  const [top, spine, mount] = project.projectModelParts(p, { thickness: stockOf(p.size) })
   for (const h of top.holes) assert.equal(hit(top.name, [h.x, h.y, 200], [0, 0, -1]), 0)
   for (const h of mount.holes) assert.equal(hit(mount.name, [-50, h.x, h.y], [1, 0, 0]), 0)
   for (const cut of spine.contours.slice(1)) {
@@ -176,25 +187,25 @@ test('compact codec and native archives preserve exact settings, every instance,
   const p = { ...project.defaultCompactExtensionProject, copies: 2, sheet: { length: 1200, width: 600, edgeGap: 10, partGap: 5 } }
   assert.deepEqual(project.parseToolProject(project.projectJson(p)), p)
   assert.deepEqual(project.parseToolSelections([{ id: 'compact-pair', project: p }]), [{ id: 'compact-pair', project: p }])
-  const result = nesting.nestParts(project.projectParts(p), { ...project.projectNestingOptions(p), attempts: 12 })
+  const result = nesting.nestParts(projectParts(p), { ...project.projectNestingOptions(p), attempts: 12 })
   assert.equal(result.placements.length, 6); assert.equal(result.unplaced.length, 0)
-  assert.equal(project.validProjectLayout(p, result, project.projectKey(p)), true)
-  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, project.projectKey(p), { thickness: p.size.thickness }).generateAsync({ type: 'nodebuffer' }))
+  assert.equal(validProjectLayout(p, result, projectKey(p)), true)
+  const zip = await JSZip.loadAsync(await exporter.toolArchive(p, result, projectKey(p), { thickness: stockOf(p.size) }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(Object.keys(zip.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   const parser = new DxfParser()
   for (const sheet of result.sheets) {
     const parsed = parser.parseSync(await zip.file(`Лист_${sheet.index + 1}.dxf`).async('string'))
     assert.equal(parsed.entities.filter(e => e.type === 'CIRCLE').length, sheet.placements.reduce((n, p) => n + p.part.holes.length, 0))
   }
-  assert.equal(project.validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, project.projectKey(p)), false)
-  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, windowRadius: 2 } }, result, project.projectKey(p), { thickness: p.size.thickness }), error => error.code === 'invalid-layout')
+  assert.equal(validProjectLayout(p, { ...result, placements: result.placements.slice(1) }, projectKey(p)), false)
+  assert.throws(() => exporter.toolArchive({ ...p, size: { ...p.size, windowRadius: 2 } }, result, projectKey(p), { thickness: stockOf(p.size) }), error => error.code === 'invalid-layout')
 })
 
 test('invalid compact dimensions and crossed hole corridors fail explicitly instead of omitting geometry', () => {
-  for (const changes of [{ thickness: 10 }, { thickness: 9 }, { width: 150 }, { height: NaN }, { tipHeight: 100 }, { tipHeight: 40 }, { tipHeight: 45, thickness: 8 }, { windowInset: 17 }, { taperRun: 250 }, { holeDiameter: 28 }]) {
-    assert.throws(() => compact.compactExtensionParts({ ...compact.compactExtensionDefaults, ...changes }), error => error instanceof geometry.FabricationError)
+  for (const changes of [{ thickness: 10 }, { width: 150 }, { height: NaN }, { tipHeight: 100 }, { tipHeight: 40 }, { tipHeight: 45, thickness: 8 }, { windowInset: 17 }, { taperRun: 250 }, { holeDiameter: 28 }]) {
+    assert.throws(() => compactParts({ ...compact.compactExtensionDefaults, ...changes }), error => error instanceof geometry.FabricationError)
   }
-  for (const changes of [{ version: 2 }, { size: { ...compact.compactExtensionDefaults, unknown: 1 } }]) {
+  for (const changes of [{ version: 1 }, { size: { ...compact.compactExtensionDefaults, unknown: 1 } }]) {
     assert.throws(() => project.parseToolProject(project.projectJson({ ...project.defaultCompactExtensionProject, ...changes })))
   }
 })

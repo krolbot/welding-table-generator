@@ -14,10 +14,18 @@ before(async () => {
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
+const stockOf = c => c?.thickness ?? 6
+const squareParts = c => square.squareParts(c, stockOf(c))
+const projectParts = p => projects.projectParts(p, { thickness: stockOf(p.size) })
+const projectAssembly = p => projects.projectAssembly(p, { thickness: stockOf(p.size) })
+
+const projectKey = p => projects.projectKey(p, { thickness: stockOf(p.size) })
+const validProjectLayout = (p, result, key) => projects.validProjectLayout(p, { thickness: stockOf(p.size) }, result, key)
+
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-5, `${actual} != ${expected}`)
 
 test('square reference is one flat L plate with three holes, not a bent angle or dense perforated box', () => {
-  const [part] = square.squareParts(square.squareDefaults)
+  const [part] = squareParts(square.squareDefaults)
   assert.equal(part.count, 1)
   assert.equal(part.contours.length, 1)
   assert.equal(part.contours[0].length, 6)
@@ -35,7 +43,7 @@ test('square dimension matrix keeps the material corner, hole webs and exact nat
   let checked = 0
   for (const length of [150, 250, 600]) for (const width of [150, 250, 600]) for (const armWidth of [30, 50, 100]) for (const thickness of [4, 6, 12]) {
     const config = { ...square.squareDefaults, length, width, armWidth, thickness }
-    const [part] = square.squareParts(config)
+    const [part] = squareParts(config)
     near(geometry.signedContourArea(part.contours[0]), (length + width) * armWidth - armWidth ** 2)
     near(geometry.partWeight(part), ((length + width) * armWidth - armWidth ** 2 - 3 * Math.PI * 8 ** 2) * thickness * 7.85e-6)
     for (const [index, segment] of part.contours[0].entries()) assert.deepEqual(segment.to, part.contours[0][(index + 1) % 6].from)
@@ -48,20 +56,20 @@ test('square dimension matrix keeps the material corner, hole webs and exact nat
 
 test('square rejects nonfinite, out-of-range and colliding mounting holes rather than silently omitting them', () => {
   for (const changes of [{ length: 0 }, { armWidth: 120 }, { thickness: Infinity }, { holeDiameter: NaN }, { armWidth: 30, holeDiameter: 28 }, { holeDiameter: 28, endOffset: 15 }, { length: 150, armWidth: 100, endOffset: 80 }]) {
-    assert.throws(() => square.squareParts({ ...square.squareDefaults, ...changes }))
+    assert.throws(() => squareParts({ ...square.squareDefaults, ...changes }))
   }
 })
 
 test('actual shared Three extrusion keeps all three square holes and the open inside corner empty', () => {
   const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-  const group = viewer.toolGroup(projects.projectParts(projects.defaultSquareProject), projects.projectAssembly(projects.defaultSquareProject), material)
+  const group = viewer.toolGroup(projectParts(projects.defaultSquareProject), projectAssembly(projects.defaultSquareProject), material)
   group.updateMatrixWorld(true)
   const box = new THREE.Box3().setFromObject(group)
   assert.deepEqual(box.min.toArray(), [0, 0, 0])
   assert.deepEqual(box.max.toArray(), [250, 250, 6])
   assert.equal(group.toolMeshes.length, 1)
   const occupies = (x, y) => new THREE.Raycaster(new THREE.Vector3(x, y, 20), new THREE.Vector3(0, 0, -1)).intersectObject(group, true).some(hit => hit.object instanceof THREE.Mesh)
-  for (const hole of square.squareParts(square.squareDefaults)[0].holes) assert.equal(occupies(hole.x, hole.y), false)
+  for (const hole of squareParts(square.squareDefaults)[0].holes) assert.equal(occupies(hole.x, hole.y), false)
   assert.equal(occupies(125, 125), false)
   assert.equal(occupies(125, 25), true)
   assert.equal(occupies(25, 125), true)
@@ -73,7 +81,7 @@ test('both tool project types round-trip without changing keys or accepting the 
   for (const input of [projects.defaultToolProject, projects.defaultSquareProject]) {
     const restored = projects.parseToolProject(projects.projectJson(input))
     assert.deepEqual(restored, input)
-    assert.equal(projects.projectKey(restored), projects.projectKey(input))
+    assert.equal(projectKey(restored), projectKey(input))
     assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, size: { ...input.size, unknown: 1 } })))
     assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, tool: input.tool === 'square' ? 'extension' : 'square' })))
   }
@@ -82,12 +90,12 @@ test('both tool project types round-trip without changing keys or accepting the 
 
 test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and reject stale exports', async () => {
   const project = { ...projects.defaultSquareProject, copies: 3, sheet: { length: 600, width: 600, edgeGap: 10, partGap: 5 } }
-  const parts = projects.projectParts(project), key = projects.projectKey(project)
+  const parts = projectParts(project), key = projectKey(project)
   const result = nesting.nestParts(parts, { ...projects.projectNestingOptions(project), attempts: 12 })
   assert.equal(result.placements.length, 3)
   assert.equal(result.unplaced.length, 0)
-  assert.equal(projects.validProjectLayout(project, result, key), true)
-  const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key, { thickness: project.size.thickness }).generateAsync({ type: 'nodebuffer' }))
+  assert.equal(validProjectLayout(project, result, key), true)
+  const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key, { thickness: stockOf(project.size) }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(Object.keys(archive.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   let circleCount = 0, lineCount = 0
   for (const sheet of result.sheets) {
@@ -99,12 +107,12 @@ test('square batch nesting, sheet DXF, part DXF, JSON and actual ZIP agree and r
   }
   assert.equal(circleCount, 9)
   assert.equal(lineCount, 18)
-  assert.equal(projects.validProjectLayout({ ...project, size: { ...project.size, length: 300 } }, result, key), false)
-  assert.equal(projects.validProjectLayout(projects.defaultToolProject, result, key), false)
+  assert.equal(validProjectLayout({ ...project, size: { ...project.size, length: 300 } }, result, key), false)
+  assert.equal(validProjectLayout(projects.defaultToolProject, result, key), false)
   const tampered = structuredClone(result)
   tampered.placements[0].part.holes.pop()
-  assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: project.size.thickness }), /неполна, устарела/)
-  const strip = new DxfParser().parseSync(toolExport.toolStripDxf(project, { thickness: project.size.thickness }))
+  assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: stockOf(project.size) }), /неполна, устарела/)
+  const strip = new DxfParser().parseSync(toolExport.toolStripDxf(project, { thickness: stockOf(project.size) }))
   assert.equal(strip.entities.filter(entity => entity.type === 'CIRCLE').length, 9)
   assert.equal(strip.entities.filter(entity => entity.type === 'LINE').length, 18)
 })

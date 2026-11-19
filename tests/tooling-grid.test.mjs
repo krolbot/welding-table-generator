@@ -123,9 +123,9 @@ test('unsafe spacing, stock, custom voids and colliding serialized IDs fail clos
 
 test('extension grid has the same 25 mm datum in actual placements and rejects stock that would shift it', () => {
   for (const thickness of [4, 6, 9]) for (const width of [200, 230, 400]) for (const height of [150, 175, 300]) {
-    const config = { ...extension.extensionDefaults, length: 460, thickness, width, height }
-    const parts = new Map(extension.extensionParts(config).map(part => [part.name, part]))
-    for (const placement of extension.extensionAssembly(config).filter(item => item.part !== 'crossRib')) {
+    const config = { ...extension.extensionDefaults, length: 460, width, height }
+    const parts = new Map(extension.extensionParts(config, thickness).map(part => [part.name, part]))
+    for (const placement of extension.extensionAssembly(config, thickness).filter(item => item.part !== 'crossRib')) {
       const part = parts.get(placement.part), holes = part.holes.filter(hole => hole.kind === 'grid')
       if (placement.part === 'top') {
         near(Math.min(...holes.map(hole => hole.x)), 25)
@@ -137,5 +137,5 @@ test('extension grid has the same 25 mm datum in actual placements and rejects s
       }
     }
   }
-  assert.throws(() => extension.extensionParts({ ...extension.extensionDefaults, thickness: 10 }), error => error.code === 'invalid-dimensions' && error.details.max === 9)
+  assert.throws(() => extension.extensionParts(extension.extensionDefaults, 10), error => error.code === 'invalid-dimensions')
 })

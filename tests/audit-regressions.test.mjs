@@ -88,11 +88,11 @@ test('table-only batch estimate uses exactly the same instances as its nesting i
 test('standalone strip DXF and estimate inventory agree for two copies of every Tool family', () => {
   for (const [name, original] of Object.entries(projects.toolDefaults)) {
     const project = { ...original, copies: 2 }
-    const parts = projects.projectParts(project)
+    const table = { thickness: 6 }, parts = projects.projectParts(project, table)
     const estimated = layout.fabricationEstimate(parts, project.sheet)
-    const parsed = new DxfParser().parseSync(toolExport.toolStripDxf(project, { thickness: project.size.thickness }))
+    const parsed = new DxfParser().parseSync(toolExport.toolStripDxf(project, table))
     assert.equal(parsed.entities.filter(entity => entity.type === 'CIRCLE').length, estimated.holes, name)
     assert.equal(parts.reduce((sum, part) => sum + part.count, 0),
-      projects.projectModelParts(original).reduce((sum, part) => sum + part.count, 0) * 2, name)
+      projects.projectModelParts(original, table).reduce((sum, part) => sum + part.count, 0) * 2, name)
   }
 })

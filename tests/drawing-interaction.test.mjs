@@ -43,7 +43,7 @@ test('zoom and clamps retain the world point under the pointer', () => {
 
 test('part focus centres translated and rotated bounds without moving geometry', () => {
   const project = tools.toolDefaults.viseModule
-  const part = tools.projectParts(project)[0]
+  const part = tools.projectParts(project, { thickness: 8 })[0]
   const features = drawing.drawingFeatures([{ part, position: { x: 900, y: -600 }, rotation: 90 }])
   assert.equal(features.targets.length, 1)
   const bounds = features.targets[0].bounds, viewport = { width: 780, height: 560 }
@@ -91,7 +91,7 @@ test('rotated nested parts retain exact hole centres and edge coordinates', () =
 
 test('vise native radial tips and corners yield the real 15 mm setbacks', () => {
   const project = tools.toolDefaults.viseModule
-  const part = tools.projectParts(project).find(part => part.name === 'viseTop')
+  const part = tools.projectParts(project, { thickness: 8 }).find(part => part.name === 'viseTop')
   assert.ok(part)
   const features = drawing.drawingFeatures([{ part, position: { x: 0, y: 0 }, rotation: 0 }])
   const arcs = part.contours.slice(1).flat().filter(segment => segment.type === 'arc')

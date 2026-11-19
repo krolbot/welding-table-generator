@@ -14,6 +14,16 @@ before(async () => {
   ].map(path => server.ssrLoadModule(path)))
 })
 after(async () => { await server?.close() })
+const stockOf = c => c?.thickness ?? 6
+const bracketParts = c => bracket.cornerBracketParts(c ?? bracket.cornerBracketDefaults, stockOf(c))
+const bracketDimensions = c => bracket.cornerBracketDimensions(c ?? bracket.cornerBracketDefaults, stockOf(c))
+const bracketAssembly = c => bracket.cornerBracketAssembly(stockOf(c))
+const projectParts = p => projects.projectParts(p, { thickness: stockOf(p.size) })
+const projectAssembly = p => projects.projectAssembly(p, { thickness: stockOf(p.size) })
+
+const projectKey = p => projects.projectKey(p, { thickness: stockOf(p.size) })
+const validProjectLayout = (p, result, key) => projects.validProjectLayout(p, { thickness: stockOf(p.size) }, result, key)
+
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-5, `${actual} != ${expected}`)
 const inside = (p, vertices) => {
   let result = false
@@ -31,7 +41,7 @@ const sizes = [[210, 210], [260, 260], [310, 310], [210, 260], [260, 210]]
 const cases = () => sizes.flatMap(([length, width]) => [50, 60, 100].flatMap(height => [4, 8, 12].map(thickness => ({ ...bracket.cornerBracketDefaults, length, width, height, thickness }))))
 
 test('corner reference has a through 60 mm inner cutout, two perpendicular walls, twelve holes and one capsule slot', () => {
-  const parts = bracket.cornerBracketParts(), [base, holes, slot] = parts
+  const parts = bracketParts(), [base, holes, slot] = parts
   assert.deepEqual(parts.map(p => [p.name, p.count, p.holes.length, p.contours.length]), [
     ['cornerBase', 1, 9, 1], ['cornerHoleWall', 1, 3, 1], ['cornerSlotWall', 1, 0, 2],
   ])
@@ -46,7 +56,7 @@ test('corner reference has a through 60 mm inner cutout, two perpendicular walls
   assert.equal(material(base, { x: 105, y: 105 }), true)
   assert.equal(holes.holes.length, 3)
   assert.equal(bracket.cornerBracketDefaults.cornerCut, 60)
-  assert.equal(bracket.cornerBracketDefaults.thickness, 6)
+  assert.equal(Object.hasOwn(bracket.cornerBracketDefaults, 'thickness'), false)
   assert.deepEqual(native.nativeContourBounds(holes.contours[0]), { minX: 60, minY: 0, maxX: 210, maxY: 60 })
   assert.deepEqual(native.nativeContourBounds(slot.contours[0]), { minX: 60, minY: 0, maxX: 210, maxY: 60 })
   assert.deepEqual(holes.holes.map(hole => hole.x), [85, 135, 185])
@@ -60,7 +70,7 @@ test('corner reference has a through 60 mm inner cutout, two perpendicular walls
 })
 
 test('corner size/thickness matrix retains every required hole, noncrossing contours and 5 mm webs', () => {
-  for (const config of cases()) for (const part of bracket.cornerBracketParts(config)) {
+  for (const config of cases()) for (const part of bracketParts(config)) {
     for (const contour of part.contours) {
       const points = geometry.contourPoints(contour, 64)
       assert.ok(points.every(p => Number.isFinite(p.x) && Number.isFinite(p.y)))
@@ -75,7 +85,7 @@ test('corner size/thickness matrix retains every required hole, noncrossing cont
     }
     assert.equal(part.holes.length, part.name === 'cornerBase' ? 9 : part.name === 'cornerHoleWall' ? 3 : 0)
   }
-  for (const clearance of [0, 0.2, 1]) bracket.cornerBracketParts({ ...bracket.cornerBracketDefaults, clearance })
+  for (const clearance of [0, 0.2, 1]) bracketParts({ ...bracket.cornerBracketDefaults, clearance })
 })
 
 test('corner rejects impossible holes, slot, joints, profile and nonfinite inputs instead of dropping geometry', () => {
@@ -83,27 +93,27 @@ test('corner rejects impossible holes, slot, joints, profile and nonfinite input
     { length: 160 }, { width: 160 }, { holePitch: 100 }, { holeDiameter: 28, height: 40 },
     { slotLength: 210 }, { cornerCut: 100 }, { tipWidth: 150 }, { clearance: -0.1 },
     { tabWidth: 41 }, { thickness: NaN }, { height: Infinity }, { slotLength: 10 },
-  ]) assert.throws(() => bracket.cornerBracketParts({ ...bracket.cornerBracketDefaults, ...change }), JSON.stringify(change))
+  ]) assert.throws(() => bracketParts({ ...bracket.cornerBracketDefaults, ...change }), JSON.stringify(change))
 })
 
 test('corner world interfaces seat four flush tabs with the declared clearances and no overlapping stock', () => {
   for (const config of [bracket.cornerBracketDefaults, ...cases().filter((_, i) => i % 9 === 0), { ...bracket.cornerBracketDefaults, clearance: 0 }, { ...bracket.cornerBracketDefaults, clearance: 1 }]) {
-    const parts = new Map(bracket.cornerBracketParts(config).map(part => [part.name, part]))
-    const placements = bracket.cornerBracketAssembly(config).map(placement => ({ ...placement, part: parts.get(placement.part) }))
+    const parts = new Map(bracketParts(config).map(part => [part.name, part]))
+    const placements = bracketAssembly(config).map(placement => ({ ...placement, part: parts.get(placement.part) }))
     const worldPoint = (placement, p, n = 0) => new THREE.Vector3(...placement.origin).addScaledVector(new THREE.Vector3(...placement.axes[0]), p.x).addScaledVector(new THREE.Vector3(...placement.axes[1]), p.y).addScaledVector(new THREE.Vector3(...placement.axes[2]), n)
     const occupies = (placement, world) => {
       const relative = world.clone().sub(new THREE.Vector3(...placement.origin))
       const local = placement.axes.map(axis => relative.dot(new THREE.Vector3(...axis)))
-      return Math.abs(local[2]) < config.thickness / 2 - 1e-6 && material(placement.part, { x: local[0], y: local[1] })
+      return Math.abs(local[2]) < stockOf(config) / 2 - 1e-6 && material(placement.part, { x: local[0], y: local[1] })
     }
-    const boxes = placements.map(p => new THREE.Box3().setFromPoints(geometry.contourPoints(p.part.contours[0]).flatMap(v => [-config.thickness / 2, config.thickness / 2].map(n => worldPoint(p, v, n)))))
+    const boxes = placements.map(p => new THREE.Box3().setFromPoints(geometry.contourPoints(p.part.contours[0]).flatMap(v => [-stockOf(config) / 2, stockOf(config) / 2].map(n => worldPoint(p, v, n)))))
     const bounds = boxes.reduce((box, next) => box.union(next), new THREE.Box3())
     bounds.min.toArray().forEach(value => near(value, 0))
     bounds.max.toArray().forEach((value, index) => near(value, [config.length, config.width, config.height][index]))
-    const [base, wallX, wallY] = placements, dims = bracket.cornerBracketDimensions(config)
+    const [base, wallX, wallY] = placements, dims = bracketDimensions(config)
     for (const [wall, stations, along] of [[wallX, dims.xJoints, 'x'], [wallY, dims.yJoints, 'y']]) {
       for (const station of stations) {
-        const world = new THREE.Vector3(config.thickness / 2, config.thickness / 2, config.thickness / 2)
+        const world = new THREE.Vector3(stockOf(config) / 2, stockOf(config) / 2, stockOf(config) / 2)
         world[along] = station
         assert.equal(occupies(wall, world), true, 'wall tab reaches base midplane')
         assert.equal(occupies(base, world), false, 'base notch receives tab')
@@ -132,15 +142,15 @@ test('corner world interfaces seat four flush tabs with the declared clearances 
 })
 
 test('shared Three extrusion has actual through holes, open capsule and open top/diagonal', () => {
-  const parts = bracket.cornerBracketParts(), config = bracket.cornerBracketDefaults
+  const parts = bracketParts(), config = bracket.cornerBracketDefaults
   const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-  const group = viewer.toolGroup(projects.projectParts(projects.defaultCornerBracketProject), projects.projectAssembly(projects.defaultCornerBracketProject), material)
+  const group = viewer.toolGroup(projectParts(projects.defaultCornerBracketProject), projectAssembly(projects.defaultCornerBracketProject), material)
   group.updateMatrixWorld(true)
   assert.equal(group.toolMeshes.length, 3)
   const hits = (name, origin, direction) => new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...direction)).intersectObject(group.getObjectByName(`${name}:0`), false).length
   for (const h of parts[0].holes) assert.equal(hits('cornerBase', [h.x, h.y, 20], [0, 0, -1]), 0)
   for (const h of parts[1].holes) assert.equal(hits('cornerHoleWall', [h.x, -10, h.y], [0, 1, 0]), 0)
-  const { wallHoleHeight } = bracket.cornerBracketDimensions(config)
+  const { wallHoleHeight } = bracketDimensions(config)
   for (const y of [32, 105, 178]) assert.equal(hits('cornerSlotWall', [-10, y, wallHoleHeight], [1, 0, 0]), 0)
   assert.equal(hits('cornerBase', [20, 20, 80], [0, 0, -1]), 0)
   assert.equal(hits('cornerHoleWall', [30, -10, 50], [0, 1, 0]), 0)
@@ -161,11 +171,11 @@ test('all three product schemas round-trip exactly and reject mismatched or unkn
   for (const input of Object.values(projects.toolDefaults)) {
     const restored = projects.parseToolProject(projects.projectJson(input))
     assert.deepEqual(restored, input)
-    assert.equal(projects.projectKey(restored), projects.projectKey(input))
+    assert.equal(projectKey(restored), projectKey(input))
     for (const tool of projects.toolIds.filter(tool => tool !== input.tool)) assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, tool })))
   }
   const input = projects.defaultCornerBracketProject
-  assert.equal(input.version, 5)
+  assert.equal(input.version, 6)
   for (const version of [3, 4]) assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, version })), /Версия проекта/)
   assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, size: { ...input.size, surprise: 1 } })))
   assert.throws(() => projects.parseToolProject(JSON.stringify({ ...input, size: { ...input.size, holePitch: '50' } })))
@@ -174,19 +184,19 @@ test('all three product schemas round-trip exactly and reject mismatched or unkn
 
 test('corner native and nested-sheet DXFs agree and stale/tampered cuts are refused', async () => {
   const project = { ...projects.defaultCornerBracketProject, copies: 2, sheet: { length: 600, width: 600, edgeGap: 10, partGap: 5 } }
-  const parser = new DxfParser(), key = projects.projectKey(project)
-  for (const part of projects.projectModelParts(project)) {
+  const parser = new DxfParser(), key = projectKey(project)
+  for (const part of projects.projectModelParts(project, { thickness: stockOf(project.size) })) {
     const parsed = parser.parseSync(dxf.nativeDxfForPart(part))
     assert.equal(parsed.header.$INSUNITS, 4)
     for (const [type, count] of [['LINE', part.contours.flat().filter(s => s.type === 'line').length], ['ARC', part.contours.flat().filter(s => s.type === 'arc').length], ['CIRCLE', part.holes.length]]) assert.equal(parsed.entities.filter(e => e.type === type).length, count)
     assert.ok(parsed.entities.every(e => ['LINE', 'ARC', 'CIRCLE'].includes(e.type)))
     for (const hole of part.holes) assert.ok(parsed.entities.some(e => e.type === 'CIRCLE' && Math.hypot(e.center.x - hole.x, e.center.y - hole.y) < 0.001 && e.radius === hole.d / 2))
   }
-  const result = nesting.nestParts(projects.projectParts(project), { ...projects.projectNestingOptions(project), attempts: 12 })
+  const result = nesting.nestParts(projectParts(project), { ...projects.projectNestingOptions(project), attempts: 12 })
   assert.equal(result.placements.length, 6)
   assert.equal(result.unplaced.length, 0)
-  assert.equal(projects.validProjectLayout(project, result, key), true)
-  const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key, { thickness: project.size.thickness }).generateAsync({ type: 'nodebuffer' }))
+  assert.equal(validProjectLayout(project, result, key), true)
+  const archive = await JSZip.loadAsync(await toolExport.toolArchive(project, result, key, { thickness: stockOf(project.size) }).generateAsync({ type: 'nodebuffer' }))
   assert.deepEqual(Object.keys(archive.files).filter(name => !name.endsWith('/')), result.sheets.map(sheet => `Лист_${sheet.index + 1}.dxf`))
   let circles = 0, arcs = 0
   for (const sheet of result.sheets) {
@@ -198,11 +208,11 @@ test('corner native and nested-sheet DXFs agree and stale/tampered cuts are refu
   }
   assert.equal(circles, 24)
   assert.equal(arcs, 4)
-  assert.equal(projects.validProjectLayout({ ...project, size: { ...project.size, slotLength: 130 } }, result, key), false)
+  assert.equal(validProjectLayout({ ...project, size: { ...project.size, slotLength: 130 } }, result, key), false)
   const tampered = structuredClone(result)
   const changed = tampered.placements.find(placement => placement.part.holes.length > 0)
   assert.ok(changed)
   changed.part.holes.pop()
-  assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: project.size.thickness }), /неполна, устарела/)
-  assert.throws(() => toolExport.toolArchive(project, { ...result, placements: result.placements.slice(1) }, key, { thickness: project.size.thickness }), /неполна, устарела/)
+  assert.throws(() => toolExport.toolArchive(project, tampered, key, { thickness: stockOf(project.size) }), /неполна, устарела/)
+  assert.throws(() => toolExport.toolArchive(project, { ...result, placements: result.placements.slice(1) }, key, { thickness: stockOf(project.size) }), /неполна, устарела/)
 })

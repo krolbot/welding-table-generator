@@ -6,7 +6,7 @@ This is an independently dimensioned analogue, **not a measured replica or a man
 
 ## Geometry and assembly
 
-All geometry, nesting and DXF coordinates are millimetres. Length is adjustable from 400–800 mm, width 200–400 mm, mounting-end height 150–300 mm and thickness 4–9 mm. Defaults are 500 × 200 × 200 mm, T6.
+All geometry, nesting and DXF coordinates are millimetres. Length is adjustable from 400–800 mm, width 200–400 mm and mounting-end height 150–300 mm. Stock comes only from the active table and must be 4–9 mm for this fixed-datum geometry. Defaults are 500 × 200 × 200 mm.
 
 Seven flat pieces are cut from one thickness:
 

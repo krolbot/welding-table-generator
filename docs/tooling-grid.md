@@ -24,7 +24,7 @@ Thus D16/25 permits stock up to 14 mm under this geometric web rule; D28/50 perm
 
 Custom holes retain their explicit local coordinates. Holes outside the active part, inside slots/windows, too close to another cut, or with colliding serialized IDs are rejected. A valid custom hole replaces conflicting automatic grid holes rather than producing overlapping circles. Removed-hole records are explicit and retained.
 
-The separate wedge extension reuses the fixed lattice but retains its existing 8 mm web. Its fixed 25 mm first row therefore requires 4–9 mm stock. T10 is rejected; the former thickness-dependent row shift is deleted. See [extension geometry](tools-extension.md).
+The separate wedge extension reuses the fixed lattice and the active table stock. Its fixed 25 mm first row therefore requires 4–9 mm stock. T10 is rejected; the former thickness-dependent row shift is deleted. See [extension geometry](tools-extension.md).
 
 ## Project transition
 

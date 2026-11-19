@@ -6,11 +6,11 @@ The dark kit image can initially look like two overlapping triangular sheets. Co
 
 ## Reference and proposed geometry
 
-All stored, model and DXF dimensions are millimetres. The latest reference explicitly prints `210×210×60`, 6 mm steel and a monolithic/no-weld construction. The bracket owns its stock thickness independently; mixed cutting with the table is admitted only when both stocks match. The owner confirmed the visible inner opening as a square through 60×60 cut: the base and both walls begin 60 mm away from their common corner.
+All stored, model and DXF dimensions are millimetres. The latest reference explicitly prints `210×210×60`, 6 mm steel and a monolithic/no-weld construction. The reference label does not create a Tool thickness setting: the bracket is always generated from the active table stock. The owner confirmed the visible inner opening as a square through 60×60 cut: the base and both walls begin 60 mm away from their common corner.
 
 Defaults:
 
-- Outside envelope: **210 × 210 × 60**; default stock thickness is **6**, independently of the active table.
+- Outside envelope: **210 × 210 × 60**; stock thickness is taken only from the active table.
 - Mounting holes and slot width: **16**, grid pitch **50** — proposed.
 - Closed capsule slot overall length: **140** — proposed, with true semicircular ends and 5 mm end webs in the 150 mm wall span.
 - Through inner-corner cut along both seating edges: **60**; short free-end widths: **50** — cut confirmed by the owner, free-end width proposed.

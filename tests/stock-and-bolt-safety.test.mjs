@@ -38,16 +38,16 @@ const sampledVolume = part => (sampledArea(part.contours[0])
   - part.contours.slice(1).reduce((sum, contour) => sum + sampledArea(contour), 0)
   - part.holes.reduce((sum, hole) => sum + Math.PI * (hole.d / 2) ** 2, 0)) * part.thickness
 
-test('host-owned tools use table stock while the reference bracket exports its independent stock', async () => {
+test('all Tool projects use table stock at geometry and export boundaries', async () => {
   assert.equal(tools.toolIds.length, 5)
-  for (const thickness of [4, 6, 8]) for (const id of tools.toolIds.filter(id => id !== 'cornerBracket')) {
+  for (const thickness of [4, 6, 8]) for (const id of tools.toolIds) {
     const host = table(thickness), project = tools.projectAtTable(tools.toolDefaults[id], host)
-    assert.equal(project.size.thickness, thickness, id)
+    assert.equal('thickness' in project.size, false, id)
     assert.deepEqual(tools.parseToolProject(tools.projectJson(project)), project)
-    const parts = tools.projectModelParts(project)
+    const parts = tools.projectModelParts(project, host)
     assert.ok(parts.length > 0 && parts.every(part => part.thickness === thickness), id)
     assert.ok(parts.every(part => Number.isFinite(geometry.partWeight(part)) && geometry.partWeight(part) > 0), id)
-    assert.ok(tools.projectAssembly(project).length > 0, id)
+    assert.ok(tools.projectAssembly(project, host).length > 0, id)
     const archive = await JSZip.loadAsync(await exporter.toolPartsArchive(project, host).generateAsync({ type: 'nodebuffer' }))
     assert.deepEqual(Object.keys(archive.files).filter(name => !name.endsWith('/')).sort(), parts.map(part => `детали/${part.name}_${part.count * project.copies}шт.dxf`).sort())
     for (const part of parts) {
@@ -55,15 +55,6 @@ test('host-owned tools use table stock while the reference bracket exports its i
       assert.equal(parsed.entities.filter(entity => entity.type === 'CIRCLE').length, part.holes.length, `${id}/${part.name}`)
       assert.equal(parsed.entities.filter(entity => entity.type === 'ARC').length, part.contours.flat().filter(segment => segment.type === 'arc').length, `${id}/${part.name}`)
     }
-    assert.throws(() => exporter.toolPartsArchive(project, table(thickness + 1)), error => error.code === 'stock-mismatch')
-    assert.throws(() => exporter.toolStripDxf(project, table(thickness + 1)), error => error.code === 'stock-mismatch')
-  }
-  for (const hostThickness of [4, 6, 8]) {
-    const host = table(hostThickness), project = tools.projectAtTable(tools.defaultCornerBracketProject, host)
-    assert.equal(project.size.thickness, 6)
-    assert.ok(tools.projectModelParts(project).every(part => part.thickness === 6))
-    assert.doesNotThrow(() => exporter.toolPartsArchive(project, host))
-    assert.doesNotThrow(() => exporter.toolStripDxf(project, host))
   }
 })
 
@@ -73,7 +64,7 @@ test('independent sampled native contours confirm material volume and steel-mass
     const host = table(thickness)
     const products = [
       ...geometry.makeParts(host),
-      ...tools.toolIds.flatMap(id => tools.projectModelParts(tools.projectAtTable(tools.toolDefaults[id], host))),
+      ...tools.toolIds.flatMap(id => tools.projectModelParts(tools.projectAtTable(tools.toolDefaults[id], host), host)),
     ]
     for (const part of products) {
       const volume = sampledVolume(part)
@@ -84,7 +75,7 @@ test('independent sampled native contours confirm material volume and steel-mass
   }
 })
 
-test('retired stock schemas are rejected while current tools retain their declared stock owner', () => {
+test('retired schemas are rejected while current Tool projects remain stock-free', () => {
   for (const id of ['extension', 'square']) {
     const current = tools.projectAtTable(tools.toolDefaults[id], table(6))
     const original = JSON.stringify({ ...current, version: current.version - 1 })
@@ -92,10 +83,8 @@ test('retired stock schemas are rejected while current tools retain their declar
     assert.throws(() => tools.readToolProjectAtTable(original, table(8)), error => error.code === 'unsupported-version')
     const unreviewed = { ...table(8), nestingTools: [{ id, project: current }] }
     const loaded = codec.parseTableProject(JSON.stringify(model.projectConfig(unreviewed))).config
-    assert.equal(loaded.nestingTools[0].project.size.thickness, 8)
-    assert.throws(() => cut.tableCutInventory(unreviewed), error => error.code === 'thickness-mismatch')
-    assert.throws(() => exporter.toolPartsArchive(current, table(8)), error => error.code === 'stock-mismatch')
-    assert.throws(() => exporter.toolStripDxf(current, table(8)), error => error.code === 'stock-mismatch')
+    assert.equal('thickness' in loaded.nestingTools[0].project.size, false)
+    assert.doesNotThrow(() => cut.tableCutInventory(unreviewed))
     assert.ok(cut.tableCutInventory(loaded).parts.every(part => part.thickness === 8))
   }
   const bracket = tools.defaultCornerBracketProject
@@ -103,17 +92,16 @@ test('retired stock schemas are rejected while current tools retain their declar
   assert.throws(() => tools.parseToolProject(retiredBracket), error => error.code === 'unsupported-version')
   assert.throws(() => tools.readToolProjectAtTable(retiredBracket, table(8)), error => error.code === 'unsupported-version')
   const currentBracket = tools.readToolProjectAtTable(tools.projectJson(bracket), table(8))
-  assert.equal(currentBracket.size.thickness, 6)
+  assert.equal('thickness' in currentBracket.size, false)
   const loadedBracket = codec.parseTableProject(JSON.stringify(model.projectConfig({ ...table(8), nestingTools: [{ id: 'cornerBracket', project: bracket }] }))).config
-  assert.equal(loadedBracket.nestingTools[0].project.size.thickness, 6)
-  assert.throws(() => cut.tableCutInventory(loadedBracket), error => error.code === 'thickness-mismatch')
+  assert.equal('thickness' in loadedBracket.nestingTools[0].project.size, false)
   assert.doesNotThrow(() => exporter.toolPartsArchive(bracket, table(8)))
   assert.doesNotThrow(() => exporter.toolStripDxf(bracket, table(8)))
-  assert.ok(cut.tableCutInventory({ ...table(6), nestingTools: [{ id: 'cornerBracket', project: bracket }] }).parts.every(part => part.thickness === 6))
+  assert.ok(cut.tableCutInventory(loadedBracket).parts.every(part => part.thickness === 8))
   for (const id of ['compactExtension', 'viseModule']) {
     const project = tools.projectAtTable(tools.toolDefaults[id], table(6))
     const loaded = tools.readToolProjectAtTable(tools.projectJson(project), table(8))
-    assert.equal(loaded.size.thickness, 8)
+    assert.equal('thickness' in loaded.size, false)
   }
 })
 

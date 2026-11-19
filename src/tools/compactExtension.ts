@@ -4,20 +4,20 @@ import { jointOutline, polygonContour, roundedConvexPolygon, type EdgeJoint } fr
 import { validateToolPart } from './fabrication'
 
 export type CompactExtensionConfig = {
-  length: number; width: number; height: number; thickness: number
+  length: number; width: number; height: number
   holeDiameter: number; holePitch: number; holeInset: number
   tipHeight: number; taperRun: number; windowInset: number; windowRadius: number
   tabWidth: number; clearance: number
 }
 export const compactExtensionDefaults: CompactExtensionConfig = {
-  length: 500, width: 100, height: 100, thickness: 6,
+  length: 500, width: 100, height: 100,
   holeDiameter: 16, holePitch: 50, holeInset: 25,
   tipHeight: 50, taperRun: 120, windowInset: 16, windowRadius: 3,
   tabWidth: 20, clearance: 0.2,
 }
 export const compactExtensionLimits: Record<keyof CompactExtensionConfig, { min: number; max: number; step: number }> = {
   length: { min: 350, max: 800, step: 50 }, width: { min: 80, max: 200, step: 10 },
-  height: { min: 80, max: 200, step: 10 }, thickness: { min: 4, max: 9, step: 1 },
+  height: { min: 80, max: 200, step: 10 },
   holeDiameter: { min: 10, max: 28, step: 1 }, holePitch: { min: 40, max: 100, step: 5 }, holeInset: { min: 20, max: 50, step: 1 },
   tipHeight: { min: 30, max: 100, step: 5 }, taperRun: { min: 50, max: 250, step: 10 },
   windowInset: { min: 6, max: 16, step: 1 }, windowRadius: { min: 1, max: 8, step: 1 },
@@ -34,35 +34,36 @@ const rectangle = (x: number, y: number, width: number, height: number) => polyg
 ])
 const joints = (centres: number[], width: number, depth: number): EdgeJoint[] => centres.map(centre => ({ centre, width, depth }))
 
-export const compactExtensionDimensions = (config: CompactExtensionConfig) => ({
+export const compactExtensionDimensions = (config: CompactExtensionConfig, thickness: number) => ({
   spineY: config.width / 2,
-  spineStart: config.thickness + config.clearance / 2,
-  bodyTop: config.height - config.thickness,
+  spineStart: thickness + config.clearance / 2,
+  bodyTop: config.height - thickness,
   taperStart: config.length - config.taperRun,
   tipBottom: config.height - config.tipHeight,
   topJoints: [config.length / 3, config.length * 2 / 3],
-  endJoints: [(config.height - config.thickness) / 3, (config.height - config.thickness) * 2 / 3],
+  endJoints: [(config.height - thickness) / 3, (config.height - thickness) * 2 / 3],
   mountTopJoints: [config.width / 4, config.width * 3 / 4],
   tabWidth: config.tabWidth, clearance: config.clearance,
   holeOrigin: config.holeInset,
 })
 
-const assertConfig = (config: CompactExtensionConfig) => {
+const assertConfig = (config: CompactExtensionConfig, thickness: number) => {
   for (const key of Object.keys(compactExtensionLimits) as Array<keyof CompactExtensionConfig>) {
     const value = config[key], { min, max } = compactExtensionLimits[key]
     if (!Number.isFinite(value) || value < min || value > max)
       throw new FabricationError('invalid-dimensions', `Параметр компактного расширения ${key} должен быть от ${min} до ${max} мм`, { field: key, min, max })
   }
-  if (config.tipHeight >= config.height || config.tipHeight <= config.thickness + 2 * config.windowInset + 2 * config.windowRadius
-    || config.taperRun >= config.length / 2 || config.tabWidth + config.clearance >= (config.height - config.thickness) / 3)
+  if (!Number.isFinite(thickness) || thickness < 4 || thickness > 9) throw new FabricationError('invalid-dimensions', 'Толщина стола должна быть от 4 до 9 мм для компактного расширения.', { field: 'thickness' })
+  if (config.tipHeight >= config.height || config.tipHeight <= thickness + 2 * config.windowInset + 2 * config.windowRadius
+    || config.taperRun >= config.length / 2 || config.tabWidth + config.clearance >= (config.height - thickness) / 3)
     throw new FabricationError('invalid-dimensions', 'Скос, окна и установочные соединения должны помещаться в габарит компактного расширения')
 }
 
 /** Three cut plates observed across the references; exact window and joint dimensions are proposed. */
-export const compactExtensionParts = (config: CompactExtensionConfig = compactExtensionDefaults): Part[] => {
-  assertConfig(config)
-  const { length, width, height, thickness, holeDiameter, holePitch, holeInset, tabWidth, clearance, windowInset, windowRadius } = config
-  const { spineY, spineStart, bodyTop, taperStart, tipBottom, topJoints, endJoints, mountTopJoints } = compactExtensionDimensions(config)
+export const compactExtensionParts = (config: CompactExtensionConfig, thickness: number): Part[] => {
+  assertConfig(config, thickness)
+  const { length, width, height, holeDiameter, holePitch, holeInset, tabWidth, clearance, windowInset, windowRadius } = config
+  const { spineY, spineStart, bodyTop, taperStart, tipBottom, topJoints, endJoints, mountTopJoints } = compactExtensionDimensions(config, thickness)
   const top = jointOutline([point(0, 0), point(length, 0), point(length, width), point(0, width)], [
     [], [], [], joints(mountTopJoints.map(y => width - y), tabWidth + clearance, -spineStart),
   ])
@@ -113,11 +114,11 @@ export const compactExtensionParts = (config: CompactExtensionConfig = compactEx
 }
 
 /** X away from the host table, central spine at Y=width/2, working face Z=height. */
-export const compactExtensionAssembly = (config: CompactExtensionConfig = compactExtensionDefaults): Placement[] => {
-  assertConfig(config)
+export const compactExtensionAssembly = (config: CompactExtensionConfig, thickness: number): Placement[] => {
+  assertConfig(config, thickness)
   return [
-    { part: 'compactTop', instance: 0, origin: [0, 0, config.height - config.thickness / 2], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] },
+    { part: 'compactTop', instance: 0, origin: [0, 0, config.height - thickness / 2], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] },
     { part: 'compactSpine', instance: 0, origin: [0, config.width / 2, 0], axes: [[1, 0, 0], [0, 0, 1], [0, -1, 0]] },
-    { part: 'compactMount', instance: 0, origin: [config.thickness / 2, 0, 0], axes: [[0, 1, 0], [0, 0, 1], [1, 0, 0]] },
+    { part: 'compactMount', instance: 0, origin: [thickness / 2, 0, 0], axes: [[0, 1, 0], [0, 0, 1], [1, 0, 0]] },
   ]
 }

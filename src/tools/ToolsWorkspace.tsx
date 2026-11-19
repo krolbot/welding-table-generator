@@ -28,7 +28,7 @@ const storageKey = 'weldingToolsProject'
 
 type ToolDimension = keyof ExtensionConfig | keyof SquareConfig | keyof CornerBracketConfig | keyof CompactExtensionConfig | Exclude<keyof ViseModuleConfig, 'grid'>
 const sizeLabels: Record<ToolDimension, string> = {
-  length: 'Длина', width: 'Ширина', height: 'Высота монтажного торца', thickness: 'Толщина листа',
+  length: 'Длина', width: 'Ширина', height: 'Высота монтажного торца',
   armWidth: 'Ширина плеча', holeDiameter: 'Диаметр отверстия Ø', endOffset: 'Отступ отверстия от свободных концов',
   holePitch: 'Шаг отверстий', slotLength: 'Длина паза для струбцины', cornerCut: 'Внутренний угловой вырез',
   tipWidth: 'Ширина свободного конца', tabWidth: 'Ширина установочного шипа', clearance: 'Общий зазор в соединении',
@@ -39,7 +39,7 @@ const sizeLabels: Record<ToolDimension, string> = {
 
 const sizeLimits = { extension: extensionLimits, compactExtension: compactExtensionLimits, square: squareLimits, cornerBracket: cornerBracketLimits, viseModule: viseModuleLimits }
 const toolSummaries: Record<ToolId, string> = {
-  extension: 'Сетка D16 / 50 мм · толщина листа от стола',
+  extension: 'Сетка D16 / 50 мм · металл от стола',
   compactExtension: 'Три пластины · центральное ребро с окнами · один монтажный торец',
   square: 'Одна плоская Г-образная пластина · три монтажных отверстия · без гибки',
   cornerBracket: 'Три плоские детали · две перпендикулярные стенки · открытая диагональная сторона',
@@ -62,7 +62,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
   const project = useMemo(() => projectAtTable(storedProject, tableConfig), [storedProject, tableConfig.thickness, tableConfig.holeDiameter, tableConfig.pitch, tableConfig.margin, tableConfig.grid])
   const [message, setMessage] = useState(initial.notice)
   const [reset, setReset] = useState(0)
-  const key = projectKey(project)
+  const key = projectKey(project, tableConfig)
   const [previewState, setPreviewState] = useState<{ key: string; value: ToolPreviewDto } | null>(null)
   const preview = previewState?.key === key ? previewState.value : null
   const [previewError, setPreviewError] = useState('')
@@ -71,7 +71,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
     const timer = window.setTimeout(() => {
       void previewTool(JSON.parse(projectJson(project)), projectConfig(tableConfig), controller.signal).then(value => {
         setPreviewState({ key, value }); setPreviewError('')
-        if (projectKey(value.project) !== key) setProject(value.project)
+        if (projectKey(value.project, tableConfig) !== key) setProject(value.project)
       }).catch(error => { if (!controller.signal.aborted) setPreviewError(error instanceof Error ? error.message : 'Сервер не рассчитал инструмент') })
     }, 120)
     return () => { clearTimeout(timer); controller.abort() }
@@ -88,7 +88,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
 
   const apply = (candidate: ToolProject) => {
     const next = projectAtTable(candidate, tableConfig)
-    if (projectKey(next) === key) return true
+    if (projectKey(next, tableConfig) === key) return true
     const url = new URL(location.href)
     if (url.searchParams.has('toolProject')) { url.searchParams.set('toolProject', projectJson(next)); history.replaceState(history.state, '', url) }
     setProject(next)
@@ -128,12 +128,8 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
     if (!(name in project.size) || !(name in limits)) return null
     const value = project.size[name as keyof typeof project.size]
     const range = limits[name as keyof typeof limits]
-    const readOnly = name === 'thickness' && project.tool !== 'cornerBracket' || project.tool === 'viseModule' && ['holeDiameter', 'holePitch', 'holeInset'].includes(name)
-    const label = name === 'height' && project.tool !== 'extension'
-      ? 'Высота'
-      : name === 'thickness' && project.tool !== 'cornerBracket'
-        ? 'Толщина листа · стол'
-        : sizeLabels[name]
+    const readOnly = project.tool === 'viseModule' && ['holeDiameter', 'holePitch', 'holeInset'].includes(name)
+    const label = name === 'height' && project.tool !== 'extension' ? 'Высота' : sizeLabels[name]
     return <NumberField key={`${project.tool}:${name}`} label={label} readOnly={readOnly} value={String(Number(display(value, units, 3)))} min={range.min / factor} max={range.max / factor} step={range.step / factor}
       onValue={value => applySize(name, value)} />
   }
@@ -158,7 +154,7 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
     settings={<>
       <>
         <section className="fixture-card"><h3>Инструмент</h3><label className="field"><span>Выберите изделие</span><select aria-label="Выбрать изделие" value={project.tool} onChange={event => { const value = event.target.value; if (isToolId(value)) selectTool(value) }}>{toolIds.map(id => <option key={id} value={id}>{toolLabels[id]}</option>)}</select></label><p className="grid-summary">{toolSummaries[project.tool]}</p></section>
-        <ParameterGroup title={<>Размеры ({unitLabel})</>} defaultOpen><div className="fields">{sizeField('length')}{sizeField('width')}{project.tool === 'square' ? sizeField('armWidth') : sizeField('height')}{sizeField('thickness')}</div><p>{project.tool === 'cornerBracket' ? 'Толщина кронштейна задаётся отдельно; референс изготовлен из стали 6 мм. В общий раскрой стола кронштейн можно добавить только при совпадении толщины металла.' : 'Толщина металла задаётся в разделе «Стол» и применяется к этому инструменту.'}</p></ParameterGroup>
+        <ParameterGroup title={<>Размеры ({unitLabel})</>} defaultOpen><div className="fields">{sizeField('length')}{sizeField('width')}{project.tool === 'square' ? sizeField('armWidth') : sizeField('height')}</div><p>Толщина не является параметром инструмента: всегда используется толщина металла из раздела «Стол» — сейчас {display(tableConfig.thickness, units, 3)} {unitLabel}.</p></ParameterGroup>
         {project.tool === 'viseModule' && <><ParameterGroup title={<>Монтажная сетка стола ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Диаметр, шаг, начало от края и схема «{project.size.grid === 'square' ? 'квадратная' : 'диагональная'}» берутся из генератора стола. На монтажной стенке строится полная совпадающая сетка с отсчётом вниз от рабочей поверхности; отверстия не смещаются и не удаляются ради размещения. Нижние боковые ряды ограничены криволинейным профилем.</p></ParameterGroup><ParameterGroup title={<>Пазы тисков и установочные соединения ({unitLabel})</>}><div className="fields">{sizeField('slotWidth')}{sizeField('slotInnerRadius')}{sizeField('tipHeight')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Восемь отдельных скруглённых пазов с шагом 45° и центральное круглое отверстие. Каждый внешний скруглённый конец останавливается за {display(viseSlotSetback, units, 3)} {unitLabel} до границы пластины по своему лучу; диагонали квадратной верхней пластины заканчиваются на таком же расстоянии от углов. Длины пазов пересчитываются вместе с размером пластины. Расстояние измеряется вдоль оси каждого паза, а не перпендикулярно стороне.</p></ParameterGroup></>}
         {project.tool === 'square' && <ParameterGroup title={<>Монтажные отверстия ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('endOffset')}</div><p>Одно отверстие у внутреннего угла и по одному у каждого свободного конца. Центр углового отверстия отстоит от обеих наружных кромок на половину ширины плеча. Сверьте полученные межцентровые расстояния со своим столом.</p></ParameterGroup>}
         {project.tool === 'compactExtension' && <><ParameterGroup title={<>Сетка оснастки ({unitLabel})</>}><div className="fields">{sizeField('holeDiameter')}{sizeField('holePitch')}{sizeField('holeInset')}</div><p>Начала сетки на рабочей поверхности и монтажном торце зафиксированы относительно краёв. Первый торцевой ряд отсчитывается вниз от рабочей поверхности в сборе. Конфликтующие отверстия отклоняются, а не смещаются и не удаляются.</p></ParameterGroup><ParameterGroup title={<>Центральное ребро и установочные соединения ({unitLabel})</>}><div className="fields">{sizeField('tipHeight')}{sizeField('taperRun')}{sizeField('windowInset')}{sizeField('windowRadius')}{sizeField('tabWidth')}{sizeField('clearance')}</div><p>Отступ окон задаёт ширину материала по периметру. Диагональные перемычки между соседними окнами: {display(project.size.windowInset * 2, units, 3)} {unitLabel}. Сохранённые проекты сохраняют выбранный отступ.</p></ParameterGroup></>}
@@ -169,8 +165,8 @@ export function ToolsWorkspace({ dark, onTheme, onBack, view, onView, notice, on
     visualization={<VisualizationSettings value={visual} onChange={onVisual} />}
     production={summary && <ProductionEstimate summary={summary} units={units} sheet={project.sheet} onSheetChange={changes => apply({ ...project, sheet: { ...project.sheet, ...changes } })} />}
     actions={onClose => <ProjectActions subject="инструмента" onOpen={file => { onClose(); void open(file) }} onSave={() => downloadFile(JSON.stringify(project, null, 2), `проект-инструмента-${project.tool}.wtool`)} onShare={() => { onClose(); void share() }} disabled={Boolean(previewError)} fabrication={{ kind: 'parts', onZip: () => void downloadFromApi('/api/export/tool-parts.zip', { project, table: projectConfig(tableConfig) }).catch(error => setMessage(error instanceof Error ? error.message : 'Не удалось создать ZIP-архив.')), onDxf: () => void downloadFromApi('/api/export/tool.dxf', { project, table: projectConfig(tableConfig) }).catch(error => setMessage(error instanceof Error ? error.message : 'Не удалось создать DXF.')) }} />}>
-    <div className="tool-cut-bar"><div><strong>Добавить в раскрой</strong><small>{toolLabels[project.tool]} · металл {display(project.size.thickness, units, 3)} {unitLabel}</small></div><NumberField label="Количество" value={project.copies} min={1} max={10} step={1} onValue={copies => apply({ ...project, copies })} /><button disabled={Boolean(admissionError) || !preview} onClick={() => preview && onAddToTable(preview.project)}><Icon name="plus" size={14} />Добавить</button>{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}</div>
-    {previewError ? <div className="three-loading socket-error" role="alert"><div className="tool-recovery"><p>{previewError} Перед изготовлением измените толщину стола или размеры инструмента либо сбросьте этот инструмент.</p><button className="secondary" onClick={resetCurrentTool}>Сбросить параметры инструмента</button></div></div>
+    <div className="tool-cut-bar"><div><strong>Добавить в раскрой</strong><small>{toolLabels[project.tool]} · металл стола {display(tableConfig.thickness, units, 3)} {unitLabel}</small></div><NumberField label="Количество" value={project.copies} min={1} max={10} step={1} onValue={copies => apply({ ...project, copies })} /><button disabled={Boolean(admissionError) || !preview} onClick={() => preview && onAddToTable(preview.project)}><Icon name="plus" size={14} />Добавить</button>{admissionError && <p role="alert" className="socket-error">{admissionError}</p>}</div>
+    {previewError ? <div className="three-loading socket-error" role="alert"><div className="tool-recovery"><p>{previewError} Перед изготовлением измените параметры стола или инструмента либо сбросьте этот инструмент.</p><button className="secondary" onClick={resetCurrentTool}>Сбросить параметры инструмента</button></div></div>
       : !preview || !layout ? <div className="three-loading" role="status">Расчёт инструмента на сервере…</div>
       : view === '2d' ? <PartsLayout layout={layout} units={units} label={`Интерактивная 2D-раскладка деталей: ${toolLabels[project.tool]}`} resetToken={reset} />
       : <><div className="drawing-frame"><Suspense fallback={<div className="three-loading">Загрузка 3D…</div>}><ToolAssembly3d project={preview.project} parts={preview.parts} placements={preview.assembly} envelope={preview.envelope} weights={preview.weights} dark={dark} units={units} resetToken={reset} {...visual} /></Suspense></div></>}
